@@ -2,5 +2,5 @@ package com.volunteerflow.auth;
 
 @FunctionalInterface
 public interface AccessTokenIssuer {
-    String issue(AppUser user);
+    IssuedAccessToken issue(AppUser user);
 }

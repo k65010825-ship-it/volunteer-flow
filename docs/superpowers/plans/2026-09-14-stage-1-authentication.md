@@ -76,11 +76,11 @@
 
 **Interfaces:** `POST /api/v1/auth/refresh` rotates the cookie and returns a new JWT; `POST /api/v1/auth/logout` revokes only the cookie's session; `GET /api/v1/auth/me` reads active user data. Protected requests require a signed, unexpired JWT and an active user in MySQL.
 
-- [ ] **Step 1: Write failing tests.** Verify tampered/expired JWT is 401; refresh replay fails after first rotation; logout revokes only one device session; disabled user is 401 even with an otherwise valid JWT.
-- [ ] **Step 2: Verify red.** Run targeted Maven tests; expect missing routes or failed HTTP assertions.
-- [ ] **Step 3: Implement minimal code.** Add Spring Security OAuth2 Resource Server/Jose dependencies. Use a configured strong HMAC key, issuer/audience validation, 30-minute JWTs, current user lookup on each authenticated request, and atomic update of the refresh-session token hash under a DB row lock.
-- [ ] **Step 4: Verify green.** Run targeted tests, full Maven tests, and a package build; expect zero failures.
-- [ ] **Step 5: Commit.** `git add backend`; `git commit -m "feat: add JWT and rotating refresh sessions"`.
+- [x] **Step 1: Write failing tests.** Verify tampered/expired JWT is 401; refresh replay fails after first rotation; logout revokes only one device session; disabled user is 401 even with an otherwise valid JWT.
+- [x] **Step 2: Verify red.** Run targeted Maven tests; expect missing routes or failed HTTP assertions.
+- [x] **Step 3: Implement minimal code.** Add Spring Security OAuth2 Resource Server/Jose dependencies. Use a configured strong HMAC key, issuer/audience validation, 30-minute JWTs, current user lookup on each authenticated request, and atomic update of the refresh-session token hash under a DB row lock.
+- [x] **Step 4: Verify green.** Run targeted tests, full Maven tests, and a package build; expect zero failures.
+- [x] **Step 5: Commit.** `git add backend`; `git commit -m "feat: add JWT and rotating refresh sessions"`.
 
 ### Task 4: Real-database acceptance and auth documentation
 

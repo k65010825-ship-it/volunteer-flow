@@ -72,6 +72,46 @@ public class AuthService {
         return createTokens(user, deviceName);
     }
 
+    @Transactional
+    public AuthTokens refresh(String rawRefreshToken, String deviceName) {
+        RefreshSession session = findUsableSession(rawRefreshToken);
+        AppUser user = userMapper.selectById(session.getUserId());
+        if (user == null || !"ACTIVE".equals(user.getStatus())) {
+            throw invalidRefreshToken();
+        }
+
+        String nextRefreshToken = refreshTokenGenerator.generate();
+        Instant now = clock.instant();
+        session.setTokenHash(hash(nextRefreshToken));
+        session.setDeviceName(normalizeDeviceName(deviceName));
+        session.setExpiresAt(LocalDateTime.ofInstant(now.plus(30, ChronoUnit.DAYS), ZoneOffset.UTC));
+        session.setLastUsedAt(LocalDateTime.ofInstant(now, ZoneOffset.UTC));
+        sessionMapper.updateById(session);
+        IssuedAccessToken accessToken = accessTokenIssuer.issue(user);
+        return new AuthTokens(accessToken.value(), nextRefreshToken, accessToken.expiresAt());
+    }
+
+    @Transactional
+    public void logout(Long currentUserId, String rawRefreshToken) {
+        if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
+            return;
+        }
+        RefreshSession session = sessionMapper.selectByTokenHashForUpdate(hash(rawRefreshToken));
+        if (session != null && session.getUserId().equals(currentUserId) && session.getRevokedAt() == null) {
+            session.setRevokedAt(LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC));
+            sessionMapper.updateById(session);
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public CurrentUser me(Long userId) {
+        AppUser user = userMapper.selectById(userId);
+        if (user == null || !"ACTIVE".equals(user.getStatus())) {
+            throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_TOKEN", "User is unavailable");
+        }
+        return CurrentUser.from(user);
+    }
+
     private AuthTokens createTokens(AppUser user, String deviceName) {
         Instant now = clock.instant();
         String refreshToken = refreshTokenGenerator.generate();
@@ -79,10 +119,11 @@ public class AuthService {
         session.setId(IdWorker.getId());
         session.setUserId(user.getId());
         session.setTokenHash(hash(refreshToken));
-        session.setDeviceName(deviceName);
+        session.setDeviceName(normalizeDeviceName(deviceName));
         session.setExpiresAt(LocalDateTime.ofInstant(now.plus(30, ChronoUnit.DAYS), ZoneOffset.UTC));
         sessionMapper.insert(session);
-        return new AuthTokens(accessTokenIssuer.issue(user), refreshToken, now.plus(30, ChronoUnit.MINUTES));
+        IssuedAccessToken accessToken = accessTokenIssuer.issue(user);
+        return new AuthTokens(accessToken.value(), refreshToken, accessToken.expiresAt());
     }
 
     static String hash(String token) {
@@ -94,7 +135,31 @@ public class AuthService {
         }
     }
 
+    private RefreshSession findUsableSession(String rawRefreshToken) {
+        if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
+            throw invalidRefreshToken();
+        }
+        RefreshSession session = sessionMapper.selectByTokenHashForUpdate(hash(rawRefreshToken));
+        LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
+        if (session == null || session.getRevokedAt() != null || !session.getExpiresAt().isAfter(now)) {
+            throw invalidRefreshToken();
+        }
+        return session;
+    }
+
     private static BusinessException invalidCredentials() {
         return new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", "Username or password is incorrect");
+    }
+
+    private static BusinessException invalidRefreshToken() {
+        return new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_REFRESH_TOKEN", "Refresh token is invalid or expired");
+    }
+
+    private static String normalizeDeviceName(String deviceName) {
+        if (deviceName == null) {
+            return null;
+        }
+        String normalized = deviceName.trim();
+        return normalized.length() <= 128 ? normalized : normalized.substring(0, 128);
     }
 }

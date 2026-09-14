@@ -29,6 +29,13 @@ volunteerflow:
     real-name: ${BOOTSTRAP_ADMIN_REAL_NAME:}
     student-number: ${BOOTSTRAP_ADMIN_STUDENT_NUMBER:}
     contact: ${BOOTSTRAP_ADMIN_CONTACT:}
+  auth:
+    secure-cookie: ${AUTH_SECURE_COOKIE:false}
+    jwt:
+      secret: ${JWT_SECRET:}
+      issuer: ${JWT_ISSUER:volunteerflow}
+      audience: ${JWT_AUDIENCE:volunteerflow-web}
+      access-token-ttl: ${JWT_ACCESS_TOKEN_TTL:30m}
 
 mybatis-plus:
   configuration:

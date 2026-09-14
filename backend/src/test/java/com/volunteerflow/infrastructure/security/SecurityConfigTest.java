@@ -29,4 +29,10 @@ class SecurityConfigTest {
         mvc.perform(get("/api/v1/private-probe"))
                 .andExpect(status().isUnauthorized());
     }
+
+    @Test
+    void currentUserEndpointRequiresAuthentication() throws Exception {
+        mvc.perform(get("/api/v1/auth/me"))
+                .andExpect(status().isUnauthorized());
+    }
 }
