@@ -120,7 +120,12 @@ platform_role   PLATFORM_ADMIN / USER
 - 每台设备对应一条独立 `refresh_session`。
 - 刷新令牌每次使用后轮换，旧令牌立即失效。
 - 退出当前设备只撤销当前会话；账号停用时撤销全部会话。
-- 迁移脚本不得写入固定管理员密码；初始管理员通过明确的部署初始化流程创建。
+- 迁移脚本不得写入固定管理员密码。初始管理员由启动初始化器读取
+  `BOOTSTRAP_ADMIN_USERNAME`、`BOOTSTRAP_ADMIN_PASSWORD`、
+  `BOOTSTRAP_ADMIN_REAL_NAME`、`BOOTSTRAP_ADMIN_STUDENT_NUMBER` 和
+  `BOOTSTRAP_ADMIN_CONTACT`：只有五项全部提供且系统尚无平台管理员时创建一次；
+  五项全部未提供时跳过；只提供部分配置时拒绝启动。公开注册接口始终只能创建
+  `USER`，不能创建 `PLATFORM_ADMIN`。
 
 ## 4. 组织与 RBAC
 
