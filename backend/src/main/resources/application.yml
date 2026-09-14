@@ -23,6 +23,12 @@ spring:
 volunteerflow:
   redis:
     environment: ${APP_ENV:local}
+  bootstrap-admin:
+    username: ${BOOTSTRAP_ADMIN_USERNAME:}
+    password: ${BOOTSTRAP_ADMIN_PASSWORD:}
+    real-name: ${BOOTSTRAP_ADMIN_REAL_NAME:}
+    student-number: ${BOOTSTRAP_ADMIN_STUDENT_NUMBER:}
+    contact: ${BOOTSTRAP_ADMIN_CONTACT:}
 
 mybatis-plus:
   configuration:
