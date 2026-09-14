@@ -35,11 +35,11 @@
 
 **Interfaces:** `AdminBootstrapInitializer.initialize()` creates the first `AppUser` using `AppUserMapper`; later tasks reuse `AppUserMapper` and the configured `PasswordEncoder`.
 
-- [ ] **Step 1: Write the failing unit tests.** Test complete configuration inserts one `PLATFORM_ADMIN` with encoded password; existing admin inserts nothing; absent configuration performs no DB call; partial configuration throws without writing. Assert through the mapper argument and BCrypt `matches`, not by comparing raw hash strings.
-- [ ] **Step 2: Verify red.** Run `backend/mvnw.cmd -f backend/pom.xml -Dtest=AdminBootstrapInitializerTest test -ntp`; expect compile failure because the initializer is absent.
-- [ ] **Step 3: Implement minimal code.** Map `app_user` with `@TableName`, `@TableId(type=IdType.ASSIGN_ID)`, ordinary getters/setters; declare `@Mapper interface AppUserMapper extends BaseMapper<AppUser>`. Bind five bootstrap fields with `@ConfigurationProperties(prefix="volunteerflow.bootstrap-admin")`; refuse partial input. In `initialize()`, call `selectCount` for `PLATFORM_ADMIN` before insert and create a BCrypt-hashed active admin. Register `ApplicationRunner` only outside the `test` profile.
-- [ ] **Step 4: Verify green.** Run the targeted test and then `backend/mvnw.cmd -f backend/pom.xml test -ntp`; expect zero failures.
-- [ ] **Step 5: Commit.** `git add backend docs/superpowers/plans/2026-09-14-stage-1-authentication.md`; `git commit -m "feat: add one-time platform admin bootstrap"`.
+- [x] **Step 1: Write the failing unit tests.** Test complete configuration inserts one `PLATFORM_ADMIN` with encoded password; existing admin inserts nothing; absent configuration performs no DB call; partial configuration throws without writing. Assert through the mapper argument and BCrypt `matches`, not by comparing raw hash strings.
+- [x] **Step 2: Verify red.** Run `backend/mvnw.cmd -f backend/pom.xml -Dtest=AdminBootstrapInitializerTest test -ntp`; expect compile failure because the initializer is absent.
+- [x] **Step 3: Implement minimal code.** Map `app_user` with `@TableName`, `@TableId(type=IdType.ASSIGN_ID)`, ordinary getters/setters; declare `@Mapper interface AppUserMapper extends BaseMapper<AppUser>`. Bind five bootstrap fields with `@ConfigurationProperties(prefix="volunteerflow.bootstrap-admin")`; refuse partial input. In `initialize()`, call `selectCount` for `PLATFORM_ADMIN` before insert and create a BCrypt-hashed active admin. Register `ApplicationRunner` only outside the `test` profile.
+- [x] **Step 4: Verify green.** Run the targeted test and then `backend/mvnw.cmd -f backend/pom.xml test -ntp`; expect zero failures.
+- [x] **Step 5: Commit.** `git add backend docs/superpowers/plans/2026-09-14-stage-1-authentication.md`; `git commit -m "feat: add one-time platform admin bootstrap"`.
 
 ### Task 2: Registration and login
 
@@ -56,11 +56,11 @@
 
 **Interfaces:** `POST /api/v1/auth/register` accepts username, password, realName, studentNumber, contact and creates a `USER`; `POST /api/v1/auth/login` accepts username/password. Both return an access token and set a secure-random refresh cookie. `AuthService.register(RegisterRequest)` and `AuthService.login(LoginRequest)` return `AuthTokens`.
 
-- [ ] **Step 1: Write failing tests.** Registration rejects duplicate username/student number and never accepts a client platform role; login returns indistinguishable failures for unknown user and wrong password; disabled users cannot log in; valid login creates a refresh session storing only SHA-256 token hash.
-- [ ] **Step 2: Verify red.** Run `backend/mvnw.cmd -f backend/pom.xml -Dtest=AuthServiceTest,AuthControllerTest test -ntp`; expect missing types or failing assertions.
-- [ ] **Step 3: Implement minimal code.** Use `@Valid` request records; BCrypt verification; `SecureRandom` for 32-byte refresh tokens; MyBatis-Plus mapper calls inside `@Transactional`; cookie `HttpOnly`, `SameSite=Lax`, `Path=/api/v1/auth`, and `Secure` according to HTTPS deployment setting.
-- [ ] **Step 4: Verify green.** Run targeted tests and full Maven `test`; expect zero failures.
-- [ ] **Step 5: Commit.** `git add backend`; `git commit -m "feat: add registration and login"`.
+- [x] **Step 1: Write failing tests.** Registration rejects duplicate username/student number and never accepts a client platform role; login returns indistinguishable failures for unknown user and wrong password; disabled users cannot log in; valid login creates a refresh session storing only SHA-256 token hash.
+- [x] **Step 2: Verify red.** Run `backend/mvnw.cmd -f backend/pom.xml -Dtest=AuthServiceTest,AuthControllerTest test -ntp`; expect missing types or failing assertions.
+- [x] **Step 3: Implement minimal code.** Use `@Valid` request records; BCrypt verification; `SecureRandom` for 32-byte refresh tokens; MyBatis-Plus mapper calls inside `@Transactional`; cookie `HttpOnly`, `SameSite=Lax`, `Path=/api/v1/auth`, and `Secure` according to HTTPS deployment setting.
+- [x] **Step 4: Verify green.** Run targeted tests and full Maven `test`; expect zero failures.
+- [x] **Step 5: Commit.** `git add backend`; `git commit -m "feat: add registration and login"`.
 
 ### Task 3: JWT validation and rotating refresh sessions
 
