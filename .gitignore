@@ -18,6 +18,7 @@ frontend/dist/
 .env
 .env.*
 !.env.example
+backend/config/application-local.yml
 
 # Logs
 *.log

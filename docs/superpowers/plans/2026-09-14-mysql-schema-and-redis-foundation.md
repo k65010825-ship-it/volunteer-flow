@@ -249,7 +249,7 @@ Start the application or invoke Flyway with the configured connection. Expected:
 
 - [ ] **Step 3: Verify the live schema**
 
-Query `information_schema.tables`, `information_schema.statistics`, and `information_schema.referential_constraints`. Expected: all 23 tables including `schema_metadata`, required unique/index names, and zero physical foreign keys.
+Query `information_schema.tables`, `information_schema.statistics`, and `information_schema.referential_constraints`. Expected: all 24 tables including 22 domain tables, `schema_metadata`, and `flyway_schema_history`; required unique/index names; and zero physical foreign keys.
 
 - [ ] **Step 4: Protect local credentials**
 
