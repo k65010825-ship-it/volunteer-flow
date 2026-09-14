@@ -24,7 +24,7 @@ public class SecurityConfig {
                 .exceptionHandling(exceptions -> exceptions.authenticationEntryPoint((request, response, exception) ->
                         response.sendError(HttpStatus.UNAUTHORIZED.value())))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/actuator/health", "/api/v1/auth/**").permitAll()
+                        .requestMatchers("/actuator/health", "/actuator/health/**", "/api/v1/auth/**").permitAll()
                         .anyRequest().authenticated());
         return http.build();
     }

@@ -19,8 +19,8 @@ class SecurityConfigTest {
     private MockMvc mvc;
 
     @Test
-    void healthEndpointIsPublic() throws Exception {
-        mvc.perform(get("/actuator/health"))
+    void readinessEndpointIsPublicAndDoesNotDependOnRedis() throws Exception {
+        mvc.perform(get("/actuator/health/readiness"))
                 .andExpect(status().isOk());
     }
 
