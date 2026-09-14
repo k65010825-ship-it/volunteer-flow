@@ -25,4 +25,4 @@ Java 17、Spring Boot 3.5、MyBatis-Plus、MySQL 和 Flyway 的模块化单体�
 
 ## 验证
 
-在 `backend` 目录执行 `mvn test`。本机使用 Maven 3.9.12，项目级 `.mvn/settings.xml` 指向 HTTPS Maven Central。
+推荐在 `backend` 目录执行 `.\\mvnw.cmd test`。Maven Wrapper 固定使用 Maven 3.9.12，并从 HTTPS Maven Central 下载 Maven；项目不覆盖你的全局 Maven settings。
