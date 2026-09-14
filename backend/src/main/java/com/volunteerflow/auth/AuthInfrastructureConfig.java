@@ -7,12 +7,19 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.security.crypto.password.PasswordEncoder;
+import java.time.Clock;
 
 @Configuration(proxyBeanMethods = false)
 @EnableConfigurationProperties(AdminBootstrapProperties.class)
 public class AuthInfrastructureConfig {
     @Bean
     public PasswordEncoder passwordEncoder() { return new BCryptPasswordEncoder(12); }
+
+    @Bean
+    public Clock authClock() { return Clock.systemUTC(); }
+
+    @Bean
+    public SecureTokenGenerator secureTokenGenerator() { return new SecureTokenGenerator(); }
 
     @Bean
     @Profile("!test")
