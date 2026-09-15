@@ -8,8 +8,8 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(RedisKeyProperties.class)
 public class RedisInfrastructureConfig {
 
-    @Bean
-    public RedisKeyFactory redisKeyFactory(RedisKeyProperties properties) {
-        return new RedisKeyFactory(properties);
-    }
+  @Bean
+  public RedisKeyFactory redisKeyFactory(RedisKeyProperties properties) {
+    return new RedisKeyFactory(properties);
+  }
 }

@@ -8,7 +8,6 @@ import org.springframework.test.context.ActiveProfiles;
 @SpringBootTest
 class VolunteerFlowApplicationTests {
 
-    @Test
-    void contextLoads() {
-    }
+  @Test
+  void contextLoads() {}
 }

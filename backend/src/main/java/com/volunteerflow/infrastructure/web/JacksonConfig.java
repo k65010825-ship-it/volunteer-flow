@@ -7,10 +7,11 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 public class JacksonConfig {
-    @Bean
-    Jackson2ObjectMapperBuilderCustomizer longAsStringCustomizer() {
-        return builder -> builder
-                .serializerByType(Long.class, ToStringSerializer.instance)
-                .serializerByType(Long.TYPE, ToStringSerializer.instance);
-    }
+  @Bean
+  Jackson2ObjectMapperBuilderCustomizer longAsStringCustomizer() {
+    return builder ->
+        builder
+            .serializerByType(Long.class, ToStringSerializer.instance)
+            .serializerByType(Long.TYPE, ToStringSerializer.instance);
+  }
 }

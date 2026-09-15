@@ -1,2 +1,96 @@
-<script setup lang="ts">import { onMounted,ref } from 'vue';import { getActivity } from '../api/activities';import type { ActivityDetail,EntityId } from '../api/types';const props=defineProps<{id:EntityId}>();const detail=ref<ActivityDetail|null>(null);const loading=ref(true);const failed=ref(false);const selected=ref<EntityId|null>(null);onMounted(async()=>{try{detail.value=await getActivity(props.id)}catch{failed.value=true}finally{loading.value=false}});const format=(v:string)=>new Intl.DateTimeFormat('zh-CN',{year:'numeric',month:'long',day:'numeric',weekday:'short',hour:'2-digit',minute:'2-digit'}).format(new Date(v))</script>
-<template><section class="page detail-page"><button class="back" @click="$router.back()">← 返回活动</button><p v-if="loading" class="state">正在加载活动…</p><div v-else-if="failed||!detail" class="state"><strong>活动不存在或你无权查看</strong></div><template v-else><header class="detail-header"><h1>{{detail.activity.title}}</h1><p>{{detail.activity.description}}</p></header><dl class="facts"><div><dt>活动时间</dt><dd>{{format(detail.activity.activityStartAt)}} – {{format(detail.activity.activityEndAt)}}</dd></div><div><dt>活动地点</dt><dd>{{detail.activity.location}}</dd></div><div><dt>报名截止</dt><dd>{{format(detail.activity.registrationEndAt)}}</dd></div></dl><section class="positions"><h2>可报名的志愿岗位</h2><label v-for="position in detail.positions" :key="position.id" class="position" :class="{selected:selected===position.id}"><input v-model="selected" type="radio" name="position" :value="position.id"/><span class="radio"></span><span class="position-copy"><strong>{{position.name}}</strong><small>{{position.description}}</small><small>录取方式：{{position.registrationMode==='FIRST_COME'?'先到先得':'负责人审核'}} · {{position.capacity}} 个名额</small></span></label><button class="primary" :disabled="!selected" title="报名功能将在阶段 2 开放">{{selected?'选择岗位报名':'请先选择岗位'}}</button><p class="phase-note">岗位报名将在阶段 2 开放，本阶段可完整查看活动与岗位规则。</p></section></template></section></template>
+<script setup lang="ts">
+import { onMounted, ref } from "vue";
+import { getActivity } from "../api/activities";
+import type { ActivityDetail, EntityId } from "../api/types";
+const props = defineProps<{ id: EntityId }>();
+const detail = ref<ActivityDetail | null>(null);
+const loading = ref(true);
+const failed = ref(false);
+const selected = ref<EntityId | null>(null);
+onMounted(async () => {
+  try {
+    detail.value = await getActivity(props.id);
+  } catch {
+    failed.value = true;
+  } finally {
+    loading.value = false;
+  }
+});
+const format = (v: string) =>
+  new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(new Date(v));
+</script>
+<template>
+  <section class="page detail-page">
+    <button class="back" @click="$router.back()">← 返回活动</button>
+    <p v-if="loading" class="state">正在加载活动…</p>
+    <div v-else-if="failed || !detail" class="state">
+      <strong>活动不存在或你无权查看</strong>
+    </div>
+    <template v-else
+      ><header class="detail-header">
+        <h1>{{ detail.activity.title }}</h1>
+        <p>{{ detail.activity.description }}</p>
+      </header>
+      <dl class="facts">
+        <div>
+          <dt>活动时间</dt>
+          <dd>
+            {{ format(detail.activity.activityStartAt) }} –
+            {{ format(detail.activity.activityEndAt) }}
+          </dd>
+        </div>
+        <div>
+          <dt>活动地点</dt>
+          <dd>{{ detail.activity.location }}</dd>
+        </div>
+        <div>
+          <dt>报名截止</dt>
+          <dd>{{ format(detail.activity.registrationEndAt) }}</dd>
+        </div>
+      </dl>
+      <section class="positions">
+        <h2>可报名的志愿岗位</h2>
+        <label
+          v-for="position in detail.positions"
+          :key="position.id"
+          class="position"
+          :class="{ selected: selected === position.id }"
+          ><input
+            v-model="selected"
+            type="radio"
+            name="position"
+            :value="position.id"
+          /><span class="radio"></span
+          ><span class="position-copy"
+            ><strong>{{ position.name }}</strong
+            ><small>{{ position.description }}</small
+            ><small
+              >录取方式：{{
+                position.registrationMode === "FIRST_COME"
+                  ? "先到先得"
+                  : "负责人审核"
+              }}
+              · {{ position.capacity }} 个名额</small
+            ></span
+          ></label
+        ><button
+          class="primary"
+          :disabled="!selected"
+          title="报名功能将在阶段 2 开放"
+        >
+          {{ selected ? "选择岗位报名" : "请先选择岗位" }}
+        </button>
+        <p class="phase-note">
+          岗位报名将在阶段 2 开放，本阶段可完整查看活动与岗位规则。
+        </p>
+      </section></template
+    >
+  </section>
+</template>

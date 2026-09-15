@@ -1,4 +1,2 @@
-/**
- * In-application notifications and future notification-channel abstractions.
- */
+/** In-application notifications and future notification-channel abstractions. */
 package com.volunteerflow.notification;

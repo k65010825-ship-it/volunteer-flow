@@ -6,9 +6,9 @@ import org.springframework.util.StringUtils;
 @ConfigurationProperties(prefix = "volunteerflow.redis")
 public record RedisKeyProperties(String environment) {
 
-    public RedisKeyProperties {
-        if (!StringUtils.hasText(environment)) {
-            throw new IllegalArgumentException("volunteerflow.redis.environment must not be blank");
-        }
+  public RedisKeyProperties {
+    if (!StringUtils.hasText(environment)) {
+      throw new IllegalArgumentException("volunteerflow.redis.environment must not be blank");
     }
+  }
 }
