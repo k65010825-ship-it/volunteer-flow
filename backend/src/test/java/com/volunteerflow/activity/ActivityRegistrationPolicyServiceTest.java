@@ -71,7 +71,7 @@ class ActivityRegistrationPolicyServiceTest {
   void submissionPolicyLocksAndReturnsTheValidatedPosition() {
     Activity activity = publishedActivity();
     ActivityPosition position = activePosition();
-    when(activityMapper.selectById(10L)).thenReturn(activity);
+    when(activityMapper.selectByIdForSubmissionRevalidation(10L)).thenReturn(activity);
     when(positionMapper.selectByIdForUpdate(30L)).thenReturn(position);
     when(activityQuestionMapper.selectByActivity(100L, 10L)).thenReturn(List.of());
     when(positionQuestionMapper.selectByPosition(100L, 10L, 30L)).thenReturn(List.of());
@@ -82,8 +82,33 @@ class ActivityRegistrationPolicyServiceTest {
     assertThat(policy.position()).isSameAs(position);
     assertThat(policy.questions()).isEmpty();
     verify(authorization).requireMembership(7L, 100L);
+    verify(activityMapper).selectByIdForSubmissionRevalidation(10L);
+    verify(activityMapper, never()).selectById(10L);
     verify(positionMapper).selectByIdForUpdate(30L);
     verify(positionMapper, never()).selectById(30L);
+  }
+
+  @Test
+  void submissionPolicyRevalidatesFreshActivityAfterPreliminaryFormLookup() {
+    Activity preliminaryActivity = publishedActivity();
+    Activity canceledActivity = publishedActivity();
+    canceledActivity.setStatus("CANCELED");
+    ActivityPosition position = activePosition();
+    when(activityMapper.selectById(10L)).thenReturn(preliminaryActivity);
+    when(positionMapper.selectById(30L)).thenReturn(position);
+    when(activityQuestionMapper.selectByActivity(100L, 10L)).thenReturn(List.of());
+    when(positionQuestionMapper.selectByPosition(100L, 10L, 30L)).thenReturn(List.of());
+    when(activityMapper.selectByIdForSubmissionRevalidation(10L)).thenReturn(canceledActivity);
+
+    service.loadForm(7L, 10L, 30L);
+
+    assertThatThrownBy(() -> service.lockPolicyForSubmission(7L, 10L, 30L))
+        .isInstanceOf(BusinessException.class)
+        .extracting(error -> ((BusinessException) error).code())
+        .isEqualTo("ACTIVITY_NOT_PUBLISHED");
+    verify(activityMapper).selectById(10L);
+    verify(activityMapper).selectByIdForSubmissionRevalidation(10L);
+    verify(positionMapper, never()).selectByIdForUpdate(anyLong());
   }
 
   @Test
@@ -102,7 +127,7 @@ class ActivityRegistrationPolicyServiceTest {
 
   @Test
   void rejectsSubmissionWhenLockedPositionBelongsToAnotherActivity() {
-    when(activityMapper.selectById(10L)).thenReturn(publishedActivity());
+    when(activityMapper.selectByIdForSubmissionRevalidation(10L)).thenReturn(publishedActivity());
     ActivityPosition position = activePosition();
     position.setActivityId(11L);
     when(positionMapper.selectByIdForUpdate(30L)).thenReturn(position);

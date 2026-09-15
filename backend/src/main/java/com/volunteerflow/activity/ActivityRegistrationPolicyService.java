@@ -50,7 +50,7 @@ public class ActivityRegistrationPolicyService {
 
   @Transactional
   public RegistrationPolicy lockPolicyForSubmission(Long userId, Long activityId, Long positionId) {
-    Activity activity = publishedActivity(userId, activityId);
+    Activity activity = freshlyRevalidatedPublishedActivity(userId, activityId);
     ActivityPosition position =
         requirePosition(positions.selectByIdForUpdate(positionId), activity);
     return new RegistrationPolicy(activity, position, loadQuestions(activity, position));
@@ -67,6 +67,15 @@ public class ActivityRegistrationPolicyService {
 
   private Activity publishedActivity(Long userId, Long activityId) {
     Activity activity = activities.selectById(activityId);
+    return requirePublishedActivity(userId, activity);
+  }
+
+  private Activity freshlyRevalidatedPublishedActivity(Long userId, Long activityId) {
+    Activity activity = activities.selectByIdForSubmissionRevalidation(activityId);
+    return requirePublishedActivity(userId, activity);
+  }
+
+  private Activity requirePublishedActivity(Long userId, Activity activity) {
     if (activity == null) {
       throw new BusinessException(
           HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");

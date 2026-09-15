@@ -13,4 +13,8 @@ public interface ActivityMapper extends BaseMapper<Activity> {
 
   @Select("SELECT * FROM activity WHERE id=#{id} AND organization_id=#{orgId} LIMIT 1")
   Activity selectInOrganization(@Param("orgId") Long orgId, @Param("id") Long id);
+
+  @Select("SELECT * FROM activity WHERE id=#{id} LIMIT 1")
+  @Options(flushCache = Options.FlushCachePolicy.TRUE)
+  Activity selectByIdForSubmissionRevalidation(@Param("id") Long id);
 }
