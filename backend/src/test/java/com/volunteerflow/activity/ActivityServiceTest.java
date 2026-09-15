@@ -49,6 +49,20 @@ class ActivityServiceTest {
         verify(activityMapper).updateById(activity);
     }
 
+    @Test
+    void positionServiceTimeMustBeProvidedAsAValidPair() {
+        Activity activity = validDraft();
+        when(activityMapper.selectById(1L)).thenReturn(activity);
+        var request = new ActivityService.PositionRequest("礼仪岗", "负责接待", 10,
+                "FIRST_COME", 120, LocalDateTime.of(2026, 9, 17, 1, 0), null, null);
+
+        assertThatThrownBy(() -> service.addPosition(7L, 1L, request))
+                .isInstanceOf(BusinessException.class)
+                .extracting(ex -> ((BusinessException) ex).code()).isEqualTo("INVALID_POSITION_TIME");
+
+        verify(positionMapper, never()).insert(org.mockito.ArgumentMatchers.<ActivityPosition>any());
+    }
+
     private Activity validDraft() {
         Activity activity = new Activity();
         activity.setId(1L); activity.setOrganizationId(100L); activity.setStatus("DRAFT");

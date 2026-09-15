@@ -189,22 +189,23 @@ VolunteerFlow/
 └─ README.md
 ```
 
-当前已创建 `backend/`；`frontend/` 和 `deploy/` 将在对应实施阶段创建。
+当前仓库包含 `backend/` 与 `frontend/`；Nginx 和正式部署配置将在阶段 3 建立。
 
 ## 当前状态
 
-截至 2026-09-14：
+截至 2026-09-15：
 
 - [x] 明确真实问题、目标用户和第一版范围。
 - [x] 完成活动岗位、报名、候补、RBAC、签到和通知设计。
 - [x] 确定前后端分离和模块化单体架构。
 - [x] 完成正式设计规格。
 - [x] 初始化 Spring Boot 后端工程。
-- [ ] 初始化 Vue 前端工程。
+- [x] 初始化 Vue 3 + TypeScript + Vite 前端工程。
 - [x] 建立完整 Flyway 数据库迁移并在开发库执行到 V8。
 - [x] 接入可选 Redis 基础设施和独立健康检查。
-- [ ] 完成前后端健康检查联调。
-- [ ] 实现第一版业务闭环。
+- [x] 完成前端经 Vite 代理访问后端的联调与响应式浏览器检查。
+- [x] 完成阶段 1：认证、组织、邀请码、单角色 RBAC、活动和多岗位。
+- [ ] 完成阶段 2 之后的报名、候补、通知与签到业务闭环。
 
 正式规格见：[VolunteerFlow 修订版设计文档](docs/specs/2026-09-14-volunteerflow-revised-design.md)。
 
@@ -224,16 +225,16 @@ VolunteerFlow/
 
 ## 本地运行
 
-后端骨架已经通过自动化测试，IDEA 启动说明见 [backend/README.md](backend/README.md)。阶段 0 完成后，本节将继续补充前端和 Docker 的实际验证方式：
+后端 IDEA 启动说明和阶段 1 API 见 [backend/README.md](backend/README.md)。本地开发方式：
 
 ```text
-1. 使用 Docker Compose 启动 MySQL
-2. 在 IDEA 中运行 Spring Boot 后端
-3. 在 VS Code 中启动 Vite 开发服务器
-4. 前端通过 Vite 代理访问 /api 与 /actuator/health
+1. 在 IDEA 中运行 Spring Boot 后端（默认端口 8080）
+2. 在 VS Code 终端进入 frontend
+3. 执行 npm install 和 npm run dev
+4. 访问 http://localhost:5173，前端通过 Vite 代理访问 /api 与 /actuator
 ```
 
-在命令经过本地验证前，本 README 不提供可能失真的示例命令。
+阶段 1 回归命令：后端执行 `.\\mvnw.cmd clean verify`；前端依次执行 `npm test`、`npm run typecheck` 和 `npm run build`。
 
 ## 测试与验收目标
 

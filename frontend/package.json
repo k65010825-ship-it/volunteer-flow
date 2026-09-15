@@ -1,0 +1,29 @@
+{
+  "name": "volunteerflow-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "test": "vitest run",
+    "typecheck": "vue-tsc -b"
+  },
+  "dependencies": {
+    "axios": "^1.20.0",
+    "pinia": "^4.0.3",
+    "vue": "^3.5.42",
+    "vue-router": "^5.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^26.5.1",
+    "@vitejs/plugin-vue": "^6.0.9",
+    "@vue/test-utils": "^2.5.0",
+    "axios-mock-adapter": "^2.1.0",
+    "jsdom": "^30.0.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.11",
+    "vue-tsc": "^3.3.11"
+  }
+}

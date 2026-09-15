@@ -4,4 +4,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper; import org.apache.ibatis
  @Select("SELECT * FROM organization_member WHERE organization_id=#{orgId} AND user_id=#{userId} LIMIT 1") OrganizationMember selectByOrganizationAndUser(@Param("orgId") Long orgId,@Param("userId") Long userId);
  @Select("SELECT * FROM organization_member WHERE organization_id=#{orgId} AND user_id=#{userId} AND status='ACTIVE' LIMIT 1") OrganizationMember selectActiveMember(@Param("userId") Long userId,@Param("orgId") Long orgId);
  @Select("SELECT * FROM organization_member WHERE organization_id=#{orgId} AND status='ACTIVE' ORDER BY joined_at") List<OrganizationMember> selectActiveByOrganization(@Param("orgId") Long orgId);
+ @Select("SELECT COUNT(*) FROM organization_member WHERE organization_id=#{orgId} AND role_id=#{roleId} AND status='ACTIVE'") long countActiveByRole(@Param("orgId") Long orgId,@Param("roleId") Long roleId);
+ @Select("SELECT COUNT(*) FROM organization_member WHERE organization_id=#{orgId} AND role_id=#{roleId}") long countByRole(@Param("orgId") Long orgId,@Param("roleId") Long roleId);
 }

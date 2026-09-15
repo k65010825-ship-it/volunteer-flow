@@ -1,6 +1,6 @@
 # VolunteerFlow 后端
 
-Java 17、Spring Boot 3.5、MyBatis-Plus、MySQL、Flyway 和 Spring Data Redis 的模块化单体工程。阶段 0 数据库结构和 Redis 基础设施已经建立；认证、组织、RBAC、活动、报名、签到等业务接口尚未实现。
+Java 17、Spring Boot 3.5、MyBatis-Plus、MySQL、Flyway 和 Spring Data Redis 的模块化单体工程。阶段 1 已实现认证、组织、邀请码、组织级单角色 RBAC，以及活动和多岗位生命周期。
 
 ## 在 IDEA 中运行
 
@@ -14,14 +14,25 @@ V1—V8 已在配置的开发数据库中实际执行，包含 22 张领域表�
 
 ## 模块
 
-`auth`、`organization`、`rbac`、`activity`、`registration`、`checkin`、`notification`、`audit` 是业务模块；`infrastructure` 放置 Web、安全与持久化公共配置。模块目前以包文档占位，避免在需求实现前引入空 Controller/Service/Mapper。
+`auth`、`organization`、`rbac`、`activity`、`registration`、`checkin`、`notification`、`audit` 是业务模块；`infrastructure` 放置 Web、安全与持久化公共配置。阶段 2 之后的报名、签到和通知模块目前只保留数据库结构与包边界。
 
 ## 接口约定
 
 - 业务 API 使用 `/api/v1` 前缀；readiness 使用 `/actuator/health/readiness`。
 - 成功响应使用 `ApiResponse`；业务错误和参数校验错误使用 `ProblemDetail`，附带 `code` 与 `requestId`。
 - 请求 ID 由 `X-Request-Id` 透传或生成，用于响应头和日志关联。
-- 除健康检查及预留的 `/api/v1/auth/**` 外，所有路径默认要求认证。JWT 实现将在认证阶段加入；当前骨架没有可供登录的业务接口。
+- 注册、登录和刷新接口匿名可访问，其余业务接口默认要求 JWT Bearer 认证。
+- 访问令牌只通过响应体返回；刷新令牌只写入 `HttpOnly` Cookie，并在每次刷新时轮换。重放旧刷新令牌会撤销对应令牌家族。
+- 前端请求使用 `Authorization: Bearer <access-token>`；访问令牌失效时只允许自动刷新并重试一次。
+
+## 阶段 1 API
+
+- 认证：`POST /api/v1/auth/register`、`/login`、`/refresh`、`/logout`，以及 `GET /api/v1/auth/me`。
+- 组织：平台管理员创建/停用组织；成员查看可见组织；负责人创建或停用邀请码；用户凭邀请码幂等加入。
+- RBAC：成员单角色分配、权限目录、自定义角色创建/编辑/授权/停用/条件删除。受保护负责人角色始终拥有全部权限，且不能移除最后一名有效负责人。
+- 活动：创建和编辑草稿、添加多个岗位、发布、取消，以及成员端已发布活动列表和详情。
+
+典型手工验证顺序：登录取得访问令牌和刷新 Cookie → 创建组织并指定负责人 → 负责人创建邀请码 → 成员加入 → 创建活动与岗位 → 发布 → 成员查询活动列表和详情。邀请码原文只在创建响应中出现一次，数据库仅保存 SHA-256 摘要。
 
 ## Redis 边界
 
@@ -35,4 +46,6 @@ V1—V8 已在配置的开发数据库中实际执行，包含 22 张领域表�
 
 ## 验证
 
-推荐在 `backend` 目录执行 `.\\mvnw.cmd test`。Maven Wrapper 固定使用 Maven 3.9.12，并从 HTTPS Maven Central 下载 Maven；项目不覆盖你的全局 Maven settings。
+推荐在 `backend` 目录执行 `.\\mvnw.cmd clean verify`。Maven Wrapper 固定使用 Maven 3.9.12，并从 HTTPS Maven Central 下载 Maven；项目不覆盖你的全局 Maven settings。
+
+连接本地配置中的 VM MySQL 执行阶段 1 完整事务验收：`.\\mvnw.cmd -Dtest=Stage1VmAcceptanceIT test`。该测试创建临时用户、组织、邀请码和多岗位活动，完成发布与成员查询后由测试事务自动回滚；默认测试套件不会自动执行这个 `*IT` 文件。
