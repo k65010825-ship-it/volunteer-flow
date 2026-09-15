@@ -3,10 +3,13 @@ package com.volunteerflow.registration;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,6 +24,7 @@ import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.RegistrationViews.ManagedRegistrationPage;
 import com.volunteerflow.registration.RegistrationViews.OwnRegistrationView;
+import com.volunteerflow.registration.RegistrationCycleMapper.WaitlistMetrics;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -88,15 +92,64 @@ class RegistrationQueryServiceTest {
   void memberListUsesOnlyRegistrationsOwnedByThatMember() {
     Registration registration = registration(100L, 21L);
     when(registrationMapper.selectOwnedByUser(21L)).thenReturn(List.of(registration));
-    when(cycleMapper.selectActiveOrLatest(100L))
-        .thenReturn(cycle(101L, 100L, 21L, "CONFIRMED", null));
-    when(answerMapper.selectByCycle(101L)).thenReturn(List.of());
-    when(offerMapper.selectPendingByCycle(101L)).thenReturn(null);
+    when(cycleMapper.selectActiveOrLatestOwned(21L, List.of(100L)))
+        .thenReturn(List.of(cycle(101L, 100L, 21L, "CONFIRMED", null)));
+    when(answerMapper.selectByCycles(List.of(101L))).thenReturn(List.of());
+    when(offerMapper.selectPendingByCycles(List.of(101L))).thenReturn(List.of());
+    when(cycleMapper.selectWaitlistMetricsOwned(21L, List.of(101L)))
+        .thenReturn(List.of(new WaitlistMetrics(101L, null, 0L)));
 
     List<OwnRegistrationView> views = service.listOwn(21L);
 
     assertThat(views).extracting(OwnRegistrationView::registrationId).containsExactly(100L);
     verify(registrationMapper).selectOwnedByUser(21L);
+  }
+
+  @Test
+  void memberListLoadsCyclesAnswersOffersAndWaitlistMetricsInBatches() {
+    Registration firstRegistration = registration(100L, 21L);
+    Registration secondRegistration = registration(200L, 21L);
+    secondRegistration.setActivityId(11L);
+    RegistrationCycle firstCycle = cycle(101L, 100L, 21L, "WAITLISTED", 8L);
+    RegistrationCycle secondCycle = cycle(201L, 200L, 21L, "CONFIRMED", null);
+    secondCycle.setActivityId(11L);
+    secondCycle.setPositionId(30L);
+    RegistrationAnswer firstAnswer = answer(501L, 101L);
+    RegistrationAnswer secondAnswer = answer(502L, 201L);
+    secondAnswer.setAnswerJson("\"Evenings\"");
+    PromotionOffer firstOffer = offer(601L, 101L);
+    when(registrationMapper.selectOwnedByUser(21L))
+        .thenReturn(List.of(firstRegistration, secondRegistration));
+    when(cycleMapper.selectActiveOrLatestOwned(21L, List.of(100L, 200L)))
+        .thenReturn(List.of(firstCycle, secondCycle));
+    when(answerMapper.selectByCycles(List.of(101L, 201L)))
+        .thenReturn(List.of(firstAnswer, secondAnswer));
+    when(offerMapper.selectPendingByCycles(List.of(101L, 201L))).thenReturn(List.of(firstOffer));
+    when(cycleMapper.selectWaitlistMetricsOwned(21L, List.of(101L, 201L)))
+        .thenReturn(
+            List.of(
+                new WaitlistMetrics(101L, 3L, 6L),
+                new WaitlistMetrics(201L, null, 0L)));
+
+    List<OwnRegistrationView> views = service.listOwn(21L);
+
+    assertThat(views)
+        .extracting(OwnRegistrationView::registrationId)
+        .containsExactly(100L, 200L);
+    assertThat(views.get(0).currentWaitlistPosition()).isEqualTo(3);
+    assertThat(views.get(0).waitlistCount()).isEqualTo(6L);
+    assertThat(views.get(0).answers().get(0).answer().asText()).isEqualTo("Weekends");
+    assertThat(views.get(0).pendingOffer().id()).isEqualTo(601L);
+    assertThat(views.get(1).answers().get(0).answer().asText()).isEqualTo("Evenings");
+    verify(cycleMapper, times(1)).selectActiveOrLatestOwned(21L, List.of(100L, 200L));
+    verify(answerMapper, times(1)).selectByCycles(List.of(101L, 201L));
+    verify(offerMapper, times(1)).selectPendingByCycles(List.of(101L, 201L));
+    verify(cycleMapper, times(1)).selectWaitlistMetricsOwned(21L, List.of(101L, 201L));
+    verify(cycleMapper, never()).selectActiveOrLatest(anyLong());
+    verify(answerMapper, never()).selectByCycle(anyLong());
+    verify(offerMapper, never()).selectPendingByCycle(anyLong());
+    verify(cycleMapper, never()).countActiveWaitlistBefore(anyLong(), anyLong());
+    verify(cycleMapper, never()).countActiveWaitlisted(anyLong());
   }
 
   @Test
@@ -153,9 +206,9 @@ class RegistrationQueryServiceTest {
     when(cycleMapper.selectForPosition(
             any(), eq(7L), eq(20L), eq("PENDING_REVIEW")))
         .thenReturn(cyclePage);
-    when(userMapper.selectById(21L)).thenReturn(user);
-    when(answerMapper.selectByCycle(101L)).thenReturn(List.of(answer(501L, 101L)));
-    when(offerMapper.selectByCycle(101L)).thenReturn(offer);
+    when(userMapper.selectByIds(List.of(21L))).thenReturn(List.of(user));
+    when(answerMapper.selectByCycles(List.of(101L))).thenReturn(List.of(answer(501L, 101L)));
+    when(offerMapper.selectByCycles(List.of(101L))).thenReturn(List.of(offer));
 
     ManagedRegistrationPage result =
         service.listForPosition(9L, 20L, "PENDING_REVIEW", 2, 25);
@@ -177,6 +230,45 @@ class RegistrationQueryServiceTest {
               assertThat(view.reviewReason()).isEqualTo("Good fit");
             });
     verify(authorization).requirePermission(9L, 7L, "registration:review");
+  }
+
+  @Test
+  void adminListLoadsUsersAnswersAndOffersInBatches() {
+    ActivityPosition position = position(20L, 7L);
+    RegistrationCycle firstCycle = cycle(101L, 100L, 21L, "PENDING_REVIEW", null);
+    RegistrationCycle secondCycle = cycle(201L, 200L, 22L, "WAITLISTED", null);
+    Page<RegistrationCycle> cyclePage = new Page<>(1, 20, 2);
+    cyclePage.setRecords(List.of(firstCycle, secondCycle));
+    AppUser firstUser = user(21L);
+    AppUser secondUser = user(22L);
+    secondUser.setRealName("Zhou Ning");
+    RegistrationAnswer firstAnswer = answer(501L, 101L);
+    RegistrationAnswer secondAnswer = answer(502L, 201L);
+    PromotionOffer secondOffer = offer(602L, 201L);
+    when(positionMapper.selectById(20L)).thenReturn(position);
+    when(cycleMapper.selectForPosition(any(), eq(7L), eq(20L), isNull()))
+        .thenReturn(cyclePage);
+    when(userMapper.selectByIds(List.of(21L, 22L)))
+        .thenReturn(List.of(firstUser, secondUser));
+    when(answerMapper.selectByCycles(List.of(101L, 201L)))
+        .thenReturn(List.of(firstAnswer, secondAnswer));
+    when(offerMapper.selectByCycles(List.of(101L, 201L))).thenReturn(List.of(secondOffer));
+
+    ManagedRegistrationPage result = service.listForPosition(9L, 20L, null, 1, 20);
+
+    assertThat(result.items())
+        .extracting(view -> view.realName())
+        .containsExactly("Lin Yue", "Zhou Ning");
+    assertThat(result.items().get(0).answers()).hasSize(1);
+    assertThat(result.items().get(1).answers()).hasSize(1);
+    assertThat(result.items().get(0).offer()).isNull();
+    assertThat(result.items().get(1).offer().id()).isEqualTo(602L);
+    verify(userMapper, times(1)).selectByIds(List.of(21L, 22L));
+    verify(answerMapper, times(1)).selectByCycles(List.of(101L, 201L));
+    verify(offerMapper, times(1)).selectByCycles(List.of(101L, 201L));
+    verify(userMapper, never()).selectById(anyLong());
+    verify(answerMapper, never()).selectByCycle(anyLong());
+    verify(offerMapper, never()).selectByCycle(anyLong());
   }
 
   @Test

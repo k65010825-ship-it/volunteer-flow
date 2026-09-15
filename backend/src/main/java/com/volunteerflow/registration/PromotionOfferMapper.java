@@ -1,6 +1,7 @@
 package com.volunteerflow.registration;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import java.util.List;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
@@ -30,4 +31,29 @@ public interface PromotionOfferMapper extends BaseMapper<PromotionOffer> {
       LIMIT 1
       """)
   PromotionOffer selectByCycle(@Param("cycleId") Long cycleId);
+
+  @Select(
+      """
+      <script>
+      SELECT * FROM promotion_offer
+      WHERE registration_cycle_id IN
+      <foreach collection="cycleIds" item="cycleId"
+               open="(" separator="," close=")">#{cycleId}</foreach>
+        AND status='PENDING' AND expires_at > CURRENT_TIMESTAMP(6)
+      ORDER BY registration_cycle_id
+      </script>
+      """)
+  List<PromotionOffer> selectPendingByCycles(@Param("cycleIds") List<Long> cycleIds);
+
+  @Select(
+      """
+      <script>
+      SELECT * FROM promotion_offer
+      WHERE registration_cycle_id IN
+      <foreach collection="cycleIds" item="cycleId"
+               open="(" separator="," close=")">#{cycleId}</foreach>
+      ORDER BY registration_cycle_id
+      </script>
+      """)
+  List<PromotionOffer> selectByCycles(@Param("cycleIds") List<Long> cycleIds);
 }

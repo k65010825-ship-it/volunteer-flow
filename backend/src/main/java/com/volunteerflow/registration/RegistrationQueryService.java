@@ -17,8 +17,12 @@ import com.volunteerflow.registration.RegistrationViews.ManagedRegistrationPage;
 import com.volunteerflow.registration.RegistrationViews.ManagedRegistrationView;
 import com.volunteerflow.registration.RegistrationViews.OwnOfferView;
 import com.volunteerflow.registration.RegistrationViews.OwnRegistrationView;
+import com.volunteerflow.registration.RegistrationCycleMapper.WaitlistMetrics;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -67,7 +71,50 @@ public class RegistrationQueryService {
 
   @Transactional(readOnly = true)
   public List<OwnRegistrationView> listOwn(Long userId) {
-    return registrations.selectOwnedByUser(userId).stream().map(this::ownView).toList();
+    List<Registration> ownedRegistrations = registrations.selectOwnedByUser(userId);
+    if (ownedRegistrations.isEmpty()) {
+      return List.of();
+    }
+    List<Long> registrationIds =
+        ownedRegistrations.stream().map(Registration::getId).toList();
+    List<RegistrationCycle> ownedCycles =
+        cycles.selectActiveOrLatestOwned(userId, registrationIds);
+    Map<Long, Registration> registrationsById =
+        ownedRegistrations.stream()
+            .collect(Collectors.toMap(Registration::getId, Function.identity()));
+    for (RegistrationCycle cycle : ownedCycles) {
+      Registration registration = registrationsById.get(cycle.getRegistrationId());
+      if (registration == null || !userId.equals(cycle.getUserId())) {
+        throw registrationNotFound();
+      }
+    }
+    if (ownedCycles.isEmpty()) {
+      throw registrationNotFound();
+    }
+    List<Long> cycleIds = ownedCycles.stream().map(RegistrationCycle::getId).toList();
+    Map<Long, RegistrationCycle> cyclesByRegistration =
+        ownedCycles.stream()
+            .collect(
+                Collectors.toMap(RegistrationCycle::getRegistrationId, Function.identity()));
+    Map<Long, List<AnswerView>> answersByCycle = answerViewsByCycle(cycleIds);
+    Map<Long, PromotionOffer> offersByCycle =
+        offers.selectPendingByCycles(cycleIds).stream()
+            .collect(
+                Collectors.toMap(
+                    PromotionOffer::getRegistrationCycleId, Function.identity()));
+    Map<Long, WaitlistMetrics> metricsByCycle =
+        cycles.selectWaitlistMetricsOwned(userId, cycleIds).stream()
+            .collect(Collectors.toMap(WaitlistMetrics::cycleId, Function.identity()));
+    return ownedRegistrations.stream()
+        .map(
+            registration ->
+                ownView(
+                    registration,
+                    cyclesByRegistration.get(registration.getId()),
+                    answersByCycle,
+                    offersByCycle,
+                    metricsByCycle))
+        .toList();
   }
 
   @Transactional(readOnly = true)
@@ -89,8 +136,37 @@ public class RegistrationQueryService {
             position.getOrganizationId(),
             position.getId(),
             normalizedStatus);
+    List<RegistrationCycle> scopedCycles = cyclePage.getRecords();
+    if (scopedCycles.isEmpty()) {
+      return new ManagedRegistrationPage(List.of(), cyclePage.getTotal(), safePage, safeSize);
+    }
+    for (RegistrationCycle cycle : scopedCycles) {
+      if (!position.getOrganizationId().equals(cycle.getOrganizationId())
+          || !position.getId().equals(cycle.getPositionId())) {
+        throw new IllegalStateException("Position registration query returned out-of-scope data");
+      }
+    }
+    List<Long> cycleIds = scopedCycles.stream().map(RegistrationCycle::getId).toList();
+    List<Long> userIds = scopedCycles.stream().map(RegistrationCycle::getUserId).distinct().toList();
+    Map<Long, AppUser> usersById =
+        users.selectByIds(userIds).stream()
+            .collect(Collectors.toMap(AppUser::getId, Function.identity()));
+    Map<Long, List<AnswerView>> answersByCycle = answerViewsByCycle(cycleIds);
+    Map<Long, PromotionOffer> offersByCycle =
+        offers.selectByCycles(cycleIds).stream()
+            .collect(
+                Collectors.toMap(
+                    PromotionOffer::getRegistrationCycleId, Function.identity()));
     List<ManagedRegistrationView> items =
-        cyclePage.getRecords().stream().map(this::managedView).toList();
+        scopedCycles.stream()
+            .map(
+                cycle ->
+                    managedView(
+                        cycle,
+                        usersById.get(cycle.getUserId()),
+                        answersByCycle.getOrDefault(cycle.getId(), List.of()),
+                        offersByCycle.get(cycle.getId())))
+            .toList();
     return new ManagedRegistrationPage(items, cyclePage.getTotal(), safePage, safeSize);
   }
 
@@ -129,8 +205,39 @@ public class RegistrationQueryService {
         ownOfferView(offer));
   }
 
-  private ManagedRegistrationView managedView(RegistrationCycle cycle) {
-    AppUser user = users.selectById(cycle.getUserId());
+  private OwnRegistrationView ownView(
+      Registration registration,
+      RegistrationCycle cycle,
+      Map<Long, List<AnswerView>> answersByCycle,
+      Map<Long, PromotionOffer> offersByCycle,
+      Map<Long, WaitlistMetrics> metricsByCycle) {
+    if (cycle == null) {
+      throw registrationNotFound();
+    }
+    WaitlistMetrics metrics = metricsByCycle.get(cycle.getId());
+    Long currentPosition = metrics == null ? null : metrics.currentWaitlistPosition();
+    Long waitlistCount = metrics == null ? 0L : metrics.waitlistCount();
+    return new OwnRegistrationView(
+        registration.getId(),
+        registration.getOrganizationId(),
+        registration.getActivityId(),
+        cycle.getId(),
+        cycle.getPositionId(),
+        cycle.getCycleNumber(),
+        cycle.getStatus(),
+        cycle.getSubmittedAt(),
+        cycle.getWaitlistSequence(),
+        currentPosition == null ? null : Math.toIntExact(currentPosition),
+        waitlistCount,
+        answersByCycle.getOrDefault(cycle.getId(), List.of()),
+        ownOfferView(offersByCycle.get(cycle.getId())));
+  }
+
+  private ManagedRegistrationView managedView(
+      RegistrationCycle cycle,
+      AppUser user,
+      List<AnswerView> answerViews,
+      PromotionOffer offer) {
     if (user == null) {
       throw new IllegalStateException("Registration user was not found");
     }
@@ -151,17 +258,25 @@ public class RegistrationQueryService {
         cycle.getReviewedBy(),
         cycle.getReviewedAt(),
         cycle.getReviewReason(),
-        answerViews(cycle.getId()),
-        managedOfferView(offers.selectByCycle(cycle.getId())));
+        answerViews,
+        managedOfferView(offer));
   }
 
   private List<AnswerView> answerViews(Long cycleId) {
-    return answers.selectByCycle(cycleId).stream()
-        .map(
-            answer ->
-                new AnswerView(
-                    answer.getQuestionScope(), answer.getQuestionId(), parseAnswer(answer)))
-        .toList();
+    return answers.selectByCycle(cycleId).stream().map(this::answerView).toList();
+  }
+
+  private Map<Long, List<AnswerView>> answerViewsByCycle(List<Long> cycleIds) {
+    return answers.selectByCycles(cycleIds).stream()
+        .collect(
+            Collectors.groupingBy(
+                RegistrationAnswer::getRegistrationCycleId,
+                Collectors.mapping(this::answerView, Collectors.toUnmodifiableList())));
+  }
+
+  private AnswerView answerView(RegistrationAnswer answer) {
+    return new AnswerView(
+        answer.getQuestionScope(), answer.getQuestionId(), parseAnswer(answer));
   }
 
   private JsonNode parseAnswer(RegistrationAnswer answer) {
