@@ -32,6 +32,19 @@ class ActivityRegistrationPolicyServiceTest {
           new ObjectMapper());
 
   @Test
+  void allocatesAndPersistsNextSequenceOnAlreadyLockedPosition() {
+    ActivityPosition position = activePosition();
+    position.setNextWaitlistSequence(8L);
+
+    long allocated = service.allocateNextWaitlistSequence(position);
+
+    assertThat(allocated).isEqualTo(8L);
+    assertThat(position.getNextWaitlistSequence()).isEqualTo(9L);
+    verify(positionMapper).updateById(position);
+    verify(positionMapper, never()).selectByIdForUpdate(anyLong());
+  }
+
+  @Test
   void loadFormReturnsOrderedActivityAndPositionQuestions() {
     Activity activity = publishedActivity();
     ActivityPosition position = activePosition();

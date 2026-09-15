@@ -18,6 +18,15 @@ public interface OrganizationMemberMapper extends BaseMapper<OrganizationMember>
   OrganizationMember selectActiveMember(@Param("userId") Long userId, @Param("orgId") Long orgId);
 
   @Select(
+      """
+      SELECT * FROM organization_member
+      WHERE organization_id=#{orgId} AND user_id=#{userId} AND status='ACTIVE'
+      LIMIT 1 FOR UPDATE
+      """)
+  OrganizationMember selectActiveMemberForUpdate(
+      @Param("userId") Long userId, @Param("orgId") Long orgId);
+
+  @Select(
       "SELECT * FROM organization_member WHERE organization_id=#{orgId} AND status='ACTIVE' ORDER"
           + " BY joined_at")
   List<OrganizationMember> selectActiveByOrganization(@Param("orgId") Long orgId);

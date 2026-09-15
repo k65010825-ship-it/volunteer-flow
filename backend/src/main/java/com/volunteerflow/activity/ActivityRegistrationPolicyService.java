@@ -10,6 +10,7 @@ import java.util.List;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Read boundary exposing only the activity policy needed by registration workflows. */
@@ -48,12 +49,20 @@ public class ActivityRegistrationPolicyService {
   }
 
   @Transactional
-  public RegistrationPolicy lockPolicyForSubmission(
-      Long userId, Long activityId, Long positionId) {
+  public RegistrationPolicy lockPolicyForSubmission(Long userId, Long activityId, Long positionId) {
     Activity activity = publishedActivity(userId, activityId);
     ActivityPosition position =
         requirePosition(positions.selectByIdForUpdate(positionId), activity);
     return new RegistrationPolicy(activity, position, loadQuestions(activity, position));
+  }
+
+  /** Allocates from a position already locked by the caller, in that same transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public long allocateNextWaitlistSequence(ActivityPosition lockedPosition) {
+    long sequence = lockedPosition.getNextWaitlistSequence();
+    lockedPosition.setNextWaitlistSequence(Math.addExact(sequence, 1L));
+    positions.updateById(lockedPosition);
+    return sequence;
   }
 
   private Activity publishedActivity(Long userId, Long activityId) {
@@ -83,8 +92,7 @@ public class ActivityRegistrationPolicyService {
     return position;
   }
 
-  private List<QuestionDefinition> loadQuestions(
-      Activity activity, ActivityPosition position) {
+  private List<QuestionDefinition> loadQuestions(Activity activity, ActivityPosition position) {
     List<QuestionDefinition> questions = new ArrayList<>();
     activityQuestions.selectByActivity(activity.getOrganizationId(), activity.getId()).stream()
         .map(question -> definition("ACTIVITY", question))
