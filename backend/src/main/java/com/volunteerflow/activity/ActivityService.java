@@ -24,6 +24,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class ActivityService {
   private final ActivityMapper activities;
   private final ActivityPositionMapper positions;
+  private final ActivityQuestionMapper activityQuestions;
+  private final ActivityPositionQuestionMapper positionQuestions;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
   private final Clock clock;
@@ -31,11 +33,15 @@ public class ActivityService {
   public ActivityService(
       ActivityMapper activities,
       ActivityPositionMapper positions,
+      ActivityQuestionMapper activityQuestions,
+      ActivityPositionQuestionMapper positionQuestions,
       OrganizationAuthorizationService authorization,
       AuditService audit,
       Clock clock) {
     this.activities = activities;
     this.positions = positions;
+    this.activityQuestions = activityQuestions;
+    this.positionQuestions = positionQuestions;
     this.authorization = authorization;
     this.audit = audit;
     this.clock = clock;
@@ -119,6 +125,12 @@ public class ActivityService {
     validate(activity);
     if (positions.countActiveByActivity(activity.getOrganizationId(), id) < 1)
       throw semantic("ACTIVITY_POSITION_REQUIRED", "At least one active position is required");
+    if (activityQuestions.countByActivity(id) + positionQuestions.maxQuestionCountByActivity(id)
+        > 10) {
+      throw semantic(
+          "TOO_MANY_REGISTRATION_QUESTIONS",
+          "Each position may have at most ten combined registration questions");
+    }
     activity.setStatus("PUBLISHED");
     activity.setPublishedAt(now());
     activities.updateById(activity);

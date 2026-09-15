@@ -16,4 +16,7 @@ public interface ActivityPositionMapper extends BaseMapper<ActivityPosition> {
           + " AND status='ACTIVE' ORDER BY id")
   List<ActivityPosition> selectActiveByActivity(
       @Param("orgId") Long orgId, @Param("activityId") Long activityId);
+
+  @Select("SELECT * FROM activity_position WHERE id=#{positionId} LIMIT 1 FOR UPDATE")
+  ActivityPosition selectByIdForUpdate(@Param("positionId") Long positionId);
 }

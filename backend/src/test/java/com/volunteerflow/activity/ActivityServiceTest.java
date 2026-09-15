@@ -16,12 +16,22 @@ import org.junit.jupiter.api.Test;
 class ActivityServiceTest {
   private final ActivityMapper activityMapper = mock(ActivityMapper.class);
   private final ActivityPositionMapper positionMapper = mock(ActivityPositionMapper.class);
+  private final ActivityQuestionMapper activityQuestionMapper = mock(ActivityQuestionMapper.class);
+  private final ActivityPositionQuestionMapper positionQuestionMapper =
+      mock(ActivityPositionQuestionMapper.class);
   private final OrganizationAuthorizationService authorization =
       mock(OrganizationAuthorizationService.class);
   private final AuditService auditService = mock(AuditService.class);
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T00:00:00Z"), ZoneOffset.UTC);
   private final ActivityService service =
-      new ActivityService(activityMapper, positionMapper, authorization, auditService, clock);
+      new ActivityService(
+          activityMapper,
+          positionMapper,
+          activityQuestionMapper,
+          positionQuestionMapper,
+          authorization,
+          auditService,
+          clock);
 
   @Test
   void publicationRequiresAtLeastOneActivePosition() {
@@ -41,6 +51,8 @@ class ActivityServiceTest {
     Activity activity = validDraft();
     when(activityMapper.selectById(1L)).thenReturn(activity);
     when(positionMapper.countActiveByActivity(100L, 1L)).thenReturn(2L);
+    when(activityQuestionMapper.countByActivity(1L)).thenReturn(4L);
+    when(positionQuestionMapper.maxQuestionCountByActivity(1L)).thenReturn(6L);
 
     Activity result = service.publish(7L, 1L);
 
@@ -49,6 +61,21 @@ class ActivityServiceTest {
         .isEqualTo(LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC));
     verify(authorization).requirePermission(7L, 100L, "activity:publish");
     verify(activityMapper).updateById(activity);
+  }
+
+  @Test
+  void publicationRejectsAnyPositionWithMoreThanTenCombinedQuestions() {
+    Activity activity = validDraft();
+    when(activityMapper.selectById(1L)).thenReturn(activity);
+    when(positionMapper.countActiveByActivity(100L, 1L)).thenReturn(2L);
+    when(activityQuestionMapper.countByActivity(1L)).thenReturn(6L);
+    when(positionQuestionMapper.maxQuestionCountByActivity(1L)).thenReturn(5L);
+
+    assertThatThrownBy(() -> service.publish(7L, 1L))
+        .isInstanceOf(BusinessException.class)
+        .extracting(error -> ((BusinessException) error).code())
+        .isEqualTo("TOO_MANY_REGISTRATION_QUESTIONS");
+    verify(activityMapper, never()).updateById(activity);
   }
 
   @Test
