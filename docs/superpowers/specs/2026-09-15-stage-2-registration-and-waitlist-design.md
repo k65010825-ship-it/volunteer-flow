@@ -1,7 +1,7 @@
 # VolunteerFlow 阶段 2：报名、候补与递补设计
 
 - 日期：2026-09-15
-- 状态：待用户复核
+- 状态：已确认
 - 技术基线：Java 17、Spring Boot 3.x、MyBatis-Plus、MySQL 8、Vue 3
 - 前置版本：阶段 1 组织、RBAC、活动和岗位功能
 
@@ -204,7 +204,7 @@ PENDING_REVIEW / CONFIRMED / WAITLISTED -> CANCELED 或 LATE_CANCELED
 
 接受后邀请变为 `ACCEPTED`，周期变为 `CONFIRMED`。拒绝后邀请变为 `DECLINED`，周期变为 `PROMOTION_DECLINED`；先到先得岗位继续邀请下一位。
 
-定时任务默认每 30 秒扫描一次，每批最多处理 100 条已到期的 `PENDING` 邀请，通过 `SELECT ... FOR UPDATE SKIP LOCKED` 分批处理。扫描间隔和批次大小使用外部配置。过期后邀请变为 `EXPIRED`，周期变为 `PROMOTION_EXPIRED`；先到先得岗位继续递补。任务可重复执行且不会重复处理同一邀请。
+定时任务默认每 30 秒无锁扫描一次，每批最多读取 100 个已到期的 `PENDING` 邀请 ID，随后逐条开启独立事务。每条事务先通过非锁定快照取得关联 ID，再严格按成员、岗位、报名周期、邀请的顺序加锁并重新检查邀请状态和过期时间。扫描间隔和批次大小使用外部配置。过期后邀请变为 `EXPIRED`，周期变为 `PROMOTION_EXPIRED`；先到先得岗位继续递补。多个实例读到同一 ID 时，只有第一个完成状态转换，其余实例在加锁后发现状态已变化并安全退出。
 
 ## 9. API 设计
 
