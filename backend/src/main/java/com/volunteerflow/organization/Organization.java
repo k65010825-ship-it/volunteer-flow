@@ -1,12 +1,13 @@
 package com.volunteerflow.organization;
 
 import com.baomidou.mybatisplus.annotation.*;
-import lombok.Data;
-
 import java.time.LocalDateTime;
+import lombok.Getter;
+import lombok.Setter;
 
 @TableName("organization")
-@Data
+@Getter
+@Setter
 public class Organization {
   @TableId(type = IdType.ASSIGN_ID)
   private Long id;

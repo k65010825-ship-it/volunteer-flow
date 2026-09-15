@@ -2,9 +2,11 @@ package com.volunteerflow.activity;
 
 import com.baomidou.mybatisplus.annotation.*;
 import java.time.LocalDateTime;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
-@Data
+@Getter
+@Setter
 @TableName("activity")
 public class Activity {
   @TableId(type = IdType.ASSIGN_ID)

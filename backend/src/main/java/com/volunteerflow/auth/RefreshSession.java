@@ -3,12 +3,13 @@ package com.volunteerflow.auth;
 import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import lombok.Data;
-
 import java.time.LocalDateTime;
+import lombok.Getter;
+import lombok.Setter;
 
 @TableName("refresh_session")
-@Data
+@Getter
+@Setter
 public class RefreshSession {
   @TableId(type = IdType.ASSIGN_ID)
   private Long id;

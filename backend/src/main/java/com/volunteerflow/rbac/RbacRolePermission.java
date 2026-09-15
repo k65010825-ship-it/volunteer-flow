@@ -1,10 +1,12 @@
 package com.volunteerflow.rbac;
 
 import com.baomidou.mybatisplus.annotation.*;
-import lombok.Data;
+import lombok.Getter;
+import lombok.Setter;
 
 @TableName("rbac_role_permission")
-@Data
+@Getter
+@Setter
 public class RbacRolePermission {
   @TableId(type = IdType.ASSIGN_ID)
   private Long id;
