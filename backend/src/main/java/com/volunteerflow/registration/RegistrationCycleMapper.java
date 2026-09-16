@@ -11,6 +11,20 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface RegistrationCycleMapper extends BaseMapper<RegistrationCycle> {
+  @Select("SELECT * FROM registration_cycle WHERE id=#{cycleId} FOR UPDATE")
+  RegistrationCycle selectByIdForUpdate(@Param("cycleId") Long cycleId);
+
+  // A cycle can receive only one invitation, including an expired invitation awaiting cleanup.
+  @Select(
+      """
+      SELECT c.* FROM registration_cycle c
+      WHERE c.position_id=#{positionId} AND c.status='WAITLISTED'
+        AND c.waitlist_sequence IS NOT NULL
+        AND NOT EXISTS (SELECT 1 FROM promotion_offer o WHERE o.registration_cycle_id=c.id)
+      ORDER BY c.waitlist_sequence ASC LIMIT 1 FOR UPDATE
+      """)
+  RegistrationCycle selectFirstWaitlistedForUpdate(@Param("positionId") Long positionId);
+
   @Select(
       """
       SELECT * FROM registration_cycle

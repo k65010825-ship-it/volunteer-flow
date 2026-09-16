@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import java.io.IOException;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.context.annotation.Profile;
@@ -64,6 +65,27 @@ public class ActivityRegistrationPolicyService {
     positions.updateById(lockedPosition);
     return sequence;
   }
+
+  /** Existing registrations remain cancelable even if the activity is no longer published. */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public CancellationTiming cancellationTiming(Long organizationId, Long activityId) {
+    Activity activity = activities.selectByIdForSubmissionRevalidation(activityId);
+    if (activity == null || !organizationId.equals(activity.getOrganizationId())) {
+      throw new BusinessException(
+          HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+    }
+    return new CancellationTiming(
+        activity.getFreeCancelDeadlineAt(), activity.getActivityStartAt());
+  }
+
+  /** Caller must hold the owner membership lock, or already hold this position lock. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public ActivityPosition lockPositionForRegistrationChange(Long positionId) {
+    return positions.selectByIdForUpdate(positionId);
+  }
+
+  public record CancellationTiming(
+      LocalDateTime freeCancelDeadlineAt, LocalDateTime activityStartAt) {}
 
   private Activity publishedActivity(Long userId, Long activityId) {
     Activity activity = activities.selectById(activityId);
