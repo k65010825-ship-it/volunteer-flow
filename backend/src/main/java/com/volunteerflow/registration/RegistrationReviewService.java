@@ -7,7 +7,6 @@ import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.util.Locale;
@@ -191,5 +190,5 @@ public class RegistrationReviewService {
     return new BusinessException(HttpStatus.CONFLICT, code, message);
   }
 
-  public record ReviewDecisionRequest(@NotBlank String decision, @Size(max = 500) String reason) {}
+  public record ReviewDecisionRequest(@NotBlank String decision, String reason) {}
 }

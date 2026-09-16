@@ -12,6 +12,7 @@ import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.RegistrationReviewService.ReviewDecisionRequest;
+import jakarta.validation.constraints.Size;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -112,6 +113,23 @@ class RegistrationReviewServiceTest {
     verify(cycleMapper).updateById(lockedCycle);
     verify(audit)
         .record(10L, 7L, "registration.reviewed", "registration_cycle", 101L, "REJECTED");
+  }
+
+  @Test
+  void acceptsRawReasonLongerThanFiveHundredCharactersWhenTrimmedReasonIsFiveHundred() {
+    String trimmedReason = "x".repeat(500);
+    String rawReason = " " + trimmedReason + " ";
+
+    RegistrationCycle result =
+        service.decide(7L, 100L, new ReviewDecisionRequest("WAITLIST", rawReason));
+
+    assertThat(result.getReviewReason()).isEqualTo(trimmedReason);
+  }
+
+  @Test
+  void leavesReviewReasonLengthValidationToTheService() throws NoSuchMethodException {
+    assertThat(ReviewDecisionRequest.class.getDeclaredMethod("reason").getAnnotation(Size.class))
+        .isNull();
   }
 
   @Test
