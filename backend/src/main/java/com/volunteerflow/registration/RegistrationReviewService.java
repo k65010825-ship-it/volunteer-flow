@@ -125,7 +125,7 @@ public class RegistrationReviewService {
 
   private String normalizedReason(String reason) {
     if (reason == null || reason.isBlank()) {
-      return null;
+      throw semantic("INVALID_REVIEW_REASON", "A review reason is required");
     }
     String normalized = reason.trim();
     if (normalized.length() > 500) {

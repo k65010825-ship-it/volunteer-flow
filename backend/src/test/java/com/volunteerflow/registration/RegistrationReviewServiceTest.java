@@ -16,10 +16,13 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.http.HttpStatus;
 
 class RegistrationReviewServiceTest {
@@ -84,6 +87,50 @@ class RegistrationReviewServiceTest {
     verify(cycleMapper).updateById(lockedCycle);
     verify(audit)
         .record(10L, 7L, "registration.reviewed", "registration_cycle", 101L, resultingStatus);
+  }
+
+  @ParameterizedTest
+  @MethodSource("invalidReviewReasons")
+  void rejectsMissingOrBlankReviewReasonBeforeMutation(String decision, String reason) {
+    rejects(
+        new ReviewDecisionRequest(decision, reason),
+        "INVALID_REVIEW_REASON",
+        HttpStatus.UNPROCESSABLE_ENTITY);
+
+    verifyNoInteractions(
+        registrations, cycleMapper, positions, members, offerMapper, authorization, audit);
+  }
+
+  @Test
+  void acceptsExactlyFiveHundredCharactersAndPersistsTheTrimmedReason() {
+    String reason = "x".repeat(500);
+
+    RegistrationCycle result =
+        service.decide(7L, 100L, new ReviewDecisionRequest("REJECT", reason));
+
+    assertThat(result.getReviewReason()).isEqualTo(reason);
+    verify(cycleMapper).updateById(lockedCycle);
+    verify(audit)
+        .record(10L, 7L, "registration.reviewed", "registration_cycle", 101L, "REJECTED");
+  }
+
+  @Test
+  void rejectsReviewReasonLongerThanFiveHundredCharactersBeforeMutation() {
+    rejects(
+        new ReviewDecisionRequest("WAITLIST", "x".repeat(501)),
+        "INVALID_REVIEW_REASON",
+        HttpStatus.UNPROCESSABLE_ENTITY);
+
+    verifyNoInteractions(
+        registrations, cycleMapper, positions, members, offerMapper, authorization, audit);
+  }
+
+  @Test
+  void persistsTrimmedReviewReason() {
+    RegistrationCycle result =
+        service.decide(7L, 100L, new ReviewDecisionRequest("CONFIRM", "  Good fit  "));
+
+    assertThat(result.getReviewReason()).isEqualTo("Good fit");
   }
 
   @Test
@@ -195,6 +242,13 @@ class RegistrationReviewServiceTest {
 
   private ReviewDecisionRequest decision(String decision) {
     return new ReviewDecisionRequest(decision, " Strong fit ");
+  }
+
+  private static Stream<Arguments> invalidReviewReasons() {
+    return Stream.of(
+        Arguments.of("CONFIRM", null),
+        Arguments.of("WAITLIST", "   "),
+        Arguments.of("REJECT", "\t"));
   }
 
   private Registration registration() {
