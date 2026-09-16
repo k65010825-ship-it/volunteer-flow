@@ -28,7 +28,8 @@ class PromotionServiceTest {
   final RegistrationMapper registrations = mock(RegistrationMapper.class);
   final RegistrationCycleMapper cycles = mock(RegistrationCycleMapper.class);
   final PromotionOfferMapper offers = mock(PromotionOfferMapper.class);
-  final OrganizationAuthorizationService authorization = mock(OrganizationAuthorizationService.class);
+  final OrganizationAuthorizationService authorization =
+      mock(OrganizationAuthorizationService.class);
   final AuditService audit = mock(AuditService.class);
   final PromotionService service = new PromotionService(
       policies, members, registrations, cycles, offers, authorization, audit);
@@ -68,7 +69,14 @@ class PromotionServiceTest {
     assertThat(result.getExpiresAt()).isEqualTo(now.plusMinutes(30));
     assertThat(cycle.getStatus()).isEqualTo("WAITLISTED");
     verify(offers, times(1)).insert(result);
-    verify(audit).record(10L, 7L, "promotion.offered", "promotion_offer", result.getId(), "Released seat");
+    verify(audit)
+        .record(
+            10L,
+            7L,
+            "promotion.offered",
+            "promotion_offer",
+            result.getId(),
+            "Released seat");
     verifyNoInteractions(members);
   }
 
@@ -93,7 +101,8 @@ class PromotionServiceTest {
   void manualOfferRequiresPermissionAndUnorderedReviewCandidate() {
     position.setRegistrationMode("REVIEW");
     cycle.setWaitlistSequence(null);
-    PromotionOffer result = service.createManualOffer(7L, 100L, new PromotionRequest("  Selected  "));
+    PromotionOffer result =
+        service.createManualOffer(7L, 100L, new PromotionRequest("  Selected  "));
     assertThat(result.getReason()).isEqualTo("Selected");
     assertThat(result.getCreatedBy()).isEqualTo(7L);
     assertThat(result.getRegistrationCycleId()).isEqualTo(101L);
@@ -107,12 +116,18 @@ class PromotionServiceTest {
 
   @Test
   void manualOfferRejectsWrongModeSequenceAndFullCapacity() {
-    rejects(() -> service.createManualOffer(7L, 100L, new PromotionRequest(null)), "POSITION_NOT_REVIEW_MODE");
+    rejects(
+        () -> service.createManualOffer(7L, 100L, new PromotionRequest(null)),
+        "POSITION_NOT_REVIEW_MODE");
     position.setRegistrationMode("REVIEW");
-    rejects(() -> service.createManualOffer(7L, 100L, new PromotionRequest(null)), "REGISTRATION_NOT_WAITLISTED");
+    rejects(
+        () -> service.createManualOffer(7L, 100L, new PromotionRequest(null)),
+        "REGISTRATION_NOT_WAITLISTED");
     cycle.setWaitlistSequence(null);
     when(cycles.countConfirmed(20L)).thenReturn(20L);
-    rejects(() -> service.createManualOffer(7L, 100L, new PromotionRequest(null)), "POSITION_CAPACITY_FULL");
+    rejects(
+        () -> service.createManualOffer(7L, 100L, new PromotionRequest(null)),
+        "POSITION_CAPACITY_FULL");
     verify(offers, never()).insert(any(PromotionOffer.class));
   }
 
@@ -121,17 +136,23 @@ class PromotionServiceTest {
     position.setRegistrationMode("REVIEW");
     cycle.setWaitlistSequence(null);
     when(offers.selectByCycleForUpdate(101L)).thenReturn(offer);
-    rejects(() -> service.createManualOffer(7L, 100L, new PromotionRequest(null)), "PROMOTION_OFFER_CONFLICT");
+    rejects(
+        () -> service.createManualOffer(7L, 100L, new PromotionRequest(null)),
+        "PROMOTION_OFFER_CONFLICT");
     when(offers.selectByCycleForUpdate(101L)).thenReturn(null);
-    when(offers.insert(any(PromotionOffer.class))).thenThrow(new DuplicateKeyException("duplicate"));
-    rejects(() -> service.createManualOffer(7L, 100L, new PromotionRequest(null)), "PROMOTION_OFFER_CONFLICT");
+    when(offers.insert(any(PromotionOffer.class)))
+        .thenThrow(new DuplicateKeyException("duplicate"));
+    rejects(
+        () -> service.createManualOffer(7L, 100L, new PromotionRequest(null)),
+        "PROMOTION_OFFER_CONFLICT");
     verifyNoInteractions(audit);
   }
 
   @Test
   void unrelatedPersistenceFailuresAreNotHiddenAsConflicts() {
     when(cycles.selectFirstWaitlistedForUpdate(20L)).thenReturn(cycle);
-    DataIntegrityViolationException failure = new DataIntegrityViolationException("database failure");
+    DataIntegrityViolationException failure =
+        new DataIntegrityViolationException("database failure");
     when(offers.insert(any(PromotionOffer.class))).thenThrow(failure);
     assertThatThrownBy(() -> service.offerNextFirstCome(20L, 7L, null)).isSameAs(failure);
   }
@@ -177,7 +198,9 @@ class PromotionServiceTest {
   @ValueSource(strings = {"ACCEPT", "DECLINE"})
   void rejectsOfferAtExactExpiryWithoutMutation(String decision) {
     offer.setExpiresAt(now);
-    rejects(() -> service.respond(21L, 300L, new PromotionResponseRequest(decision)), "PROMOTION_OFFER_EXPIRED");
+    rejects(
+        () -> service.respond(21L, 300L, new PromotionResponseRequest(decision)),
+        "PROMOTION_OFFER_EXPIRED");
     assertThat(cycle.getStatus()).isEqualTo("WAITLISTED");
     verify(offers, never()).updateById(any(PromotionOffer.class));
     verifyNoInteractions(audit);
@@ -186,39 +209,56 @@ class PromotionServiceTest {
   @Test
   void repeatedResponseAndTerminalCycleAreRejected() {
     offer.setStatus("ACCEPTED");
-    rejects(() -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")), "PROMOTION_OFFER_NOT_PENDING");
+    rejects(
+        () -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")),
+        "PROMOTION_OFFER_NOT_PENDING");
     offer.setStatus("PENDING");
     cycle.setStatus("CANCELED");
-    rejects(() -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")), "REGISTRATION_NOT_WAITLISTED");
+    rejects(
+        () -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")),
+        "REGISTRATION_NOT_WAITLISTED");
     verifyNoInteractions(audit);
   }
 
   @Test
   void foreignOwnerAndChangedLockedOfferAreHidden() {
     assertThatThrownBy(() -> service.respond(99L, 300L, new PromotionResponseRequest("ACCEPT")))
-        .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
     PromotionOffer changed = offer(300L, 999L);
     when(offers.selectByIdForUpdate(300L)).thenReturn(changed);
     assertThatThrownBy(() -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")))
-        .isInstanceOfSatisfying(BusinessException.class, error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            error -> assertThat(error.status()).isEqualTo(HttpStatus.NOT_FOUND));
     verifyNoInteractions(audit);
   }
 
   @Test
   void permissionFailureAndCrossOrganizationPositionPreventMutation() {
-    BusinessException denied = new BusinessException(HttpStatus.FORBIDDEN, "PERMISSION_DENIED", "Denied");
+    BusinessException denied =
+        new BusinessException(HttpStatus.FORBIDDEN, "PERMISSION_DENIED", "Denied");
     doThrow(denied).when(authorization).requirePermission(7L, 10L, "registration:promote");
-    assertThatThrownBy(() -> service.createManualOffer(7L, 100L, new PromotionRequest(null))).isSameAs(denied);
+    assertThatThrownBy(
+            () -> service.createManualOffer(7L, 100L, new PromotionRequest(null)))
+        .isSameAs(denied);
     verifyNoInteractions(members);
     position.setOrganizationId(99L);
-    rejects(() -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")), "PROMOTION_OFFER_NOT_FOUND");
+    rejects(
+        () -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")),
+        "PROMOTION_OFFER_NOT_FOUND");
     verifyNoInteractions(audit);
   }
 
   @Test
   void invalidResponseAndOversizedReasonFailBeforeWrites() {
-    rejects(() -> service.respond(21L, 300L, new PromotionResponseRequest("INVALID")), "INVALID_PROMOTION_RESPONSE");
-    rejects(() -> service.createManualOffer(7L, 100L, new PromotionRequest("x".repeat(501))), "INVALID_PROMOTION_REASON");
+    rejects(
+        () -> service.respond(21L, 300L, new PromotionResponseRequest("INVALID")),
+        "INVALID_PROMOTION_RESPONSE");
+    rejects(
+        () -> service.createManualOffer(7L, 100L, new PromotionRequest("x".repeat(501))),
+        "INVALID_PROMOTION_REASON");
     verifyNoInteractions(audit);
   }
 
@@ -227,49 +267,72 @@ class PromotionServiceTest {
     RegistrationCycle changed = cycle(102L, 100L, 21L);
     when(cycles.selectActiveCycleForUpdate(100L)).thenReturn(changed);
     position.setRegistrationMode("REVIEW");
-    rejects(() -> service.createManualOffer(7L, 100L, new PromotionRequest(null)), "REGISTRATION_NOT_WAITLISTED");
+    rejects(
+        () -> service.createManualOffer(7L, 100L, new PromotionRequest(null)),
+        "REGISTRATION_NOT_WAITLISTED");
     verify(offers, never()).insert(any(PromotionOffer.class));
   }
 
   @Test
-  void failedStatusWriteAndAuditFailurePropagateForTransactionRollback() {
+  void zeroRowOfferUpdateReturnsConflictBeforeAudit() {
     when(offers.updateById(offer)).thenReturn(0);
-    rejects(() -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")), "PROMOTION_OFFER_CONFLICT");
+    rejects(
+        () -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")),
+        "PROMOTION_OFFER_CONFLICT");
     verifyNoInteractions(audit);
   }
 
   static Registration registration(Long id, Long userId) {
     Registration value = new Registration();
-    value.setId(id); value.setOrganizationId(10L); value.setActivityId(11L); value.setUserId(userId);
+    value.setId(id);
+    value.setOrganizationId(10L);
+    value.setActivityId(11L);
+    value.setUserId(userId);
     return value;
   }
 
   static RegistrationCycle cycle(Long id, Long registrationId, Long userId) {
     RegistrationCycle value = new RegistrationCycle();
-    value.setId(id); value.setRegistrationId(registrationId); value.setOrganizationId(10L);
-    value.setActivityId(11L); value.setPositionId(20L); value.setUserId(userId);
-    value.setStatus("WAITLISTED"); value.setWaitlistSequence(1L); value.setCycleNumber(1);
+    value.setId(id);
+    value.setRegistrationId(registrationId);
+    value.setOrganizationId(10L);
+    value.setActivityId(11L);
+    value.setPositionId(20L);
+    value.setUserId(userId);
+    value.setStatus("WAITLISTED");
+    value.setWaitlistSequence(1L);
+    value.setCycleNumber(1);
     return value;
   }
 
   static ActivityPosition position() {
     ActivityPosition value = new ActivityPosition();
-    value.setId(20L); value.setOrganizationId(10L); value.setActivityId(11L);
-    value.setRegistrationMode("FIRST_COME"); value.setStatus("ACTIVE");
-    value.setCapacity(20); value.setPromotionTimeoutMinutes(30);
+    value.setId(20L);
+    value.setOrganizationId(10L);
+    value.setActivityId(11L);
+    value.setRegistrationMode("FIRST_COME");
+    value.setStatus("ACTIVE");
+    value.setCapacity(20);
+    value.setPromotionTimeoutMinutes(30);
     return value;
   }
 
   PromotionOffer offer(Long id, Long cycleId) {
     PromotionOffer value = new PromotionOffer();
-    value.setId(id); value.setRegistrationCycleId(cycleId); value.setOrganizationId(10L);
-    value.setActivityId(11L); value.setPositionId(20L); value.setStatus("PENDING");
-    value.setExpiresAt(now.plusMinutes(30)); value.setVersion(0);
+    value.setId(id);
+    value.setRegistrationCycleId(cycleId);
+    value.setOrganizationId(10L);
+    value.setActivityId(11L);
+    value.setPositionId(20L);
+    value.setStatus("PENDING");
+    value.setExpiresAt(now.plusMinutes(30));
+    value.setVersion(0);
     return value;
   }
 
   static void rejects(Runnable action, String code) {
-    assertThatThrownBy(action::run).isInstanceOfSatisfying(BusinessException.class,
-        error -> assertThat(error.code()).isEqualTo(code));
+    assertThatThrownBy(action::run)
+        .isInstanceOfSatisfying(
+            BusinessException.class, error -> assertThat(error.code()).isEqualTo(code));
   }
 }

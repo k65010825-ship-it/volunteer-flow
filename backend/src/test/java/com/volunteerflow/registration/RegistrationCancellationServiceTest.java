@@ -56,19 +56,29 @@ class RegistrationCancellationServiceTest {
 
   @Test
   void explicitDeadlineOverridesLaterActivityStartAndRequiresTrimmedReason() {
-    when(policies.cancellationTiming(10L, 11L)).thenReturn(new CancellationTiming(now.minusSeconds(1), now.plusDays(1)));
+    when(policies.cancellationTiming(10L, 11L))
+        .thenReturn(new CancellationTiming(now.minusSeconds(1), now.plusDays(1)));
     RegistrationCycle result = service.cancel(21L, 100L, new CancellationRequest("  Sick  "));
     assertThat(result.getStatus()).isEqualTo("LATE_CANCELED");
     assertThat(result.getCancelReason()).isEqualTo("Sick");
-    verify(audit).record(10L, 21L, "registration.late_canceled", "registration_cycle", 101L, "Sick");
+    verify(audit)
+        .record(
+            10L, 21L, "registration.late_canceled", "registration_cycle", 101L, "Sick");
   }
 
   @Test
   void missingBlankAndOversizedLateReasonsDoNotMutate() {
-    when(policies.cancellationTiming(10L, 11L)).thenReturn(new CancellationTiming(null, now.minusSeconds(1)));
-    rejects(() -> service.cancel(21L, 100L, new CancellationRequest(null)), "CANCELLATION_REASON_REQUIRED");
-    rejects(() -> service.cancel(21L, 100L, new CancellationRequest(" \t ")), "CANCELLATION_REASON_REQUIRED");
-    rejects(() -> service.cancel(21L, 100L, new CancellationRequest("x".repeat(501))), "INVALID_CANCELLATION_REASON");
+    when(policies.cancellationTiming(10L, 11L))
+        .thenReturn(new CancellationTiming(null, now.minusSeconds(1)));
+    rejects(
+        () -> service.cancel(21L, 100L, new CancellationRequest(null)),
+        "CANCELLATION_REASON_REQUIRED");
+    rejects(
+        () -> service.cancel(21L, 100L, new CancellationRequest(" \t ")),
+        "CANCELLATION_REASON_REQUIRED");
+    rejects(
+        () -> service.cancel(21L, 100L, new CancellationRequest("x".repeat(501))),
+        "INVALID_CANCELLATION_REASON");
     assertThat(cycle.getStatus()).isEqualTo("CONFIRMED");
     verifyNoInteractions(audit, promotions);
   }
@@ -77,9 +87,13 @@ class RegistrationCancellationServiceTest {
   void pendingOfferIsCanceledBeforeReleasedReservationIsPromoted() {
     cycle.setStatus("WAITLISTED");
     PromotionOffer offer = new PromotionOffer();
-    offer.setId(300L); offer.setOrganizationId(10L); offer.setActivityId(11L);
-    offer.setPositionId(20L); offer.setRegistrationCycleId(101L);
-    offer.setStatus("PENDING"); offer.setExpiresAt(now.plusMinutes(10));
+    offer.setId(300L);
+    offer.setOrganizationId(10L);
+    offer.setActivityId(11L);
+    offer.setPositionId(20L);
+    offer.setRegistrationCycleId(101L);
+    offer.setStatus("PENDING");
+    offer.setExpiresAt(now.plusMinutes(10));
     when(offers.selectByCycleForUpdate(101L)).thenReturn(offer);
     service.cancel(21L, 100L, new CancellationRequest(null));
     assertThat(offer.getStatus()).isEqualTo("CANCELED");
@@ -132,18 +146,27 @@ class RegistrationCancellationServiceTest {
 
   @Test
   void repeatedForeignAndChangedCycleCancellationCannotMutate() {
-    rejects(() -> service.cancel(99L, 100L, new CancellationRequest(null)), "REGISTRATION_NOT_FOUND");
+    rejects(
+        () -> service.cancel(99L, 100L, new CancellationRequest(null)),
+        "REGISTRATION_NOT_FOUND");
     when(cycles.selectActiveCycleForUpdate(100L)).thenReturn(null);
-    rejects(() -> service.cancel(21L, 100L, new CancellationRequest(null)), "REGISTRATION_NOT_ACTIVE");
+    rejects(
+        () -> service.cancel(21L, 100L, new CancellationRequest(null)),
+        "REGISTRATION_NOT_ACTIVE");
     when(cycles.selectActiveCycleForUpdate(100L)).thenReturn(cycle(102L, 100L, 21L));
-    rejects(() -> service.cancel(21L, 100L, new CancellationRequest(null)), "REGISTRATION_NOT_ACTIVE");
+    rejects(
+        () -> service.cancel(21L, 100L, new CancellationRequest(null)),
+        "REGISTRATION_NOT_ACTIVE");
     verifyNoInteractions(audit, promotions);
   }
 
   @Test
   void auditFailureIsNotSwallowed() {
     IllegalStateException failure = new IllegalStateException("Audit unavailable");
-    doThrow(failure).when(audit).record(anyLong(), anyLong(), anyString(), anyString(), anyLong(), isNull());
-    assertThatThrownBy(() -> service.cancel(21L, 100L, new CancellationRequest(null))).isSameAs(failure);
+    doThrow(failure)
+        .when(audit)
+        .record(anyLong(), anyLong(), anyString(), anyString(), anyLong(), isNull());
+    assertThatThrownBy(() -> service.cancel(21L, 100L, new CancellationRequest(null)))
+        .isSameAs(failure);
   }
 }
