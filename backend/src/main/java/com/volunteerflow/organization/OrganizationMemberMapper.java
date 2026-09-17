@@ -6,6 +6,16 @@ import org.apache.ibatis.annotations.*;
 
 @Mapper
 public interface OrganizationMemberMapper extends BaseMapper<OrganizationMember> {
+  /** For expiry cleanup only; this is not an active-membership authorization check. */
+  @Select(
+      """
+      SELECT * FROM organization_member
+      WHERE organization_id=#{orgId} AND user_id=#{userId}
+      LIMIT 1 FOR UPDATE
+      """)
+  OrganizationMember selectMemberForUpdateAnyStatus(
+      @Param("userId") Long userId, @Param("orgId") Long orgId);
+
   @Select(
       "SELECT * FROM organization_member WHERE organization_id=#{orgId} AND user_id=#{userId} LIMIT"
           + " 1")

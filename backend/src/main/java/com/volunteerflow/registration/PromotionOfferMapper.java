@@ -10,6 +10,18 @@ import org.apache.ibatis.annotations.Select;
 
 @Mapper
 public interface PromotionOfferMapper extends BaseMapper<PromotionOffer> {
+  /** Discovery only: row locks belong to the per-offer transaction, never to this scan. */
+  @Select(
+      """
+      SELECT id FROM promotion_offer
+      WHERE status='PENDING' AND expires_at <= #{now}
+      ORDER BY expires_at, id
+      LIMIT #{batchSize}
+      """)
+  @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
+  List<Long> selectExpiredIds(
+      @Param("now") LocalDateTime now, @Param("batchSize") int batchSize);
+
   @Select("SELECT CURRENT_TIMESTAMP(6)")
   @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
   LocalDateTime currentDatabaseTime();
