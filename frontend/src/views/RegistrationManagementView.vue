@@ -58,15 +58,7 @@ async function load(keepError = false) {
     }
     const first = result.items[0];
     if (first && !form.value) {
-      try {
-        const definition = await getRegistrationForm(
-          first.activityId,
-          positionId,
-        );
-        if (alive && request === generation) form.value = definition;
-      } catch {
-        // Management remains usable if the optional question labels are unavailable.
-      }
+      void enrichForm(first.activityId, positionId, request);
     }
   } catch (cause) {
     if (!alive || request !== generation) return;
@@ -77,6 +69,19 @@ async function load(keepError = false) {
         : "报名加载失败，请刷新重试。";
   } finally {
     if (alive && request === generation) loading.value = false;
+  }
+}
+
+async function enrichForm(
+  activityId: string,
+  positionId: string,
+  request: number,
+) {
+  try {
+    const definition = await getRegistrationForm(activityId, positionId);
+    if (alive && request === generation) form.value = definition;
+  } catch {
+    // The list and its ID fallbacks remain usable if optional labels are unavailable.
   }
 }
 

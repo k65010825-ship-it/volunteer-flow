@@ -31,6 +31,15 @@ const row: ManagedRegistration = {
 function page(items = [row], total = items.length) {
   return { data: { items, total: String(total), page: "1", size: "20" } };
 }
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 async function open() {
   mock.onGet("/api/v1/activities/10/registration-form").reply(200, {
     data: {
@@ -51,6 +60,67 @@ afterEach(() => {
   mock.reset();
 });
 describe("RegistrationManagementView", () => {
+  it("renders the list before enrichment and ignores stale enrichment after navigation", async () => {
+    const oldEnrichment = deferred<[number, object]>();
+    mock.onGet("/api/v1/positions/21/registrations").reply(200, page());
+    mock
+      .onGet("/api/v1/activities/10/registration-form")
+      .reply(() => oldEnrichment.promise);
+    mock.onGet("/api/v1/positions/22/registrations").reply(
+      200,
+      page([
+        {
+          ...row,
+          activityId: "11",
+          positionId: "22",
+          realName: "新岗位候选人",
+        },
+      ]),
+    );
+    mock.onGet("/api/v1/activities/11/registration-form").reply(200, {
+      data: {
+        activity: { ...activityDetail.activity, id: "11", title: "新活动" },
+        position: {
+          ...activityDetail.positions[1],
+          id: "22",
+          name: "新岗位",
+        },
+        questions: [{ ...question(), title: "新岗位问题" }],
+      },
+    });
+
+    const wrapper = mount(RegistrationManagementView, {
+      props: { positionId: "21" },
+    });
+    wrappers.push(wrapper);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("小明");
+    expect(wrapper.find('[data-test="confirm"]').exists()).toBe(true);
+    expect(wrapper.text()).toContain("活动问题 #1");
+
+    await wrapper.setProps({ positionId: "22" });
+    await flushPromises();
+    expect(wrapper.text()).toContain("新岗位候选人");
+    expect(wrapper.text()).toContain("新岗位问题");
+
+    oldEnrichment.resolve([
+      200,
+      {
+        data: {
+          activity: activityDetail.activity,
+          position: activityDetail.positions[1],
+          questions: [{ ...question(), title: "旧岗位问题" }],
+        },
+      },
+    ]);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain("新岗位");
+    expect(wrapper.text()).toContain("新岗位问题");
+    expect(wrapper.text()).not.toContain("旧岗位问题");
+  });
+
   it("ignores an old command after navigating away and back", async () => {
     mock.onGet("/api/v1/positions/21/registrations").reply(200, page());
     mock.onGet("/api/v1/positions/22/registrations").reply(200, page([]));

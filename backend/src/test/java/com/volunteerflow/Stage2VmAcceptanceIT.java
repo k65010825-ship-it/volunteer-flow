@@ -267,18 +267,30 @@ SELECT COUNT(*) FROM (
     PromotionOffer invitation = pendingOffer(fixture.positionId());
     assertThat(cycles.selectById(invitation.getRegistrationCycleId()).getWaitlistSequence())
         .isEqualTo(2L);
+    LocalDateTime isolatedExpiry = LocalDateTime.of(2000, 1, 1, 0, 0);
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM promotion_offer WHERE id <> ? AND status = 'PENDING'"
+                    + " AND expires_at <= ?",
+                invitation.getId(),
+                isolatedExpiry))
+        .as("the bounded scan fixture must sort before every unrelated pending offer")
+        .isZero();
     assertThat(
             sql.update(
-                "UPDATE promotion_offer SET expires_at = DATE_SUB(NOW(6), INTERVAL 1 MINUTE) WHERE"
-                    + " id = ? AND organization_id = ?",
+                "UPDATE promotion_offer SET expires_at = ? WHERE id = ? AND organization_id = ?",
+                isolatedExpiry,
                 invitation.getId(),
                 organizationId))
         .isEqualTo(1);
-    // The shared database may already have more than 100 older expired offers.
-    // Verify scan predicates, not that our newly expired ID must be in the first batch.
+    assertThat(
+            count(
+                "SELECT COUNT(*) FROM promotion_offer WHERE status = 'PENDING' AND expires_at <= ?",
+                isolatedExpiry))
+        .isEqualTo(1);
     LocalDateTime scanTime = offers.currentDatabaseTime();
-    List<Long> scannedIds = offers.selectExpiredIds(scanTime, 100);
-    assertThat(scannedIds).hasSizeLessThanOrEqualTo(100);
+    List<Long> scannedIds = offers.selectExpiredIds(scanTime, 1);
+    assertThat(scannedIds).containsExactly(invitation.getId());
     for (Long scannedId : scannedIds) {
       PromotionOffer scanned = offers.selectById(scannedId);
       assertThat(scanned.getStatus()).isEqualTo("PENDING");
