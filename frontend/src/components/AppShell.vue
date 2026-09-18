@@ -25,11 +25,11 @@ async function logout() {
         ><svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 5.5h16v13H4zM8 3v5M16 3v5M4 10h16" /></svg
         >活动</RouterLink
-      ><a aria-disabled="true"
+      ><RouterLink to="/registrations"
         ><svg viewBox="0 0 24 24" aria-hidden="true">
           <circle cx="12" cy="8" r="4" />
           <path d="M4.5 21a7.5 7.5 0 0 1 15 0" /></svg
-        >我的</a
+        >我的报名</RouterLink
       ><a aria-disabled="true"
         ><svg viewBox="0 0 24 24" aria-hidden="true">
           <path

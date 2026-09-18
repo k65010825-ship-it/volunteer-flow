@@ -33,6 +33,15 @@ const router = createRouter({
       component: () => import("../views/ActivityDetailView.vue"),
       props: (r) => ({ id: String(r.params.id) }),
     },
+    {
+      path: "/registrations",
+      component: () => import("../views/MyRegistrationsView.vue"),
+    },
+    {
+      path: "/registrations/:id",
+      component: () => import("../views/RegistrationStatusView.vue"),
+      props: (r) => ({ id: String(r.params.id) }),
+    },
   ],
 });
 router.beforeEach(async (to) => {
