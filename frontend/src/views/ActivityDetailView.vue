@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  ref,
+  watch,
+  type ComponentPublicInstance,
+} from "vue";
 import { useRouter } from "vue-router";
 import { getActivity } from "../api/activities";
 import {
@@ -27,6 +34,10 @@ const answers = ref<Record<string, unknown>>({});
 const errors = ref<Record<string, string>>({});
 const submitting = ref(false);
 const submitError = ref("");
+const questionFields = new Map<
+  string,
+  InstanceType<typeof RegistrationQuestionField>
+>();
 const activePositions = computed(
   () =>
     detail.value?.positions.filter(
@@ -82,6 +93,20 @@ async function loadForm() {
 const questionKey = (question: RegistrationQuestion) =>
   `${question.scope}:${question.id}`;
 
+function setQuestionField(
+  key: string,
+  instance: Element | ComponentPublicInstance | null,
+) {
+  if (instance) {
+    questionFields.set(
+      key,
+      instance as InstanceType<typeof RegistrationQuestionField>,
+    );
+  } else {
+    questionFields.delete(key);
+  }
+}
+
 function isEmpty(value: unknown) {
   return (
     value == null ||
@@ -119,7 +144,18 @@ async function submit() {
     if (!validAnswer(question, value))
       errors.value[questionKey(question)] = "请完成必填问题或选择有效答案。";
   }
-  if (Object.keys(errors.value).length) return;
+  const firstInvalid = form.value.questions.find(
+    (question) => errors.value[questionKey(question)],
+  );
+  if (firstInvalid) {
+    const currentActivity = activityRequest;
+    const currentForm = formRequest;
+    await nextTick();
+    if (currentActivity === activityRequest && currentForm === formRequest) {
+      questionFields.get(questionKey(firstInvalid))?.focusControl();
+    }
+    return;
+  }
   const request = activityRequest;
   const payload = {
     positionId: selected.value,
@@ -240,6 +276,10 @@ const format = (v: string) =>
             <RegistrationQuestionField
               v-for="question in form.questions"
               :key="questionKey(question)"
+              :ref="
+                (instance) =>
+                  setQuestionField(questionKey(question), instance)
+              "
               v-model="answers[questionKey(question)]"
               :question="question"
               :error="errors[questionKey(question)]"

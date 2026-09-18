@@ -18,6 +18,7 @@ afterEach(() => {
 });
 async function open() {
   const wrapper = mount(RegistrationStatusView, {
+    attachTo: document.body,
     props: { id: "30" },
     global: { stubs: { RouterLink: { template: "<a><slot /></a>" } } },
   });
@@ -33,6 +34,47 @@ const offer = {
 };
 
 describe("RegistrationStatusView", () => {
+  it("focuses the newly revealed reason only when the server requires late cancellation details", async () => {
+    mock.onPost("/api/v1/registrations/30/cancellation").reply(422, {
+      code: "CANCELLATION_REASON_REQUIRED",
+    });
+    const wrapper = await open();
+    const button = wrapper.get<HTMLButtonElement>('[data-test="cancel"]');
+    button.element.focus();
+    await button.trigger("click");
+    await flushPromises();
+    expect(document.activeElement).toBe(
+      wrapper.get('[data-test="cancellation-reason"]').element,
+    );
+  });
+
+  it("does not focus a late-reason field from a previous route's response", async () => {
+    let finish!: (value: [number, unknown]) => void;
+    mock
+      .onPost("/api/v1/registrations/30/cancellation")
+      .reply(
+        () =>
+          new Promise((resolve) => {
+            finish = resolve;
+          }),
+      );
+    const wrapper = await open();
+    await wrapper.get('[data-test="cancel"]').trigger("click");
+    mock.onGet("/api/v1/registrations/31").reply(200, {
+      data: registration({ registrationId: "31" }),
+    });
+    await wrapper.setProps({ id: "31" });
+    await flushPromises();
+    const refresh = wrapper.get<HTMLButtonElement>('[data-test="refresh"]');
+    refresh.element.focus();
+    finish([422, { code: "CANCELLATION_REASON_REQUIRED" }]);
+    await flushPromises();
+    expect(document.activeElement).toBe(refresh.element);
+    expect(wrapper.find('[data-test="cancellation-reason"]').exists()).toBe(
+      false,
+    );
+  });
+
   it("does not let an old action refresh unlock a new route's pending action", async () => {
     mock.onGet("/api/v1/registrations/30").reply(200, {
       data: registration({ pendingOffer: offer }),

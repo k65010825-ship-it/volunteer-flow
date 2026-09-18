@@ -1,5 +1,12 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import {
+  computed,
+  nextTick,
+  onBeforeUnmount,
+  onMounted,
+  ref,
+  watch,
+} from "vue";
 import { getActivity } from "../api/activities";
 import {
   cancelRegistration,
@@ -20,6 +27,7 @@ const actionError = ref("");
 const busy = ref(false);
 const reasonRequired = ref(false);
 const reason = ref("");
+const reasonInput = ref<HTMLTextAreaElement | null>(null);
 const now = ref(Date.now());
 let generation = 0;
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -118,6 +126,7 @@ async function cancel() {
   busy.value = true;
   actionError.value = "";
   let needsRefresh = true;
+  let shouldFocusReason = false;
   try {
     await cancelRegistration(
       id,
@@ -129,6 +138,7 @@ async function cancel() {
       if (registrationErrorCode(error) === "CANCELLATION_REASON_REQUIRED") {
         reasonRequired.value = true;
         needsRefresh = false;
+        shouldFocusReason = true;
       }
       actionError.value = registrationErrorMessage(error);
     }
@@ -136,6 +146,13 @@ async function cancel() {
     if (id === props.id && request === generation) {
       busy.value = false;
       if (needsRefresh) await load();
+      if (shouldFocusReason) {
+        // Wait until the revealed field is rendered and no longer disabled.
+        await nextTick();
+        if (id === props.id && request === generation && reasonRequired.value) {
+          reasonInput.value?.focus();
+        }
+      }
     }
   }
 }
@@ -283,6 +300,7 @@ onBeforeUnmount(() => {
           >
           <textarea
             id="cancellation-reason"
+            ref="reasonInput"
             v-model="reason"
             data-test="cancellation-reason"
             rows="3"

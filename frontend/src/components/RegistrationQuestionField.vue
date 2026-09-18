@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { computed, ref } from "vue";
 import type { RegistrationQuestion } from "../api/types";
 
 const props = defineProps<{
@@ -8,6 +8,7 @@ const props = defineProps<{
   error?: string;
 }>();
 const emit = defineEmits<{ "update:modelValue": [value: unknown] }>();
+const fieldElement = ref<HTMLElement | null>(null);
 const fieldId = computed(
   () => `question-${props.question.scope}-${props.question.id}`,
 );
@@ -32,10 +33,19 @@ function toggleChoice(option: string, checked: boolean) {
       : previous.filter((value) => value !== option),
   );
 }
+
+/** Keep the parent independent of the input markup used for each question type. */
+function focusControl() {
+  fieldElement.value
+    ?.querySelector<HTMLElement>("textarea:not(:disabled), input:not(:disabled)")
+    ?.focus();
+}
+
+defineExpose({ focusControl });
 </script>
 
 <template>
-  <div class="question-field">
+  <div ref="fieldElement" class="question-field">
     <template v-if="question.type === 'TEXT'">
       <label :for="fieldId"
         >{{ question.title }}

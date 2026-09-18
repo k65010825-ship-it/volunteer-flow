@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { apiClient } from "../api/http";
 import { activityDetail, question } from "../test/registrationFixtures";
+import type { QuestionType } from "../api/types";
 import ActivityDetailView from "./ActivityDetailView.vue";
 
 const mock = new MockAdapter(apiClient);
@@ -43,6 +44,7 @@ async function open() {
   });
   await router.push("/activities/10");
   const wrapper = mount(ActivityDetailView, {
+    attachTo: document.body,
     props: { id: "10" },
     global: { plugins: [router] },
   });
@@ -52,6 +54,58 @@ async function open() {
 }
 
 describe("ActivityDetailView registration", () => {
+  it.each<QuestionType>([
+    "TEXT",
+    "SINGLE_CHOICE",
+    "MULTIPLE_CHOICE",
+    "BOOLEAN",
+  ])(
+    "focuses the first invalid %s question after rendering validation errors",
+    async (type) => {
+      mock.onGet("/api/v1/activities/10/registration-form").reply(200, {
+        data: {
+          activity: activityDetail.activity,
+          position: activityDetail.positions[0],
+          questions: [
+            { ...question("TEXT", []), required: false },
+            { ...question(type), scope: "POSITION" },
+          ],
+        },
+      });
+      const { wrapper } = await open();
+      await wrapper.get('input[name="position"][value="20"]').setValue();
+      await flushPromises();
+      const button = wrapper.get<HTMLButtonElement>(
+        '[data-test="submit-registration"]',
+      );
+      button.element.focus();
+      await button.trigger("click");
+      await flushPromises();
+      const target =
+        type === "TEXT"
+          ? wrapper.get("#question-POSITION-1")
+          : wrapper.get('input[name="question-POSITION-1"]');
+      expect(document.activeElement).toBe(target.element);
+      expect(wrapper.findAll('[role="alert"]')).toHaveLength(1);
+      expect(mock.history.post).toHaveLength(0);
+    },
+  );
+
+  it("does not move focus back to an invalid form after the position changes", async () => {
+    const { wrapper } = await open();
+    await wrapper.get('input[name="position"][value="20"]').setValue();
+    await flushPromises();
+    void wrapper.get('[data-test="submit-registration"]').trigger("click");
+    const nextPosition = wrapper.get<HTMLInputElement>(
+      'input[name="position"][value="21"]',
+    );
+    nextPosition.element.focus();
+    await nextPosition.setValue();
+    await flushPromises();
+    expect(document.activeElement).toBe(nextPosition.element);
+    expect(wrapper.findAll('[role="alert"]')).toHaveLength(0);
+  });
+
   it("validates text and multiple-choice requirements and submits scoped answers without collisions", async () => {
     mock.onGet("/api/v1/activities/10/registration-form").reply(200, {
       data: {
