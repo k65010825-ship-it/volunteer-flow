@@ -11,6 +11,72 @@ import type {
   RegistrationStatus,
 } from "./types";
 
+export type ReviewDecision = "CONFIRM" | "WAITLIST" | "REJECT";
+export interface ManagedRegistration {
+  registrationId: EntityId;
+  organizationId: EntityId;
+  activityId: EntityId;
+  cycleId: EntityId;
+  positionId: EntityId;
+  cycleNumber: number;
+  userId: EntityId;
+  realName: string;
+  studentNumber: string;
+  contact: string;
+  status: RegistrationStatus;
+  waitlistSequence: string | null;
+  submittedAt: string;
+  reviewedBy: EntityId | null;
+  reviewedAt: string | null;
+  reviewReason: string | null;
+  answers: RegistrationAnswer[];
+  offer:
+    | (OwnOffer & { respondedAt: string | null; createdBy: EntityId | null })
+    | null;
+}
+export interface ManagedRegistrationPage {
+  items: ManagedRegistration[];
+  total: string;
+  page: string;
+  size: string;
+}
+
+export async function listPositionRegistrations(
+  positionId: EntityId,
+  params: { status?: RegistrationStatus; page: number; size: number },
+): Promise<ManagedRegistrationPage> {
+  return (
+    await apiClient.get<{ data: ManagedRegistrationPage }>(
+      `/api/v1/positions/${positionId}/registrations`,
+      { params },
+    )
+  ).data.data;
+}
+
+export async function reviewRegistration(
+  id: EntityId,
+  body: { decision: ReviewDecision; reason: string },
+): Promise<RegistrationState> {
+  return (
+    await apiClient.post<{ data: RegistrationState }>(
+      `/api/v1/registrations/${id}/review-decisions`,
+      body,
+    )
+  ).data.data;
+}
+
+export async function createPromotionOffer(
+  id: EntityId,
+  body: { reason?: string },
+): Promise<OwnOffer> {
+  return (
+    await apiClient.post<{ data: OwnOffer }>(
+      `/api/v1/registrations/${id}/promotion-offers`,
+      body,
+    )
+  ).data.data;
+}
+
 export async function getRegistrationForm(
   activityId: EntityId,
   positionId: EntityId,
