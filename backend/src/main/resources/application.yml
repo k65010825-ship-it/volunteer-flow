@@ -21,6 +21,10 @@ spring:
       timeout: ${REDIS_COMMAND_TIMEOUT:2s}
 
 volunteerflow:
+  registration:
+    promotion-expiry:
+      scan-delay: ${PROMOTION_EXPIRY_SCAN_DELAY:30s}
+      batch-size: ${PROMOTION_EXPIRY_BATCH_SIZE:100}
   redis:
     environment: ${APP_ENV:local}
   bootstrap-admin:

@@ -8,6 +8,9 @@ import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -24,6 +27,8 @@ import org.springframework.transaction.annotation.Transactional;
 public class ActivityService {
   private final ActivityMapper activities;
   private final ActivityPositionMapper positions;
+  private final ActivityQuestionMapper activityQuestions;
+  private final ActivityPositionQuestionMapper positionQuestions;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
   private final Clock clock;
@@ -31,11 +36,15 @@ public class ActivityService {
   public ActivityService(
       ActivityMapper activities,
       ActivityPositionMapper positions,
+      ActivityQuestionMapper activityQuestions,
+      ActivityPositionQuestionMapper positionQuestions,
       OrganizationAuthorizationService authorization,
       AuditService audit,
       Clock clock) {
     this.activities = activities;
     this.positions = positions;
+    this.activityQuestions = activityQuestions;
+    this.positionQuestions = positionQuestions;
     this.authorization = authorization;
     this.audit = audit;
     this.clock = clock;
@@ -111,14 +120,36 @@ public class ActivityService {
 
   @Transactional
   public Activity publish(Long userId, Long id) {
-    Activity activity = required(id);
+    // Lock order for form configuration: activity -> positions -> questions.
+    Activity activity = activities.selectByIdForUpdate(id);
+    if (activity == null) {
+      throw new BusinessException(
+          HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+    }
     authorization.requirePermission(userId, activity.getOrganizationId(), "activity:publish");
     if (!"DRAFT".equals(activity.getStatus()))
       throw conflict("ACTIVITY_NOT_DRAFT", "Only draft activities can be published");
     // Publishing is allowed only after both the schedule and staffing structure are complete.
     validate(activity);
-    if (positions.countActiveByActivity(activity.getOrganizationId(), id) < 1)
+    List<ActivityPosition> activePositions =
+        positions.selectActiveByActivityForUpdate(activity.getOrganizationId(), id);
+    if (activePositions.isEmpty())
       throw semantic("ACTIVITY_POSITION_REQUIRED", "At least one active position is required");
+    // Locking reads bypass both an older InnoDB snapshot and MyBatis session-cache entries.
+    // Holding the activity lock prevents question writers from changing this form until commit.
+    int commonQuestionCount = activityQuestions.selectIdsByActivityForUpdate(id).size();
+    Map<Long, Long> positionQuestionCounts =
+        positionQuestions.selectPositionIdsByActivityForUpdate(id).stream()
+            .collect(Collectors.groupingBy(Function.identity(), Collectors.counting()));
+    if (activePositions.stream()
+        .anyMatch(
+            position ->
+                commonQuestionCount + positionQuestionCounts.getOrDefault(position.getId(), 0L)
+                    > 10)) {
+      throw semantic(
+          "TOO_MANY_REGISTRATION_QUESTIONS",
+          "Each position may have at most ten combined registration questions");
+    }
     activity.setStatus("PUBLISHED");
     activity.setPublishedAt(now());
     activities.updateById(activity);

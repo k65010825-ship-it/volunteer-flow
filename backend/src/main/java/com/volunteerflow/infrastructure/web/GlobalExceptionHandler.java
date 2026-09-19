@@ -1,6 +1,8 @@
 package com.volunteerflow.infrastructure.web;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.dao.DuplicateKeyException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -22,6 +24,26 @@ public class GlobalExceptionHandler {
       MethodArgumentNotValidException exception, HttpServletRequest request) {
     return problem(
         HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Request validation failed", request);
+  }
+
+  @ExceptionHandler(DuplicateKeyException.class)
+  public ResponseEntity<ProblemDetail> handleDuplicateKey(
+      DuplicateKeyException exception, HttpServletRequest request) {
+    return problem(
+        HttpStatus.CONFLICT,
+        "REGISTRATION_CONFLICT",
+        "Registration changed concurrently; refresh and retry",
+        request);
+  }
+
+  @ExceptionHandler(OptimisticLockingFailureException.class)
+  public ResponseEntity<ProblemDetail> handleConcurrentModification(
+      OptimisticLockingFailureException exception, HttpServletRequest request) {
+    return problem(
+        HttpStatus.CONFLICT,
+        "CONCURRENT_MODIFICATION",
+        "Resource changed concurrently; refresh and retry",
+        request);
   }
 
   private ResponseEntity<ProblemDetail> problem(
