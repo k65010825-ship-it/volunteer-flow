@@ -6,6 +6,11 @@ import org.apache.ibatis.annotations.*;
 
 @Mapper
 public interface ActivityMapper extends BaseMapper<Activity> {
+  /** Shared serialization point for publication and draft question mutations. */
+  @Select("SELECT * FROM activity WHERE id=#{id} FOR UPDATE")
+  @Options(flushCache = Options.FlushCachePolicy.TRUE)
+  Activity selectByIdForUpdate(@Param("id") Long id);
+
   @Select(
       "SELECT * FROM activity WHERE organization_id=#{orgId} AND status='PUBLISHED' ORDER BY"
           + " activity_start_at,id")

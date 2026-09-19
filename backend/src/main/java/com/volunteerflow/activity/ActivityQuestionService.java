@@ -80,21 +80,21 @@ public class ActivityQuestionService {
   public ActivityQuestion updateActivityQuestion(
       Long userId, Long activityId, Long questionId, QuestionRequest request) {
     Activity activity = editableActivity(userId, activityId);
-    ActivityQuestion entity = activityQuestions.selectById(questionId);
+    ActivityQuestion entity = activityQuestions.selectByIdForUpdate(questionId);
     if (entity == null
         || !activityId.equals(entity.getActivityId())
         || !activity.getOrganizationId().equals(entity.getOrganizationId())) {
       throw questionNotFound();
     }
     apply(entity, validate(request));
-    activityQuestions.updateById(entity);
+    activityQuestions.updateDefinition(entity);
     return entity;
   }
 
   @Transactional
   public void deleteActivityQuestion(Long userId, Long activityId, Long questionId) {
     Activity activity = editableActivity(userId, activityId);
-    ActivityQuestion entity = activityQuestions.selectById(questionId);
+    ActivityQuestion entity = activityQuestions.selectByIdForUpdate(questionId);
     if (entity == null
         || !activityId.equals(entity.getActivityId())
         || !activity.getOrganizationId().equals(entity.getOrganizationId())) {
@@ -107,23 +107,24 @@ public class ActivityQuestionService {
   public ActivityPositionQuestion updatePositionQuestion(
       Long userId, Long positionId, Long questionId, QuestionRequest request) {
     EditablePosition editable = editablePosition(userId, positionId);
-    ActivityPositionQuestion entity = positionQuestions.selectById(questionId);
+    ActivityPositionQuestion entity = positionQuestions.selectByIdForUpdate(questionId);
     requirePositionQuestion(entity, editable.activity(), positionId);
     apply(entity, validate(request));
-    positionQuestions.updateById(entity);
+    positionQuestions.updateDefinition(entity);
     return entity;
   }
 
   @Transactional
   public void deletePositionQuestion(Long userId, Long positionId, Long questionId) {
     EditablePosition editable = editablePosition(userId, positionId);
-    ActivityPositionQuestion entity = positionQuestions.selectById(questionId);
+    ActivityPositionQuestion entity = positionQuestions.selectByIdForUpdate(questionId);
     requirePositionQuestion(entity, editable.activity(), positionId);
     positionQuestions.deleteById(questionId);
   }
 
   private Activity editableActivity(Long userId, Long activityId) {
-    Activity activity = activities.selectById(activityId);
+    // Publication uses this same row lock. Only the locked current state may authorize editing.
+    Activity activity = activities.selectByIdForUpdate(activityId);
     if (activity == null) {
       throw new BusinessException(
           HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
@@ -144,7 +145,11 @@ public class ActivityQuestionService {
       throw positionNotFound();
     }
     Activity activity = editableActivity(userId, position.getActivityId());
-    if (!activity.getOrganizationId().equals(position.getOrganizationId())) {
+    // The first read only discovers activityId; lock and revalidate after the activity lock.
+    position = positions.selectByIdForUpdate(positionId);
+    if (position == null
+        || !activity.getId().equals(position.getActivityId())
+        || !activity.getOrganizationId().equals(position.getOrganizationId())) {
       throw positionNotFound();
     }
     return new EditablePosition(activity, position);

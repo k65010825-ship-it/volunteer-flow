@@ -250,8 +250,8 @@ VolunteerFlow/
 
 | 检查 | 结果 |
 |---|---|
-| 后端 `clean verify` | 248 个测试通过，JAR 打包通过 |
-| 前端 Vitest | 42 个测试通过 |
+| 后端 `clean verify` | 261 个测试通过，JAR 打包通过 |
+| 前端 Vitest | 43 个测试通过 |
 | 前端 TypeScript / Vite | 类型检查与生产构建通过 |
 | `Stage2VmAcceptanceIT` | 配置的 MySQL 实库测试通过，无跳过 |
 | 100 个独立成员请求，固定 20 线程竞争 20 个名额 | 20 个 `CONFIRMED`、80 个 `WAITLISTED` |

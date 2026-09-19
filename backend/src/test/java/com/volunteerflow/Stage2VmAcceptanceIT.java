@@ -9,6 +9,9 @@ import static org.mockito.Mockito.reset;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.fasterxml.jackson.databind.node.TextNode;
+import com.volunteerflow.activity.ActivityMapper;
+import com.volunteerflow.activity.ActivityPositionQuestionMapper;
+import com.volunteerflow.activity.ActivityQuestionMapper;
 import com.volunteerflow.activity.ActivityQuestionService;
 import com.volunteerflow.activity.ActivityService;
 import com.volunteerflow.audit.AuditService;
@@ -43,6 +46,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.stream.LongStream;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -51,6 +55,8 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Opt-in live MySQL acceptance: -Dtest=Stage2VmAcceptanceIT. No replacement database or skips. All
@@ -73,6 +79,10 @@ class Stage2VmAcceptanceIT {
   private final RegistrationCycleMapper cycles;
   private final JdbcTemplate sql;
   private final Clock clock;
+  private final ActivityMapper activityMapper;
+  private final ActivityQuestionMapper activityQuestions;
+  private final ActivityPositionQuestionMapper positionQuestions;
+  private final TransactionTemplate transactions;
 
   // Never let the global scanner process unrelated users' expired offers during a test.
   // The real expiry service below is invoked only for this run's generated offer IDs.
@@ -107,7 +117,11 @@ class Stage2VmAcceptanceIT {
       PromotionOfferMapper offers,
       RegistrationCycleMapper cycles,
       JdbcTemplate sql,
-      Clock clock) {
+      Clock clock,
+      ActivityMapper activityMapper,
+      ActivityQuestionMapper activityQuestions,
+      ActivityPositionQuestionMapper positionQuestions,
+      PlatformTransactionManager transactionManager) {
     this.users = users;
     this.organizations = organizations;
     this.activities = activities;
@@ -122,7 +136,261 @@ class Stage2VmAcceptanceIT {
     this.cycles = cycles;
     this.sql = sql;
     this.clock = clock;
+    this.activityMapper = activityMapper;
+    this.activityQuestions = activityQuestions;
+    this.positionQuestions = positionQuestions;
+    this.transactions = new TransactionTemplate(transactionManager);
   }
+
+  @Test
+  void publicationCountsCommittedQuestionsEvenAfterItsRepeatableReadSnapshotWasCreated()
+      throws Exception {
+    try {
+      createOrganizationAndMembers(0);
+      for (boolean positionScope : List.of(false, true)) {
+        Fixture fixture = createDraftActivity("FIRST_COME", 1);
+        for (int index = 0; index < 9; index++) {
+          createQuestion(fixture, positionScope, "existing-" + index, index + 2);
+        }
+        CountDownLatch snapshotReady = new CountDownLatch(1);
+        CountDownLatch mutationCommitted = new CountDownLatch(1);
+        List<String> outcomes =
+            concurrently(
+                List.of(
+                    () ->
+                        transactions.execute(
+                            status -> {
+                              // Prime both MySQL's repeatable-read snapshot and MyBatis's session
+                              // cache.
+                              assertThat(
+                                      activityMapper.selectById(fixture.activityId()).getStatus())
+                                  .isEqualTo("DRAFT");
+                              assertThat(
+                                      activityQuestions.countByActivity(fixture.activityId())
+                                          + positionQuestions.maxQuestionCountByActivity(
+                                              fixture.activityId()))
+                                  .isEqualTo(10);
+                              snapshotReady.countDown();
+                              await(mutationCommitted);
+                              String outcome = publicationOutcome(fixture.activityId());
+                              if (!"PUBLISHED".equals(outcome)) status.setRollbackOnly();
+                              return outcome;
+                            }),
+                    () -> {
+                      await(snapshotReady);
+                      try {
+                        createQuestion(fixture, positionScope, "concurrent-eleventh", 11);
+                        return "CREATED";
+                      } finally {
+                        mutationCommitted.countDown();
+                      }
+                    }));
+        assertThat(outcomes).containsExactly("TOO_MANY_REGISTRATION_QUESTIONS", "CREATED");
+        assertThat(activityMapper.selectById(fixture.activityId()).getStatus()).isEqualTo("DRAFT");
+        assertThat(
+                activityQuestions.countByActivity(fixture.activityId())
+                    + positionQuestions.maxQuestionCountByActivity(fixture.activityId()))
+            .isEqualTo(11);
+      }
+      System.out.println(
+          "Stage2 publication current-read assertions passed for both question scopes.");
+    } finally {
+      if (workersStopped) cleanup();
+      else
+        throw new IllegalStateException("Workers still active; cleanup withheld for run " + prefix);
+    }
+  }
+
+  @Test
+  void publicationSerializesAllSixQuestionMutationsAndKeepsThePublishedFormFrozen()
+      throws Exception {
+    try {
+      createOrganizationAndMembers(0);
+      for (String operation :
+          List.of(
+              "ACTIVITY_CREATE",
+              "ACTIVITY_UPDATE",
+              "ACTIVITY_DELETE",
+              "POSITION_CREATE",
+              "POSITION_UPDATE",
+              "POSITION_DELETE")) {
+        Fixture fixture = createDraftActivity("FIRST_COME", 1);
+        Long positionQuestionId =
+            questions
+                .createPositionQuestion(
+                    ownerId,
+                    fixture.positionId(),
+                    new ActivityQuestionService.QuestionRequest(
+                        "TEXT", "position-original", false, List.of(), 1))
+                .getId();
+        assertPublicationBlocksMutation(fixture, positionQuestionId, operation);
+        assertThat(activityMapper.selectById(fixture.activityId()).getStatus())
+            .isEqualTo("PUBLISHED");
+        assertThat(activityQuestions.selectByActivity(organizationId, fixture.activityId()))
+            .singleElement()
+            .satisfies(question -> assertThat(question.getTitle()).isEqualTo("培训意愿"));
+        assertThat(
+                positionQuestions.selectByPosition(
+                    organizationId, fixture.activityId(), fixture.positionId()))
+            .singleElement()
+            .satisfies(question -> assertThat(question.getTitle()).isEqualTo("position-original"));
+      }
+      System.out.println(
+          "Stage2 publication freeze assertions passed: six concurrent mutation paths rejected.");
+    } finally {
+      if (workersStopped) cleanup();
+      else
+        throw new IllegalStateException("Workers still active; cleanup withheld for run " + prefix);
+    }
+  }
+
+  @Test
+  void changingChoiceQuestionsToTextOrBooleanClearsStoredOptionsInBothTables() {
+    try {
+      createOrganizationAndMembers(0);
+      Fixture fixture = createDraftActivity("FIRST_COME", 1);
+      int sortOrder = 2;
+      for (String type : List.of("TEXT", "BOOLEAN")) {
+        var choice =
+            new ActivityQuestionService.QuestionRequest(
+                "SINGLE_CHOICE", "choice", true, List.of("yes", "no"), sortOrder++);
+        Long activityQuestionId =
+            questions.createActivityQuestion(ownerId, fixture.activityId(), choice).getId();
+        Long positionQuestionId =
+            questions.createPositionQuestion(ownerId, fixture.positionId(), choice).getId();
+        var replacement =
+            new ActivityQuestionService.QuestionRequest(
+                type, "replacement", false, List.of(), sortOrder++);
+        questions.updateActivityQuestion(
+            ownerId, fixture.activityId(), activityQuestionId, replacement);
+        questions.updatePositionQuestion(
+            ownerId, fixture.positionId(), positionQuestionId, replacement);
+        // Fresh JDBC reads assert actual committed columns, not the returned in-memory entities.
+        for (var target :
+            List.of(
+                new QuestionRow("activity_question", activityQuestionId),
+                new QuestionRow("activity_position_question", positionQuestionId))) {
+          var row =
+              sql.queryForMap(
+                  "SELECT question_type, options_json FROM " + target.table() + " WHERE id = ?",
+                  target.id());
+          assertThat(row.get("question_type")).isEqualTo(type);
+          assertThat(row.get("options_json")).as(target.table() + " " + type).isNull();
+        }
+      }
+      System.out.println(
+          "Stage2 persisted null-options assertions passed: both tables, TEXT and BOOLEAN.");
+    } finally {
+      cleanup();
+    }
+  }
+
+  private void assertPublicationBlocksMutation(
+      Fixture fixture, Long positionQuestionId, String operation) throws Exception {
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    workersStopped = false;
+    CountDownLatch start = new CountDownLatch(1);
+    CountDownLatch publishedInTransaction = new CountDownLatch(1);
+    CountDownLatch mutationStarted = new CountDownLatch(1);
+    CountDownLatch allowCommit = new CountDownLatch(1);
+    try {
+      Future<String> publisher =
+          executor.submit(
+              () -> {
+                await(start);
+                return transactions.execute(
+                    status -> {
+                      activities.publish(ownerId, fixture.activityId());
+                      publishedInTransaction.countDown();
+                      await(allowCommit);
+                      return "PUBLISHED";
+                    });
+              });
+      Future<String> editor =
+          executor.submit(
+              () -> {
+                await(start);
+                await(publishedInTransaction);
+                mutationStarted.countDown();
+                try {
+                  var replacement =
+                      new ActivityQuestionService.QuestionRequest(
+                          "TEXT", "changed", false, List.of(), 2);
+                  switch (operation) {
+                    case "ACTIVITY_CREATE" ->
+                        questions.createActivityQuestion(
+                            ownerId, fixture.activityId(), replacement);
+                    case "ACTIVITY_UPDATE" ->
+                        questions.updateActivityQuestion(
+                            ownerId, fixture.activityId(), fixture.questionId(), replacement);
+                    case "ACTIVITY_DELETE" ->
+                        questions.deleteActivityQuestion(
+                            ownerId, fixture.activityId(), fixture.questionId());
+                    case "POSITION_CREATE" ->
+                        questions.createPositionQuestion(
+                            ownerId, fixture.positionId(), replacement);
+                    case "POSITION_UPDATE" ->
+                        questions.updatePositionQuestion(
+                            ownerId, fixture.positionId(), positionQuestionId, replacement);
+                    case "POSITION_DELETE" ->
+                        questions.deletePositionQuestion(
+                            ownerId, fixture.positionId(), positionQuestionId);
+                    default -> throw new IllegalArgumentException(operation);
+                  }
+                  return "MUTATED";
+                } catch (BusinessException exception) {
+                  return exception.code();
+                }
+              });
+      start.countDown();
+      await(mutationStarted);
+      try {
+        assertThatThrownBy(() -> editor.get(500, TimeUnit.MILLISECONDS))
+            .as(operation + " must wait for the publication transaction")
+            .isInstanceOf(TimeoutException.class);
+      } finally {
+        allowCommit.countDown();
+      }
+      assertThat(publisher.get(15, TimeUnit.SECONDS)).isEqualTo("PUBLISHED");
+      assertThat(editor.get(15, TimeUnit.SECONDS)).isEqualTo("ACTIVITY_NOT_DRAFT");
+    } finally {
+      start.countDown();
+      allowCommit.countDown();
+      executor.shutdownNow();
+      workersStopped = executor.awaitTermination(30, TimeUnit.SECONDS);
+      if (!workersStopped)
+        throw new IllegalStateException("Worker shutdown timed out for run " + prefix);
+    }
+  }
+
+  private void createQuestion(Fixture fixture, boolean positionScope, String title, int sortOrder) {
+    var request =
+        new ActivityQuestionService.QuestionRequest("TEXT", title, false, List.of(), sortOrder);
+    if (positionScope) questions.createPositionQuestion(ownerId, fixture.positionId(), request);
+    else questions.createActivityQuestion(ownerId, fixture.activityId(), request);
+  }
+
+  private String publicationOutcome(Long activityId) {
+    try {
+      activities.publish(ownerId, activityId);
+      return "PUBLISHED";
+    } catch (BusinessException exception) {
+      return exception.code();
+    }
+  }
+
+  private void await(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(15, TimeUnit.SECONDS))
+          .as("concurrent transaction rendezvous")
+          .isTrue();
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException("Concurrent acceptance interrupted", exception);
+    }
+  }
+
+  private record QuestionRow(String table, Long id) {}
 
   @Test
   void oneHundredConcurrentUsersNeverOversellTwentyPlaces() throws Exception {
@@ -444,6 +712,10 @@ SELECT COUNT(*) FROM (
   }
 
   private void createOrganizationAndMembers() {
+    createOrganizationAndMembers(101);
+  }
+
+  private void createOrganizationAndMembers(int members) {
     AppUser platformAdmin = user("admin", "PLATFORM_ADMIN");
     outsiderId = platformAdmin.getId();
     ownerId = user("owner", "USER").getId();
@@ -460,7 +732,7 @@ SELECT COUNT(*) FROM (
             ownerId,
             organizationId,
             new CreateInviteRequest(101, Instant.now().plus(1, ChronoUnit.DAYS)));
-    for (int index = 0; index < 101; index++) {
+    for (int index = 0; index < members; index++) {
       AppUser member = user("m" + index, "USER");
       organizations.joinByInvite(member.getId(), invitation.code());
       memberIds.add(member.getId());
@@ -468,6 +740,12 @@ SELECT COUNT(*) FROM (
   }
 
   private Fixture createActivity(String mode, int capacity) {
+    Fixture fixture = createDraftActivity(mode, capacity);
+    activities.publish(ownerId, fixture.activityId());
+    return fixture;
+  }
+
+  private Fixture createDraftActivity(String mode, int capacity) {
     LocalDateTime now = LocalDateTime.now(clock);
     var activity =
         activities.create(
@@ -499,7 +777,6 @@ SELECT COUNT(*) FROM (
             ownerId,
             activity.getId(),
             new ActivityQuestionService.QuestionRequest("TEXT", "培训意愿", true, List.of(), 1));
-    activities.publish(ownerId, activity.getId());
     return new Fixture(
         activity.getId(), position.getId(), secondPosition.getId(), question.getId());
   }
