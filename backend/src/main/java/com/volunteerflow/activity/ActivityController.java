@@ -3,6 +3,9 @@ package com.volunteerflow.activity;
 import com.volunteerflow.auth.CurrentUser;
 import com.volunteerflow.activity.ActivityChangeService.ActivityChangeRequest;
 import com.volunteerflow.activity.ActivityChangeService.ActivityChangeResult;
+import com.volunteerflow.activity.ActivityChangeService.PositionChangeRequest;
+import com.volunteerflow.activity.ActivityChangeService.PositionChangeResult;
+import com.volunteerflow.activity.ActivityChangeService.PositionPublicationResult;
 import com.volunteerflow.infrastructure.web.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -77,6 +80,20 @@ public class ActivityController {
       @PathVariable Long id,
       @Valid @RequestBody ActivityChangeRequest request) {
     return ApiResponse.of(changes.changeActivity(currentUser.id(), id, request));
+  }
+
+  @PostMapping("/positions/{positionId}/changes")
+  public ApiResponse<PositionChangeResult> changePosition(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @PathVariable Long positionId,
+      @Valid @RequestBody PositionChangeRequest request) {
+    return ApiResponse.of(changes.changePosition(currentUser.id(), positionId, request));
+  }
+
+  @PostMapping("/positions/{positionId}/publication")
+  public ApiResponse<PositionPublicationResult> publishPosition(
+      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long positionId) {
+    return ApiResponse.of(changes.publishPosition(currentUser.id(), positionId));
   }
 
   @GetMapping("/organizations/{orgId}/activities")

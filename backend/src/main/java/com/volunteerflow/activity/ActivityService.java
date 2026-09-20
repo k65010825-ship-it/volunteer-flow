@@ -92,16 +92,26 @@ public class ActivityService {
 
   @Transactional
   public ActivityPosition addPosition(Long userId, Long activityId, PositionRequest request) {
-    Activity activity = required(activityId);
-    authorization.requirePermission(userId, activity.getOrganizationId(), "activity:create");
-    if (!"DRAFT".equals(activity.getStatus()))
-      throw conflict("ACTIVITY_NOT_DRAFT", "Positions can only be added directly to drafts");
+    Activity activity = activities.selectByIdForUpdate(activityId);
+    if (activity == null) {
+      throw new BusinessException(
+          HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+    }
+    boolean published = "PUBLISHED".equals(activity.getStatus());
+    if (!published && !"DRAFT".equals(activity.getStatus())) {
+      throw conflict("ACTIVITY_CHANGE_NOT_ALLOWED", "Positions cannot be added to a final activity");
+    }
+    authorization.requirePermission(
+        userId, activity.getOrganizationId(), published ? "activity:change" : "activity:create");
     boolean oneTimeMissing = (request.serviceStartAt() == null) != (request.serviceEndAt() == null);
     if (oneTimeMissing
         || (request.serviceStartAt() != null
-            && !request.serviceStartAt().isBefore(request.serviceEndAt())))
+            && (!request.serviceStartAt().isBefore(request.serviceEndAt())
+                || request.serviceStartAt().isBefore(activity.getActivityStartAt())
+                || request.serviceEndAt().isAfter(activity.getActivityEndAt()))))
       throw semantic(
-          "INVALID_POSITION_TIME", "Position service times must be a valid start/end pair");
+          "INVALID_POSITION_TIME",
+          "Position service times must be a valid pair within the activity schedule");
     ActivityPosition position = new ActivityPosition();
     position.setId(IdWorker.getId());
     position.setOrganizationId(activity.getOrganizationId());
@@ -116,9 +126,11 @@ public class ActivityService {
     position.setServiceEndAt(request.serviceEndAt());
     position.setMeetingLocation(trim(request.meetingLocation()));
     position.setNextWaitlistSequence(1L);
-    position.setStatus("ACTIVE");
+    position.setStatus(published ? "DRAFT" : "ACTIVE");
     position.setVersion(0);
-    positions.insert(position);
+    if (positions.insert(position) != 1) {
+      throw new OptimisticLockingFailureException("Position insert affected no row");
+    }
     audit.record(
         activity.getOrganizationId(),
         userId,

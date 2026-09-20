@@ -13,6 +13,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.volunteerflow.activity.ActivityChangeService.ActivityChangeRequest;
 import com.volunteerflow.activity.ActivityChangeService.ActivityChangeResult;
+import com.volunteerflow.activity.ActivityChangeService.PositionChangeRequest;
+import com.volunteerflow.activity.ActivityChangeService.PositionChangeResult;
+import com.volunteerflow.activity.ActivityChangeService.PositionPublicationResult;
 import com.volunteerflow.auth.CurrentUser;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.infrastructure.web.GlobalExceptionHandler;
@@ -154,6 +157,43 @@ class ActivityControllerTest {
     assertThat(request.getValue().freeCancelDeadlineAt()).isNull();
   }
 
+  @Test
+  void publishedPositionChangeUsesPrincipalAndReturnsChangeResult() throws Exception {
+    ActivityPosition position = new ActivityPosition();
+    position.setId(2L);
+    position.setCapacity(21);
+    when(changes.changePosition(eq(21L), eq(2L), any()))
+        .thenReturn(new PositionChangeResult(position, 601L, 2));
+
+    mvc.perform(
+            post("/api/v1/positions/2/changes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(validPositionChangeJson()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.position.capacity").value(21))
+        .andExpect(jsonPath("$.data.auditId").value(601))
+        .andExpect(jsonPath("$.data.notifiedRecipients").value(2));
+
+    verify(changes).changePosition(21L, 2L, expectedPositionChange());
+  }
+
+  @Test
+  void draftPositionPublicationUsesPrincipalAndReturnsPublicationResult() throws Exception {
+    ActivityPosition position = new ActivityPosition();
+    position.setId(2L);
+    position.setStatus("ACTIVE");
+    when(changes.publishPosition(21L, 2L))
+        .thenReturn(new PositionPublicationResult(position, 602L, 3));
+
+    mvc.perform(post("/api/v1/positions/2/publication"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.position.status").value("ACTIVE"))
+        .andExpect(jsonPath("$.data.auditId").value(602))
+        .andExpect(jsonPath("$.data.notifiedRecipients").value(3));
+
+    verify(changes).publishPosition(21L, 2L);
+  }
+
   private ActivityChangeRequest expectedRequest() {
     return new ActivityChangeRequest(
         "新标题",
@@ -206,6 +246,35 @@ class ActivityControllerTest {
           "activityStartAt":"2026-10-02T09:00:00",
           "activityEndAt":"2026-10-02T13:00:00",
           "reason":"场地调整"
+        }
+        """;
+  }
+
+  private PositionChangeRequest expectedPositionChange() {
+    return new PositionChangeRequest(
+        "礼仪岗",
+        "负责接待",
+        21,
+        "FIRST_COME",
+        120,
+        LocalDateTime.of(2026, 10, 1, 9, 30),
+        LocalDateTime.of(2026, 10, 1, 12, 30),
+        "东门",
+        "增加一个名额");
+  }
+
+  private String validPositionChangeJson() {
+    return """
+        {
+          "name":"礼仪岗",
+          "description":"负责接待",
+          "capacity":21,
+          "registrationMode":"FIRST_COME",
+          "promotionTimeoutMinutes":120,
+          "serviceStartAt":"2026-10-01T09:30:00",
+          "serviceEndAt":"2026-10-01T12:30:00",
+          "meetingLocation":"东门",
+          "reason":"增加一个名额"
         }
         """;
   }

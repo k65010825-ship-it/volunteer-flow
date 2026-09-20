@@ -47,6 +47,74 @@ class ActivityServiceTest {
   @BeforeEach
   void persistSingleRowWrites() {
     when(activityMapper.updateById(any(Activity.class))).thenReturn(1);
+    when(positionMapper.insert(any(ActivityPosition.class))).thenReturn(1);
+  }
+
+  @Test
+  void publishedActivityAddsDraftPositionWithChangePermission() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    when(activityMapper.selectById(1L)).thenReturn(published);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(published);
+
+    ActivityPosition result = service.addPosition(7L, 1L, validPositionRequest());
+
+    assertThat(result.getStatus()).isEqualTo("DRAFT");
+    verify(authorization).requirePermission(7L, 100L, "activity:change");
+    verify(positionMapper).insert(result);
+    verify(auditService)
+        .record(100L, 7L, "activity.position.created", "activity_position", result.getId(), null);
+  }
+
+  @Test
+  void draftActivityStillAddsActivePositionWithCreatePermission() {
+    Activity draft = validDraft();
+    when(activityMapper.selectById(1L)).thenReturn(draft);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(draft);
+
+    ActivityPosition result = service.addPosition(7L, 1L, validPositionRequest());
+
+    assertThat(result.getStatus()).isEqualTo("ACTIVE");
+    verify(authorization).requirePermission(7L, 100L, "activity:create");
+  }
+
+  @Test
+  void publishedPositionServiceTimesMustStayWithinActivity() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    when(activityMapper.selectById(1L)).thenReturn(published);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(published);
+    ActivityService.PositionRequest request =
+        new ActivityService.PositionRequest(
+            "礼仪岗",
+            "负责接待",
+            10,
+            "FIRST_COME",
+            120,
+            published.getActivityStartAt().minusMinutes(1),
+            published.getActivityEndAt(),
+            "东门");
+
+    assertThatThrownBy(() -> service.addPosition(7L, 1L, request))
+        .isInstanceOf(BusinessException.class)
+        .extracting(error -> ((BusinessException) error).code())
+        .isEqualTo("INVALID_POSITION_TIME");
+
+    verify(positionMapper, never()).insert(any(ActivityPosition.class));
+  }
+
+  @Test
+  void zeroRowPublishedPositionInsertFailsBeforeAudit() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    when(activityMapper.selectById(1L)).thenReturn(published);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(published);
+    when(positionMapper.insert(any(ActivityPosition.class))).thenReturn(0);
+
+    assertThatThrownBy(() -> service.addPosition(7L, 1L, validPositionRequest()))
+        .isInstanceOf(OptimisticLockingFailureException.class);
+
+    verifyNoInteractions(auditService);
   }
 
   @Test
@@ -111,6 +179,7 @@ class ActivityServiceTest {
   void positionServiceTimeMustBeProvidedAsAValidPair() {
     Activity activity = validDraft();
     when(activityMapper.selectById(1L)).thenReturn(activity);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(activity);
     var request =
         new ActivityService.PositionRequest(
             "礼仪岗", "负责接待", 10, "FIRST_COME", 120, LocalDateTime.of(2026, 9, 17, 1, 0), null, null);
@@ -217,5 +286,17 @@ class ActivityServiceTest {
     position.setOrganizationId(100L);
     position.setStatus("ACTIVE");
     return position;
+  }
+
+  private ActivityService.PositionRequest validPositionRequest() {
+    return new ActivityService.PositionRequest(
+        "礼仪岗",
+        "负责接待",
+        10,
+        "FIRST_COME",
+        120,
+        LocalDateTime.of(2026, 9, 17, 1, 0),
+        LocalDateTime.of(2026, 9, 17, 3, 0),
+        "东门");
   }
 }

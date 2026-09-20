@@ -125,6 +125,44 @@ class ActivityQuestionServiceTest {
     verify(positionQuestionMapper).insert(result);
   }
 
+  @Test
+  void publishedActivityAllowsQuestionsOnlyOnItsDraftPosition() {
+    Activity published = draftActivity();
+    published.setStatus("PUBLISHED");
+    ActivityPosition draftPosition = activePosition();
+    draftPosition.setStatus("DRAFT");
+    when(positionMapper.selectById(30L)).thenReturn(draftPosition);
+    when(activityMapper.selectByIdForUpdate(10L)).thenReturn(published);
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(draftPosition);
+
+    ActivityPositionQuestion result =
+        service.createPositionQuestion(
+            7L, 30L, new QuestionRequest("TEXT", "补充说明", false, List.of(), 1));
+
+    assertThat(result.getPositionId()).isEqualTo(30L);
+    verify(authorization).requirePermission(7L, 100L, "activity:change");
+    verify(positionQuestionMapper).insert(result);
+  }
+
+  @Test
+  void publishedActivityRejectsQuestionsOnAnActivePosition() {
+    Activity published = draftActivity();
+    published.setStatus("PUBLISHED");
+    when(positionMapper.selectById(30L)).thenReturn(activePosition());
+    when(activityMapper.selectByIdForUpdate(10L)).thenReturn(published);
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(activePosition());
+
+    assertThatThrownBy(
+            () ->
+                service.createPositionQuestion(
+                    7L, 30L, new QuestionRequest("TEXT", "补充说明", false, List.of(), 1)))
+        .isInstanceOf(BusinessException.class)
+        .extracting(error -> ((BusinessException) error).code())
+        .isEqualTo("POSITION_NOT_DRAFT");
+
+    verify(positionQuestionMapper, never()).insert(any(ActivityPositionQuestion.class));
+  }
+
   private Activity draftActivity() {
     Activity activity = new Activity();
     activity.setId(10L);
@@ -149,13 +187,18 @@ class ActivityQuestionServiceTest {
     when(activityMapper.selectById(10L)).thenReturn(draftActivity());
     when(activityMapper.selectByIdForUpdate(10L)).thenReturn(published);
     when(positionMapper.selectById(30L)).thenReturn(activePosition());
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(activePosition());
 
     assertThatThrownBy(() -> mutate(operation))
         .isInstanceOf(BusinessException.class)
         .extracting(error -> ((BusinessException) error).code())
-        .isEqualTo("ACTIVITY_NOT_DRAFT");
+        .isEqualTo(operation.startsWith("POSITION") ? "POSITION_NOT_DRAFT" : "ACTIVITY_NOT_DRAFT");
     verify(activityMapper).selectByIdForUpdate(10L);
-    verify(positionMapper, never()).selectByIdForUpdate(any());
+    if (operation.startsWith("POSITION")) {
+      verify(positionMapper).selectByIdForUpdate(30L);
+    } else {
+      verify(positionMapper, never()).selectByIdForUpdate(any());
+    }
     verifyNoInteractions(activityQuestionMapper, positionQuestionMapper);
   }
 

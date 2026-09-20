@@ -114,6 +114,39 @@ class PromotionServiceTest {
   }
 
   @Test
+  void capacityFillReservesOnlyTheOneSeatLeftAfterPendingOffers() {
+    RegistrationCycle second = cycle(102L, 110L, 22L);
+    second.setWaitlistSequence(2L);
+    when(cycles.countConfirmed(20L)).thenReturn(18L);
+    when(offers.countActiveReservations(20L)).thenReturn(1L);
+    when(cycles.selectFirstWaitlistedForUpdate(20L)).thenReturn(cycle, second);
+
+    int created = service.fillAvailableFirstComeSeats(position, 7L, "Capacity increased");
+
+    assertThat(created).isEqualTo(1);
+    ArgumentCaptor<PromotionOffer> inserted = ArgumentCaptor.forClass(PromotionOffer.class);
+    verify(offers).insert(inserted.capture());
+    assertThat(inserted.getValue().getRegistrationCycleId()).isEqualTo(101L);
+    assertThat(inserted.getValue().getStatus()).isEqualTo("PENDING");
+    verify(cycles, times(1)).selectFirstWaitlistedForUpdate(20L);
+    verify(cycles, never()).updateById(any(RegistrationCycle.class));
+    verifyNoInteractions(policies);
+  }
+
+  @Test
+  void capacityFillStopsCleanlyWhenTheFirstComeQueueIsEmpty() {
+    when(cycles.countConfirmed(20L)).thenReturn(17L);
+    when(offers.countActiveReservations(20L)).thenReturn(0L);
+    when(cycles.selectFirstWaitlistedForUpdate(20L)).thenReturn(cycle).thenReturn(null);
+
+    int created = service.fillAvailableFirstComeSeats(position, 7L, "Capacity increased");
+
+    assertThat(created).isEqualTo(1);
+    verify(cycles, times(2)).selectFirstWaitlistedForUpdate(20L);
+    verify(offers, times(1)).insert(any(PromotionOffer.class));
+  }
+
+  @Test
   void emptyQueueAndReviewPositionDoNotCreateAutomaticOffers() {
     assertThat(service.offerNextFirstCome(20L, 7L, null)).isNull();
     position.setRegistrationMode("REVIEW");

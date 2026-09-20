@@ -77,6 +77,46 @@ public class PromotionService {
     return createOffer(position, cycle, createdBy, normalizeReason(reason));
   }
 
+  /**
+   * Fills only currently unreserved seats while the caller keeps the supplied position row locked.
+   * Candidates receive invitations; this method never changes a registration cycle to confirmed.
+   */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public int fillAvailableFirstComeSeats(
+      ActivityPosition lockedPosition, Long actorId, String reason) {
+    if (lockedPosition == null
+        || !"ACTIVE".equals(lockedPosition.getStatus())
+        || !"FIRST_COME".equals(lockedPosition.getRegistrationMode())
+        || lockedPosition.getCapacity() == null) {
+      return 0;
+    }
+    long occupied =
+        Math.addExact(
+            cycles.countConfirmed(lockedPosition.getId()),
+            offers.countActiveReservations(lockedPosition.getId()));
+    long available = (long) lockedPosition.getCapacity() - occupied;
+    if (available <= 0) {
+      return 0;
+    }
+
+    int created = 0;
+    String normalizedReason = normalizeReason(reason);
+    while (created < available) {
+      RegistrationCycle cycle = cycles.selectFirstWaitlistedForUpdate(lockedPosition.getId());
+      if (cycle == null) {
+        break;
+      }
+      if (!matchesPosition(cycle, lockedPosition)
+          || !"WAITLISTED".equals(cycle.getStatus())
+          || cycle.getWaitlistSequence() == null) {
+        throw conflict("REGISTRATION_NOT_WAITLISTED", "Candidate is no longer waitlisted");
+      }
+      createOffer(lockedPosition, cycle, actorId, normalizedReason);
+      created++;
+    }
+    return created;
+  }
+
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public PromotionOffer createManualOffer(
       Long actorId, Long registrationId, PromotionRequest request) {

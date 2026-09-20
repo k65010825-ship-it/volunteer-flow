@@ -144,13 +144,32 @@ public class ActivityQuestionService {
     if (position == null) {
       throw positionNotFound();
     }
-    Activity activity = editableActivity(userId, position.getActivityId());
+    Activity activity = activities.selectByIdForUpdate(position.getActivityId());
+    if (activity == null) {
+      throw new BusinessException(
+          HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+    }
+    boolean published = "PUBLISHED".equals(activity.getStatus());
+    if (!published && !"DRAFT".equals(activity.getStatus())) {
+      throw new BusinessException(
+          HttpStatus.CONFLICT,
+          "ACTIVITY_NOT_DRAFT",
+          "Registration questions cannot be changed on a final activity");
+    }
+    authorization.requirePermission(
+        userId, activity.getOrganizationId(), published ? "activity:change" : "activity:create");
     // The first read only discovers activityId; lock and revalidate after the activity lock.
     position = positions.selectByIdForUpdate(positionId);
     if (position == null
         || !activity.getId().equals(position.getActivityId())
         || !activity.getOrganizationId().equals(position.getOrganizationId())) {
       throw positionNotFound();
+    }
+    if (published && !"DRAFT".equals(position.getStatus())) {
+      throw new BusinessException(
+          HttpStatus.CONFLICT,
+          "POSITION_NOT_DRAFT",
+          "Only draft positions on published activities can change questions");
     }
     return new EditablePosition(activity, position);
   }
