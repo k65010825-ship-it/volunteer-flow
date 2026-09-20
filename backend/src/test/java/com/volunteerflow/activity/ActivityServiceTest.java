@@ -6,7 +6,10 @@ import static org.mockito.Mockito.*;
 
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
+import com.volunteerflow.registration.CapturingNotificationWriter;
+import com.volunteerflow.registration.RegistrationCycleMapper;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -24,6 +27,8 @@ class ActivityServiceTest {
   private final OrganizationAuthorizationService authorization =
       mock(OrganizationAuthorizationService.class);
   private final AuditService auditService = mock(AuditService.class);
+  private final RegistrationCycleMapper cycleMapper = mock(RegistrationCycleMapper.class);
+  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T00:00:00Z"), ZoneOffset.UTC);
   private final ActivityService service =
       new ActivityService(
@@ -33,6 +38,8 @@ class ActivityServiceTest {
           positionQuestionMapper,
           authorization,
           auditService,
+          cycleMapper,
+          notifications,
           clock);
 
   @Test
@@ -107,6 +114,48 @@ class ActivityServiceTest {
         .isEqualTo("INVALID_POSITION_TIME");
 
     verify(positionMapper, never()).insert(org.mockito.ArgumentMatchers.<ActivityPosition>any());
+  }
+
+  @Test
+  void cancellationCapturesEligibleRecipientsBeforeFinalStateAndNotifiesEachUserOnce() {
+    Activity activity = validDraft();
+    activity.setTitle("迎新志愿服务");
+    activity.setStatus("PUBLISHED");
+    when(activityMapper.selectById(1L)).thenReturn(activity);
+    when(cycleMapper.selectAffectedUserIdsForActivityCancellation(100L, 1L))
+        .thenReturn(List.of(21L, 22L, 21L));
+    notifications.beforeWrite(
+        () -> {
+          assertThat(activity.getStatus()).isEqualTo("CANCELED");
+          verify(activityMapper).updateById(activity);
+        });
+
+    Activity result = service.cancel(7L, 1L, "天气原因");
+
+    assertThat(result.getStatus()).isEqualTo("CANCELED");
+    assertThat(notifications.commands())
+        .containsExactly(
+            new NotificationCommand(
+                100L,
+                21L,
+                "ACTIVITY_CANCELED",
+                "活动已取消",
+                "迎新志愿服务已取消：天气原因",
+                "ACTIVITY",
+                1L,
+                "activity:1:canceled"),
+            new NotificationCommand(
+                100L,
+                22L,
+                "ACTIVITY_CANCELED",
+                "活动已取消",
+                "迎新志愿服务已取消：天气原因",
+                "ACTIVITY",
+                1L,
+                "activity:1:canceled"));
+    var order = inOrder(cycleMapper, activityMapper);
+    order.verify(cycleMapper).selectAffectedUserIdsForActivityCancellation(100L, 1L);
+    order.verify(activityMapper).updateById(activity);
   }
 
   private Activity validDraft() {

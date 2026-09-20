@@ -5,6 +5,8 @@ import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
+import com.volunteerflow.notification.NotificationWriter;
+import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import org.springframework.context.annotation.Profile;
@@ -23,6 +25,7 @@ public class PromotionExpiryService {
   private final ActivityRegistrationPolicyService policies;
   private final PromotionService promotions;
   private final AuditService audit;
+  private final NotificationWriter notifications;
 
   public PromotionExpiryService(
       PromotionOfferMapper offers,
@@ -30,13 +33,15 @@ public class PromotionExpiryService {
       OrganizationMemberMapper members,
       ActivityRegistrationPolicyService policies,
       PromotionService promotions,
-      AuditService audit) {
+      AuditService audit,
+      NotificationWriter notifications) {
     this.offers = offers;
     this.cycles = cycles;
     this.members = members;
     this.policies = policies;
     this.promotions = promotions;
     this.audit = audit;
+    this.notifications = notifications;
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
@@ -84,6 +89,16 @@ public class PromotionExpiryService {
     }
     audit.record(cycle.getOrganizationId(), null, "promotion.expired", "promotion_offer",
         offerId, "PROMOTION_EXPIRED");
+    notifications.write(
+        new NotificationCommand(
+            cycle.getOrganizationId(),
+            cycle.getUserId(),
+            "PROMOTION_OFFER",
+            "递补邀请已过期",
+            "递补邀请已过期",
+            "PROMOTION_OFFER",
+            offerId,
+            "promotion-offer:" + offerId + ":expired"));
     if ("FIRST_COME".equals(position.getRegistrationMode())) {
       promotions.offerNextFirstCome(position.getId(), null, "Previous invitation expired");
     }

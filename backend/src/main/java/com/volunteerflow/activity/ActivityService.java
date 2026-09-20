@@ -3,10 +3,14 @@ package com.volunteerflow.activity;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.notification.NotificationWriter;
+import com.volunteerflow.notification.NotificationWriter.NotificationTemplate;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
+import com.volunteerflow.registration.RegistrationCycleMapper;
 import java.time.Clock;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
@@ -31,6 +35,8 @@ public class ActivityService {
   private final ActivityPositionQuestionMapper positionQuestions;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
+  private final RegistrationCycleMapper registrationCycles;
+  private final NotificationWriter notifications;
   private final Clock clock;
 
   public ActivityService(
@@ -40,6 +46,8 @@ public class ActivityService {
       ActivityPositionQuestionMapper positionQuestions,
       OrganizationAuthorizationService authorization,
       AuditService audit,
+      RegistrationCycleMapper registrationCycles,
+      NotificationWriter notifications,
       Clock clock) {
     this.activities = activities;
     this.positions = positions;
@@ -47,6 +55,8 @@ public class ActivityService {
     this.positionQuestions = positionQuestions;
     this.authorization = authorization;
     this.audit = audit;
+    this.registrationCycles = registrationCycles;
+    this.notifications = notifications;
     this.clock = clock;
   }
 
@@ -163,10 +173,29 @@ public class ActivityService {
     authorization.requirePermission(userId, activity.getOrganizationId(), "activity:cancel");
     if ("CANCELED".equals(activity.getStatus()) || "FINISHED".equals(activity.getStatus()))
       throw conflict("ACTIVITY_FINAL", "Activity is already final");
+    // Capture recipients while their registration or live invitation still proves eligibility.
+    LinkedHashSet<Long> affectedUserIds =
+        new LinkedHashSet<>(
+            registrationCycles.selectAffectedUserIdsForActivityCancellation(
+                activity.getOrganizationId(), id));
     activity.setStatus("CANCELED");
     activity.setCanceledAt(now());
     activities.updateById(activity);
     audit.record(activity.getOrganizationId(), userId, "activity.canceled", "activity", id, reason);
+    String cancellationContent =
+        activity.getTitle()
+            + "已取消"
+            + (reason == null || reason.isBlank() ? "" : "：" + reason.trim());
+    notifications.writeMany(
+        affectedUserIds,
+        new NotificationTemplate(
+            activity.getOrganizationId(),
+            "ACTIVITY_CANCELED",
+            "活动已取消",
+            cancellationContent,
+            "ACTIVITY",
+            id,
+            "activity:" + id + ":canceled"));
     return activity;
   }
 

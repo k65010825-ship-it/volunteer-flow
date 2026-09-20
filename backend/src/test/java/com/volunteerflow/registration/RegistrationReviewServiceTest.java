@@ -8,6 +8,7 @@ import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityPositionMapper;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
@@ -35,10 +36,19 @@ class RegistrationReviewServiceTest {
   private final OrganizationAuthorizationService authorization =
       mock(OrganizationAuthorizationService.class);
   private final AuditService audit = mock(AuditService.class);
+  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T08:00:00Z"), ZoneOffset.UTC);
   private final RegistrationReviewService service =
       new RegistrationReviewService(
-          registrations, cycleMapper, positions, members, offerMapper, authorization, audit, clock);
+          registrations,
+          cycleMapper,
+          positions,
+          members,
+          offerMapper,
+          authorization,
+          audit,
+          notifications,
+          clock);
 
   private Registration registration;
   private RegistrationCycle snapshot;
@@ -88,6 +98,26 @@ class RegistrationReviewServiceTest {
     verify(cycleMapper).updateById(lockedCycle);
     verify(audit)
         .record(10L, 7L, "registration.reviewed", "registration_cycle", 101L, resultingStatus);
+  }
+
+  @Test
+  void reviewPersistsDecisionBeforeEmittingNotification() {
+    notifications.beforeWrite(() -> verify(cycleMapper).updateById(lockedCycle));
+
+    RegistrationCycle result = service.decide(7L, 100L, decision("CONFIRM"));
+
+    assertThat(result.getStatus()).isEqualTo("CONFIRMED");
+    assertThat(notifications.commands())
+        .containsExactly(
+            new NotificationCommand(
+                10L,
+                21L,
+                "REGISTRATION_REVIEW",
+                "报名审核结果",
+                "审核结果：CONFIRMED",
+                "REGISTRATION",
+                100L,
+                "registration-review:101:CONFIRMED"));
   }
 
   @ParameterizedTest

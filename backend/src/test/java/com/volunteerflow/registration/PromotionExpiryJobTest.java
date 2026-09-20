@@ -10,6 +10,7 @@ import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
+import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,9 +33,11 @@ class PromotionExpiryJobTest {
       mock(ActivityRegistrationPolicyService.class);
   private final PromotionService promotions = mock(PromotionService.class);
   private final AuditService audit = mock(AuditService.class);
+  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
   private final LocalDateTime now = LocalDateTime.of(2026, 9, 17, 12, 0);
   private final PromotionExpiryService service =
-      new PromotionExpiryService(offers, cycles, members, policies, promotions, audit);
+      new PromotionExpiryService(
+          offers, cycles, members, policies, promotions, audit, notifications);
   private PromotionOffer offer;
   private RegistrationCycle cycle;
   private ActivityPosition position;
@@ -98,6 +101,31 @@ class PromotionExpiryJobTest {
         "PROMOTION_EXPIRED");
     order.verify(promotions).offerNextFirstCome(30L, null, "Previous invitation expired");
     verify(offers, times(1)).updateById(any(PromotionOffer.class));
+  }
+
+  @Test
+  void expiryPersistsTerminalStatesBeforeNotifyingCandidate() {
+    notifications.beforeWrite(
+        () -> {
+          verify(offers).updateById(offer);
+          verify(cycles).updateById(cycle);
+        });
+
+    assertThat(service.expireOne(300L)).isTrue();
+
+    assertThat(offer.getStatus()).isEqualTo("EXPIRED");
+    assertThat(cycle.getStatus()).isEqualTo("PROMOTION_EXPIRED");
+    assertThat(notifications.commands())
+        .containsExactly(
+            new NotificationCommand(
+                10L,
+                7L,
+                "PROMOTION_OFFER",
+                "递补邀请已过期",
+                "递补邀请已过期",
+                "PROMOTION_OFFER",
+                300L,
+                "promotion-offer:300:expired"));
   }
 
   @Test

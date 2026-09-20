@@ -7,6 +7,7 @@ import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
@@ -31,8 +32,9 @@ class PromotionServiceTest {
   final OrganizationAuthorizationService authorization =
       mock(OrganizationAuthorizationService.class);
   final AuditService audit = mock(AuditService.class);
+  final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
   final PromotionService service = new PromotionService(
-      policies, members, registrations, cycles, offers, authorization, audit);
+      policies, members, registrations, cycles, offers, authorization, audit, notifications);
   final LocalDateTime now = LocalDateTime.of(2026, 9, 16, 8, 0);
   Registration registration;
   RegistrationCycle cycle;
@@ -78,6 +80,28 @@ class PromotionServiceTest {
             result.getId(),
             "Released seat");
     verifyNoInteractions(members);
+  }
+
+  @Test
+  void offerCreationPersistsInvitationBeforeNotifyingCandidate() {
+    when(cycles.selectFirstWaitlistedForUpdate(20L)).thenReturn(cycle);
+    notifications.beforeWrite(
+        () -> verify(offers).insert(any(PromotionOffer.class)));
+
+    PromotionOffer result = service.offerNextFirstCome(20L, 7L, "Released seat");
+
+    assertThat(result.getStatus()).isEqualTo("PENDING");
+    assertThat(notifications.commands())
+        .containsExactly(
+            new NotificationCommand(
+                10L,
+                21L,
+                "PROMOTION_OFFER",
+                "递补邀请",
+                "请及时确认",
+                "PROMOTION_OFFER",
+                result.getId(),
+                "promotion-offer:" + result.getId() + ":created"));
   }
 
   @Test
@@ -171,6 +195,16 @@ class PromotionServiceTest {
     verify(cycles).updateById(cycle);
     verify(offers).updateById(offer);
     verify(audit).record(10L, 21L, "promotion.accepted", "promotion_offer", 300L, "CONFIRMED");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"ACCEPT", "DECLINE"})
+  void ownOfferResponseDoesNotEmitSelfNotification(String decision) {
+    service.respond(21L, 300L, new PromotionResponseRequest(decision));
+
+    assertThat(cycle.getStatus())
+        .isEqualTo("ACCEPT".equals(decision) ? "CONFIRMED" : "PROMOTION_DECLINED");
+    assertThat(notifications.commands()).isEmpty();
   }
 
   @Test

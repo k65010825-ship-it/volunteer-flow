@@ -8,6 +8,8 @@ import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService.RegistrationPolicy;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.notification.NotificationWriter;
+import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -37,6 +39,7 @@ public class RegistrationSubmissionService {
   private final PromotionOfferMapper offers;
   private final RegistrationAnswerValidator validator;
   private final AuditService audit;
+  private final NotificationWriter notifications;
   private final Clock clock;
 
   public RegistrationSubmissionService(
@@ -48,6 +51,7 @@ public class RegistrationSubmissionService {
       PromotionOfferMapper offers,
       RegistrationAnswerValidator validator,
       AuditService audit,
+      NotificationWriter notifications,
       Clock clock) {
     this.policies = policies;
     this.members = members;
@@ -57,6 +61,7 @@ public class RegistrationSubmissionService {
     this.offers = offers;
     this.validator = validator;
     this.audit = audit;
+    this.notifications = notifications;
     this.clock = clock;
   }
 
@@ -116,6 +121,16 @@ public class RegistrationSubmissionService {
             : Math.toIntExact(
                 cycles.countActiveWaitlistBefore(cycle.getPositionId(), cycle.getWaitlistSequence())
                     + 1);
+    notifications.write(
+        new NotificationCommand(
+            organizationId,
+            userId,
+            "REGISTRATION_RESULT",
+            "报名结果",
+            "当前报名状态：" + cycle.getStatus(),
+            "REGISTRATION",
+            registration.getId(),
+            "registration-result:" + cycle.getId() + ":" + cycle.getStatus()));
     return new RegistrationResult(
         registration.getId(),
         cycle.getId(),

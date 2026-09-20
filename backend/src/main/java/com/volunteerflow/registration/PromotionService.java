@@ -5,6 +5,8 @@ import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.notification.NotificationWriter;
+import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import jakarta.validation.constraints.NotBlank;
@@ -32,6 +34,7 @@ public class PromotionService {
   private final PromotionOfferMapper offers;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
+  private final NotificationWriter notifications;
 
   public PromotionService(
       ActivityRegistrationPolicyService policies,
@@ -40,7 +43,8 @@ public class PromotionService {
       RegistrationCycleMapper cycles,
       PromotionOfferMapper offers,
       OrganizationAuthorizationService authorization,
-      AuditService audit) {
+      AuditService audit,
+      NotificationWriter notifications) {
     this.policies = policies;
     this.members = members;
     this.registrations = registrations;
@@ -48,6 +52,7 @@ public class PromotionService {
     this.offers = offers;
     this.authorization = authorization;
     this.audit = audit;
+    this.notifications = notifications;
   }
 
   /**
@@ -194,6 +199,16 @@ public class PromotionService {
         "promotion_offer",
         offer.getId(),
         reason);
+    notifications.write(
+        new NotificationCommand(
+            cycle.getOrganizationId(),
+            cycle.getUserId(),
+            "PROMOTION_OFFER",
+            "递补邀请",
+            "请及时确认",
+            "PROMOTION_OFFER",
+            offer.getId(),
+            "promotion-offer:" + offer.getId() + ":created"));
     return offer;
   }
 

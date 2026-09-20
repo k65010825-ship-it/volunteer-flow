@@ -14,6 +14,7 @@ import com.volunteerflow.activity.ActivityRegistrationPolicyService.Registration
 import com.volunteerflow.activity.ActivityRegistrationPolicyService.RegistrationPolicy;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.registration.RegistrationSubmissionService.AnswerInput;
@@ -41,6 +42,7 @@ class RegistrationSubmissionServiceTest {
   private final RegistrationAnswerMapper answers = mock(RegistrationAnswerMapper.class);
   private final PromotionOfferMapper offerMapper = mock(PromotionOfferMapper.class);
   private final AuditService audit = mock(AuditService.class);
+  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T08:00:00Z"), ZoneOffset.UTC);
   private final RegistrationSubmissionService service =
       new RegistrationSubmissionService(
@@ -52,6 +54,7 @@ class RegistrationSubmissionServiceTest {
           offerMapper,
           new RegistrationAnswerValidator(),
           audit,
+          notifications,
           clock);
   private Activity activity;
   private ActivityPosition position;
@@ -119,6 +122,40 @@ class RegistrationSubmissionServiceTest {
     order.verify(members).selectActiveMemberForUpdate(21L, 100L);
     order.verify(policies).lockPolicyForSubmission(21L, 10L, 20L);
     order.verify(registrations).selectByActivityAndUser(10L, 21L);
+  }
+
+  @Test
+  void submissionPersistsCurrentResultBeforeEmittingNotification() {
+    notifications.beforeWrite(
+        () -> verify(cycleMapper).insert(any(RegistrationCycle.class)));
+
+    RegistrationResult result = service.submit(21L, 10L, requestFor(20L));
+
+    RegistrationCycle cycle = insertedCycle();
+    assertThat(cycle.getStatus()).isEqualTo("CONFIRMED");
+    assertThat(notifications.commands())
+        .containsExactly(
+            new NotificationCommand(
+                100L,
+                21L,
+                "REGISTRATION_RESULT",
+                "报名结果",
+                "当前报名状态：CONFIRMED",
+                "REGISTRATION",
+                result.registrationId(),
+                "registration-result:" + result.cycleId() + ":CONFIRMED"));
+  }
+
+  @Test
+  void notificationFailurePropagatesAfterSubmissionStateWrite() {
+    IllegalStateException failure = new IllegalStateException("notification unavailable");
+    notifications.beforeWrite(
+        () -> verify(cycleMapper).insert(any(RegistrationCycle.class)));
+    notifications.failNextWrite(failure);
+
+    assertThatThrownBy(() -> service.submit(21L, 10L, requestFor(20L))).isSameAs(failure);
+
+    assertThat(insertedCycle().getStatus()).isEqualTo("CONFIRMED");
   }
 
   @Test
