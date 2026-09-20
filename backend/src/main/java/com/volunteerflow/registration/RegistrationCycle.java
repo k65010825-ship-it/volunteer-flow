@@ -22,6 +22,7 @@ public class RegistrationCycle {
   private Long userId;
   private Integer cycleNumber;
   private String status;
+  private String attendanceStatus;
   private Long waitlistSequence;
   private LocalDateTime submittedAt;
   private Long reviewedBy;

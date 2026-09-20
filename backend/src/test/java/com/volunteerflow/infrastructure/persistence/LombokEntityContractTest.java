@@ -14,6 +14,7 @@ import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.rbac.RbacPermission;
 import com.volunteerflow.rbac.RbacRole;
 import com.volunteerflow.rbac.RbacRolePermission;
+import com.volunteerflow.registration.RegistrationCycle;
 import java.util.stream.Stream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -38,6 +39,15 @@ class LombokEntityContractTest {
   void lombokStillGeneratesBeanAccessors() throws NoSuchMethodException {
     AppUser.class.getDeclaredMethod("getUsername");
     AppUser.class.getDeclaredMethod("setUsername", String.class);
+  }
+
+  @Test
+  void registrationCycleExposesAttendanceStatusAccessors() {
+    RegistrationCycle cycle = new RegistrationCycle();
+
+    cycle.setAttendanceStatus("PENDING");
+
+    org.assertj.core.api.Assertions.assertThat(cycle.getAttendanceStatus()).isEqualTo("PENDING");
   }
 
   private static Stream<Class<?>> mutableDataClasses() {

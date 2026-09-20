@@ -86,4 +86,18 @@ class FlywayMigrationContractTest {
     assertThat(PHYSICAL_REFERENCE.matcher(allSql).find()).isFalse();
     assertThat(allSql.toString()).contains(REQUIRED_UNIQUE_KEYS.toArray(String[]::new));
   }
+
+  @Test
+  void stageThreeMigrationAddsAttendanceStateAndQueryIndexes() throws IOException {
+    String v9 =
+        Files.readString(
+            MIGRATION_DIRECTORY.resolve("V9__add_stage3_notification_and_attendance_support.sql"),
+            StandardCharsets.UTF_8);
+
+    assertThat(v9).contains("attendance_status VARCHAR(32) NOT NULL DEFAULT 'NOT_REQUIRED'");
+    assertThat(v9).contains("KEY idx_activity_status_end_id (status, activity_end_at, id)");
+    assertThat(v9).contains("KEY idx_cycle_activity_status_id (activity_id, status, id)");
+    assertThat(v9).contains("KEY idx_notification_user_created_id (user_id, create_time, id)");
+    assertThat(v9).contains("KEY idx_checkin_session_activity_status_close_id");
+  }
 }
