@@ -1,6 +1,8 @@
 package com.volunteerflow.activity;
 
 import com.volunteerflow.auth.CurrentUser;
+import com.volunteerflow.activity.ActivityChangeService.ActivityChangeRequest;
+import com.volunteerflow.activity.ActivityChangeService.ActivityChangeResult;
 import com.volunteerflow.infrastructure.web.ApiResponse;
 import jakarta.validation.Valid;
 import java.util.List;
@@ -22,9 +24,11 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1")
 public class ActivityController {
   private final ActivityService service;
+  private final ActivityChangeService changes;
 
-  public ActivityController(ActivityService service) {
+  public ActivityController(ActivityService service, ActivityChangeService changes) {
     this.service = service;
+    this.changes = changes;
   }
 
   @PostMapping("/organizations/{orgId}/activities")
@@ -65,6 +69,14 @@ public class ActivityController {
       @PathVariable Long id,
       @Valid @RequestBody ActivityService.CancelRequest request) {
     return ApiResponse.of(service.cancel(currentUser.id(), id, request.reason()));
+  }
+
+  @PostMapping("/activities/{id}/changes")
+  public ApiResponse<ActivityChangeResult> change(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @PathVariable Long id,
+      @Valid @RequestBody ActivityChangeRequest request) {
+    return ApiResponse.of(changes.changeActivity(currentUser.id(), id, request));
   }
 
   @GetMapping("/organizations/{orgId}/activities")
