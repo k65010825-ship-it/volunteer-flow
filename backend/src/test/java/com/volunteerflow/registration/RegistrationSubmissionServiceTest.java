@@ -87,6 +87,7 @@ class RegistrationSubmissionServiceTest {
               position.setNextWaitlistSequence(sequence + 1);
               return sequence;
             });
+    when(cycleMapper.insert(any(RegistrationCycle.class))).thenReturn(1);
   }
 
   @Test
@@ -156,6 +157,22 @@ class RegistrationSubmissionServiceTest {
     assertThatThrownBy(() -> service.submit(21L, 10L, requestFor(20L))).isSameAs(failure);
 
     assertThat(insertedCycle().getStatus()).isEqualTo("CONFIRMED");
+  }
+
+  @Test
+  void zeroRowCycleInsertFailsBeforeAuditAndNotification() {
+    when(cycleMapper.insert(any(RegistrationCycle.class))).thenReturn(0);
+
+    assertThatThrownBy(() -> service.submit(21L, 10L, requestFor(20L)))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            error -> {
+              assertThat(error.code()).isEqualTo("REGISTRATION_CONFLICT");
+              assertThat(error.status()).isEqualTo(HttpStatus.CONFLICT);
+            });
+
+    verifyNoInteractions(audit);
+    assertThat(notifications.commands()).isEmpty();
   }
 
   @Test

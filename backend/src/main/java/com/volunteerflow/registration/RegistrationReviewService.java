@@ -105,7 +105,9 @@ public class RegistrationReviewService {
     cycle.setReviewedBy(actorId);
     cycle.setReviewedAt(LocalDateTime.now(clock));
     cycle.setReviewReason(reason);
-    cycles.updateById(cycle);
+    if (cycles.updateById(cycle) != 1) {
+      throw conflict("REGISTRATION_CONFLICT", "Registration changed concurrently");
+    }
     audit.record(
         registration.getOrganizationId(),
         actorId,

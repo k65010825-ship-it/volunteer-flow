@@ -16,6 +16,7 @@ import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import org.springframework.context.annotation.Profile;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -180,7 +181,9 @@ public class ActivityService {
                 activity.getOrganizationId(), id));
     activity.setStatus("CANCELED");
     activity.setCanceledAt(now());
-    activities.updateById(activity);
+    if (activities.updateById(activity) != 1) {
+      throw new OptimisticLockingFailureException("Activity changed concurrently");
+    }
     audit.record(activity.getOrganizationId(), userId, "activity.canceled", "activity", id, reason);
     String cancellationContent =
         activity.getTitle()

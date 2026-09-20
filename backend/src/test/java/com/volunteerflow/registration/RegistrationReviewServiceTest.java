@@ -67,6 +67,7 @@ class RegistrationReviewServiceTest {
     when(members.selectActiveMemberForUpdate(21L, 10L)).thenReturn(new OrganizationMember());
     when(positions.selectByIdForUpdate(20L)).thenReturn(lockedPosition);
     when(cycleMapper.selectActiveCycleForUpdate(100L)).thenReturn(lockedCycle);
+    when(cycleMapper.updateById(any(RegistrationCycle.class))).thenReturn(1);
   }
 
   @Test
@@ -118,6 +119,16 @@ class RegistrationReviewServiceTest {
                 "REGISTRATION",
                 100L,
                 "registration-review:101:CONFIRMED"));
+  }
+
+  @Test
+  void zeroRowReviewUpdateFailsBeforeAuditAndNotification() {
+    when(cycleMapper.updateById(lockedCycle)).thenReturn(0);
+
+    rejects(decision("CONFIRM"), "REGISTRATION_CONFLICT", HttpStatus.CONFLICT);
+
+    verifyNoInteractions(audit);
+    assertThat(notifications.commands()).isEmpty();
   }
 
   @ParameterizedTest

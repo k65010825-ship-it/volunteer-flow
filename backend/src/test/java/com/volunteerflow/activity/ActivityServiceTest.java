@@ -16,7 +16,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.springframework.dao.OptimisticLockingFailureException;
 
 class ActivityServiceTest {
   private final ActivityMapper activityMapper = mock(ActivityMapper.class);
@@ -41,6 +43,11 @@ class ActivityServiceTest {
           cycleMapper,
           notifications,
           clock);
+
+  @BeforeEach
+  void persistSingleRowWrites() {
+    when(activityMapper.updateById(any(Activity.class))).thenReturn(1);
+  }
 
   @Test
   void publicationRequiresAtLeastOneActivePosition() {
@@ -156,6 +163,23 @@ class ActivityServiceTest {
     var order = inOrder(cycleMapper, activityMapper);
     order.verify(cycleMapper).selectAffectedUserIdsForActivityCancellation(100L, 1L);
     order.verify(activityMapper).updateById(activity);
+  }
+
+  @Test
+  void zeroRowCancellationUpdateFailsBeforeAuditAndNotification() {
+    Activity activity = validDraft();
+    activity.setTitle("迎新志愿服务");
+    activity.setStatus("PUBLISHED");
+    when(activityMapper.selectById(1L)).thenReturn(activity);
+    when(cycleMapper.selectAffectedUserIdsForActivityCancellation(100L, 1L))
+        .thenReturn(List.of(21L));
+    when(activityMapper.updateById(activity)).thenReturn(0);
+
+    assertThatThrownBy(() -> service.cancel(7L, 1L, "天气原因"))
+        .isInstanceOf(OptimisticLockingFailureException.class);
+
+    verifyNoInteractions(auditService);
+    assertThat(notifications.commands()).isEmpty();
   }
 
   private Activity validDraft() {

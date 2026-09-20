@@ -105,7 +105,12 @@ public class RegistrationSubmissionService {
     validator.validate(policy.questions(), request.answers());
     registration = nextRegistration(registration, organizationId, activityId, userId);
     RegistrationCycle cycle = newCycle(registration, policy.position(), submittedAt);
-    cycles.insert(cycle);
+    if (cycles.insert(cycle) != 1) {
+      throw new BusinessException(
+          HttpStatus.CONFLICT,
+          "REGISTRATION_CONFLICT",
+          "Registration changed concurrently; refresh and retry");
+    }
     saveAnswers(cycle, request.answers());
     audit.record(
         organizationId,
