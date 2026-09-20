@@ -1,5 +1,6 @@
 package com.volunteerflow.activity;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -22,6 +23,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -112,6 +114,46 @@ class ActivityControllerTest {
     verifyNoInteractions(changes);
   }
 
+  @Test
+  void omittedFreeCancellationDeadlineIsDeserializedAsAbsent() throws Exception {
+    Activity changed = new Activity();
+    changed.setId(10L);
+    when(changes.changeActivity(eq(21L), eq(10L), any()))
+        .thenReturn(new ActivityChangeResult(changed, 501L, 0));
+
+    mvc.perform(
+            post("/api/v1/activities/10/changes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJsonWithoutFreeCancellationDeadline()))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<ActivityChangeRequest> request =
+        ArgumentCaptor.forClass(ActivityChangeRequest.class);
+    verify(changes).changeActivity(eq(21L), eq(10L), request.capture());
+    assertThat(request.getValue().freeCancelDeadlineAtPresent()).isFalse();
+    assertThat(request.getValue().freeCancelDeadlineAt()).isNull();
+  }
+
+  @Test
+  void explicitNullFreeCancellationDeadlineIsDeserializedAsPresent() throws Exception {
+    Activity changed = new Activity();
+    changed.setId(10L);
+    when(changes.changeActivity(eq(21L), eq(10L), any()))
+        .thenReturn(new ActivityChangeResult(changed, 502L, 0));
+
+    mvc.perform(
+            post("/api/v1/activities/10/changes")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(requestJsonWithNullFreeCancellationDeadline()))
+        .andExpect(status().isOk());
+
+    ArgumentCaptor<ActivityChangeRequest> request =
+        ArgumentCaptor.forClass(ActivityChangeRequest.class);
+    verify(changes).changeActivity(eq(21L), eq(10L), request.capture());
+    assertThat(request.getValue().freeCancelDeadlineAtPresent()).isTrue();
+    assertThat(request.getValue().freeCancelDeadlineAt()).isNull();
+  }
+
   private ActivityChangeRequest expectedRequest() {
     return new ActivityChangeRequest(
         "新标题",
@@ -132,6 +174,35 @@ class ActivityControllerTest {
           "location":"新地点",
           "registrationEndAt":"2026-09-26T18:00:00",
           "freeCancelDeadlineAt":"2026-09-29T10:00:00",
+          "activityStartAt":"2026-10-02T09:00:00",
+          "activityEndAt":"2026-10-02T13:00:00",
+          "reason":"场地调整"
+        }
+        """;
+  }
+
+  private String requestJsonWithoutFreeCancellationDeadline() {
+    return """
+        {
+          "title":"新标题",
+          "description":"新介绍",
+          "location":"新地点",
+          "registrationEndAt":"2026-09-26T18:00:00",
+          "activityStartAt":"2026-10-02T09:00:00",
+          "activityEndAt":"2026-10-02T13:00:00",
+          "reason":"场地调整"
+        }
+        """;
+  }
+
+  private String requestJsonWithNullFreeCancellationDeadline() {
+    return """
+        {
+          "title":"新标题",
+          "description":"新介绍",
+          "location":"新地点",
+          "registrationEndAt":"2026-09-26T18:00:00",
+          "freeCancelDeadlineAt":null,
           "activityStartAt":"2026-10-02T09:00:00",
           "activityEndAt":"2026-10-02T13:00:00",
           "reason":"场地调整"

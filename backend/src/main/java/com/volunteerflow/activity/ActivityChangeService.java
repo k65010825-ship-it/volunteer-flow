@@ -1,6 +1,7 @@
 package com.volunteerflow.activity;
 
 import com.fasterxml.jackson.annotation.JsonAnySetter;
+import com.fasterxml.jackson.annotation.JsonSetter;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.notification.NotificationWriter;
@@ -76,7 +77,11 @@ public class ActivityChangeService {
     requireTimes(request);
 
     LocalDateTime now = now();
-    validateTimes(activity, request, now);
+    LocalDateTime effectiveFreeCancelDeadlineAt =
+        request.freeCancelDeadlineAtPresent()
+            ? request.freeCancelDeadlineAt()
+            : activity.getFreeCancelDeadlineAt();
+    validateTimes(activity, request, effectiveFreeCancelDeadlineAt, now);
     LinkedHashMap<String, Object> before = new LinkedHashMap<>();
     LinkedHashMap<String, Object> after = new LinkedHashMap<>();
     captureChange("title", activity.getTitle(), title, before, after);
@@ -88,12 +93,14 @@ public class ActivityChangeService {
         request.registrationEndAt(),
         before,
         after);
-    captureChange(
-        "freeCancelDeadlineAt",
-        activity.getFreeCancelDeadlineAt(),
-        request.freeCancelDeadlineAt(),
-        before,
-        after);
+    if (request.freeCancelDeadlineAtPresent()) {
+      captureChange(
+          "freeCancelDeadlineAt",
+          activity.getFreeCancelDeadlineAt(),
+          request.freeCancelDeadlineAt(),
+          before,
+          after);
+    }
     captureChange(
         "activityStartAt",
         activity.getActivityStartAt(),
@@ -119,7 +126,8 @@ public class ActivityChangeService {
         description,
         location,
         request.registrationEndAt(),
-        request.freeCancelDeadlineAt(),
+        request.freeCancelDeadlineAtPresent(),
+        effectiveFreeCancelDeadlineAt,
         request.activityStartAt(),
         request.activityEndAt());
     if (activity.getVersion() != null) {
@@ -163,7 +171,10 @@ public class ActivityChangeService {
   }
 
   private void validateTimes(
-      Activity activity, ActivityChangeRequest request, LocalDateTime now) {
+      Activity activity,
+      ActivityChangeRequest request,
+      LocalDateTime effectiveFreeCancelDeadlineAt,
+      LocalDateTime now) {
     LocalDateTime registrationStartAt = activity.getRegistrationStartAt();
     LocalDateTime registrationEndAt = request.registrationEndAt();
     LocalDateTime activityStartAt = request.activityStartAt();
@@ -172,8 +183,8 @@ public class ActivityChangeService {
         || !registrationStartAt.isBefore(registrationEndAt)
         || !registrationEndAt.isBefore(activityStartAt)
         || !activityStartAt.isBefore(activityEndAt)
-        || (request.freeCancelDeadlineAt() != null
-            && request.freeCancelDeadlineAt().isAfter(activityStartAt))) {
+        || (effectiveFreeCancelDeadlineAt != null
+            && effectiveFreeCancelDeadlineAt.isAfter(activityStartAt))) {
       throw semantic("INVALID_ACTIVITY_TIME", "Activity time ordering is invalid");
     }
     if (registrationEndAt.isBefore(activity.getRegistrationEndAt())
@@ -209,6 +220,7 @@ public class ActivityChangeService {
       String description,
       String location,
       LocalDateTime registrationEndAt,
+      boolean freeCancelDeadlineAtPresent,
       LocalDateTime freeCancelDeadlineAt,
       LocalDateTime activityStartAt,
       LocalDateTime activityEndAt) {
@@ -216,7 +228,9 @@ public class ActivityChangeService {
     activity.setDescription(description);
     activity.setLocation(location);
     activity.setRegistrationEndAt(registrationEndAt);
-    activity.setFreeCancelDeadlineAt(freeCancelDeadlineAt);
+    if (freeCancelDeadlineAtPresent) {
+      activity.setFreeCancelDeadlineAt(freeCancelDeadlineAt);
+    }
     activity.setActivityStartAt(activityStartAt);
     activity.setActivityEndAt(activityEndAt);
   }
@@ -255,20 +269,180 @@ public class ActivityChangeService {
     return new BusinessException(HttpStatus.CONFLICT, code, message);
   }
 
-  public record ActivityChangeRequest(
-      @NotBlank @Size(max = 160) String title,
-      @NotBlank String description,
-      @NotBlank @Size(max = 255) String location,
-      @NotNull LocalDateTime registrationEndAt,
-      LocalDateTime freeCancelDeadlineAt,
-      @NotNull LocalDateTime activityStartAt,
-      @NotNull LocalDateTime activityEndAt,
-      @Size(max = 500) String reason) {
+  public static final class ActivityChangeRequest {
+    @NotBlank
+    @Size(max = 160)
+    private String title;
+
+    @NotBlank
+    private String description;
+
+    @NotBlank
+    @Size(max = 255)
+    private String location;
+
+    @NotNull
+    private LocalDateTime registrationEndAt;
+
+    private LocalDateTime freeCancelDeadlineAt;
+    private boolean freeCancelDeadlineAtPresent;
+
+    @NotNull
+    private LocalDateTime activityStartAt;
+
+    @NotNull
+    private LocalDateTime activityEndAt;
+
+    @Size(max = 500)
+    private String reason;
+
+    public ActivityChangeRequest() {}
+
+    public ActivityChangeRequest(
+        String title,
+        String description,
+        String location,
+        LocalDateTime registrationEndAt,
+        LocalDateTime freeCancelDeadlineAt,
+        LocalDateTime activityStartAt,
+        LocalDateTime activityEndAt,
+        String reason) {
+      this(
+          title,
+          description,
+          location,
+          registrationEndAt,
+          activityStartAt,
+          activityEndAt,
+          reason);
+      this.freeCancelDeadlineAt = freeCancelDeadlineAt;
+      this.freeCancelDeadlineAtPresent = true;
+    }
+
+    public ActivityChangeRequest(
+        String title,
+        String description,
+        String location,
+        LocalDateTime registrationEndAt,
+        LocalDateTime activityStartAt,
+        LocalDateTime activityEndAt,
+        String reason) {
+      this.title = title;
+      this.description = description;
+      this.location = location;
+      this.registrationEndAt = registrationEndAt;
+      this.activityStartAt = activityStartAt;
+      this.activityEndAt = activityEndAt;
+      this.reason = reason;
+    }
+
+    public String title() {
+      return title;
+    }
+
+    public String description() {
+      return description;
+    }
+
+    public String location() {
+      return location;
+    }
+
+    public LocalDateTime registrationEndAt() {
+      return registrationEndAt;
+    }
+
+    public LocalDateTime freeCancelDeadlineAt() {
+      return freeCancelDeadlineAt;
+    }
+
+    public boolean freeCancelDeadlineAtPresent() {
+      return freeCancelDeadlineAtPresent;
+    }
+
+    public LocalDateTime activityStartAt() {
+      return activityStartAt;
+    }
+
+    public LocalDateTime activityEndAt() {
+      return activityEndAt;
+    }
+
+    public String reason() {
+      return reason;
+    }
+
+    public void setTitle(String title) {
+      this.title = title;
+    }
+
+    public void setDescription(String description) {
+      this.description = description;
+    }
+
+    public void setLocation(String location) {
+      this.location = location;
+    }
+
+    public void setRegistrationEndAt(LocalDateTime registrationEndAt) {
+      this.registrationEndAt = registrationEndAt;
+    }
+
+    @JsonSetter("freeCancelDeadlineAt")
+    public void setFreeCancelDeadlineAt(LocalDateTime freeCancelDeadlineAt) {
+      this.freeCancelDeadlineAt = freeCancelDeadlineAt;
+      this.freeCancelDeadlineAtPresent = true;
+    }
+
+    public void setActivityStartAt(LocalDateTime activityStartAt) {
+      this.activityStartAt = activityStartAt;
+    }
+
+    public void setActivityEndAt(LocalDateTime activityEndAt) {
+      this.activityEndAt = activityEndAt;
+    }
+
+    public void setReason(String reason) {
+      this.reason = reason;
+    }
 
     /** Published changes reject silently ignored fields such as registrationStartAt. */
     @JsonAnySetter
     public void rejectUnknownField(String field, Object value) {
       throw new IllegalArgumentException("Unsupported activity change field: " + field);
+    }
+
+    @Override
+    public boolean equals(Object other) {
+      if (this == other) {
+        return true;
+      }
+      if (!(other instanceof ActivityChangeRequest that)) {
+        return false;
+      }
+      return freeCancelDeadlineAtPresent == that.freeCancelDeadlineAtPresent
+          && Objects.equals(title, that.title)
+          && Objects.equals(description, that.description)
+          && Objects.equals(location, that.location)
+          && Objects.equals(registrationEndAt, that.registrationEndAt)
+          && Objects.equals(freeCancelDeadlineAt, that.freeCancelDeadlineAt)
+          && Objects.equals(activityStartAt, that.activityStartAt)
+          && Objects.equals(activityEndAt, that.activityEndAt)
+          && Objects.equals(reason, that.reason);
+    }
+
+    @Override
+    public int hashCode() {
+      return Objects.hash(
+          title,
+          description,
+          location,
+          registrationEndAt,
+          freeCancelDeadlineAt,
+          freeCancelDeadlineAtPresent,
+          activityStartAt,
+          activityEndAt,
+          reason);
     }
   }
 

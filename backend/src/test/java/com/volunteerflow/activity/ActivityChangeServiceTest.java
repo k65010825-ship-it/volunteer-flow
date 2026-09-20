@@ -216,6 +216,96 @@ class ActivityChangeServiceTest {
   }
 
   @Test
+  void omittedFreeCancellationDeadlineKeepsTheLockedValueAndDoesNotEnterTheDiff() {
+    Activity activity = publishedActivity();
+    when(activities.selectByIdForUpdate(1L)).thenReturn(activity);
+    when(audit.recordChange(
+            eq(100L),
+            eq(7L),
+            eq("activity.changed"),
+            eq("activity"),
+            eq(1L),
+            anyMap(),
+            anyMap(),
+            eq("信息更正")))
+        .thenReturn(501L);
+    when(registrationCycles.selectAffectedUserIds(1L, NOW)).thenReturn(List.of());
+    LocalDateTime existingDeadline = activity.getFreeCancelDeadlineAt();
+    ActivityChangeRequest request =
+        new ActivityChangeRequest(
+            "新标题",
+            activity.getDescription(),
+            activity.getLocation(),
+            activity.getRegistrationEndAt(),
+            activity.getActivityStartAt(),
+            activity.getActivityEndAt(),
+            "信息更正");
+
+    ActivityChangeResult result = service.changeActivity(7L, 1L, request);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> changes = ArgumentCaptor.forClass(Map.class);
+    verify(activities).updatePublishedFields(eq(1L), eq(100L), changes.capture());
+    assertThat(changes.getValue()).containsOnly(Map.entry("title", "新标题"));
+    assertThat(result.activity().getFreeCancelDeadlineAt()).isEqualTo(existingDeadline);
+  }
+
+  @Test
+  void explicitNullFreeCancellationDeadlineClearsItAndEntersBothAuditSnapshots() {
+    Activity activity = publishedActivity();
+    LocalDateTime existingDeadline = activity.getFreeCancelDeadlineAt();
+    when(activities.selectByIdForUpdate(1L)).thenReturn(activity);
+    when(audit.recordChange(
+            eq(100L),
+            eq(7L),
+            eq("activity.changed"),
+            eq("activity"),
+            eq(1L),
+            anyMap(),
+            anyMap(),
+            eq("取消免费取消期限")))
+        .thenReturn(502L);
+    when(registrationCycles.selectAffectedUserIds(1L, NOW)).thenReturn(List.of());
+    ActivityChangeRequest request =
+        new ActivityChangeRequest(
+            activity.getTitle(),
+            activity.getDescription(),
+            activity.getLocation(),
+            activity.getRegistrationEndAt(),
+            null,
+            activity.getActivityStartAt(),
+            activity.getActivityEndAt(),
+            "取消免费取消期限");
+
+    ActivityChangeResult result = service.changeActivity(7L, 1L, request);
+
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> changes = ArgumentCaptor.forClass(Map.class);
+    verify(activities).updatePublishedFields(eq(1L), eq(100L), changes.capture());
+    assertThat(changes.getValue()).containsOnlyKeys("freeCancelDeadlineAt");
+    assertThat(changes.getValue().get("freeCancelDeadlineAt")).isNull();
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> before = ArgumentCaptor.forClass(Map.class);
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Map<String, Object>> after = ArgumentCaptor.forClass(Map.class);
+    verify(audit)
+        .recordChange(
+            eq(100L),
+            eq(7L),
+            eq("activity.changed"),
+            eq("activity"),
+            eq(1L),
+            before.capture(),
+            after.capture(),
+            eq("取消免费取消期限"));
+    assertThat(before.getValue())
+        .containsOnly(Map.entry("freeCancelDeadlineAt", existingDeadline));
+    assertThat(after.getValue()).containsOnlyKeys("freeCancelDeadlineAt");
+    assertThat(after.getValue().get("freeCancelDeadlineAt")).isNull();
+    assertThat(result.activity().getFreeCancelDeadlineAt()).isNull();
+  }
+
+  @Test
   void aBlankReasonIsRejectedBeforeAnyWrite() {
     when(activities.selectByIdForUpdate(1L)).thenReturn(publishedActivity());
     ActivityChangeRequest request = changedTitleRequest();
@@ -270,27 +360,80 @@ class ActivityChangeServiceTest {
   @Test
   void changingActivityTimesAfterTheCurrentActivityHasStartedIsRejected() {
     Activity activity = publishedActivity();
+    activity.setRegistrationEndAt(NOW.minusHours(2));
+    activity.setFreeCancelDeadlineAt(NOW.minusHours(3));
     activity.setActivityStartAt(NOW.minusMinutes(1));
     activity.setActivityEndAt(NOW.plusHours(3));
     when(activities.selectByIdForUpdate(1L)).thenReturn(activity);
     ActivityChangeRequest request =
-        copyWithTimes(
-            changedTitleRequest(),
+        new ActivityChangeRequest(
+            "新标题",
+            activity.getDescription(),
+            activity.getLocation(),
             activity.getRegistrationEndAt(),
+            activity.getFreeCancelDeadlineAt(),
             activity.getActivityStartAt(),
-            activity.getActivityEndAt().plusHours(1));
+            activity.getActivityEndAt().plusHours(1),
+            "调整活动时间");
 
-    assertInvalidTime(request);
+    assertActivityTimeChangeRejected(request);
   }
 
   @Test
   void aChangedActivityStartCannotBeMovedToThePresent() {
     Activity activity = publishedActivity();
+    activity.setRegistrationEndAt(NOW.minusHours(1));
+    activity.setFreeCancelDeadlineAt(NOW.minusHours(2));
     when(activities.selectByIdForUpdate(1L)).thenReturn(activity);
     ActivityChangeRequest request =
-        copyWithTimes(changedTitleRequest(), NOW.minusHours(1), NOW, NOW.plusHours(4));
+        new ActivityChangeRequest(
+            "新标题",
+            activity.getDescription(),
+            activity.getLocation(),
+            activity.getRegistrationEndAt(),
+            activity.getFreeCancelDeadlineAt(),
+            NOW,
+            NOW.plusHours(4),
+            "调整活动时间");
 
-    assertInvalidTime(request);
+    assertActivityTimeChangeRejected(request);
+  }
+
+  @Test
+  void anActivityThatHasStartedStillAllowsANonTimeFieldChange() {
+    Activity activity = publishedActivity();
+    activity.setRegistrationEndAt(NOW.minusHours(2));
+    activity.setFreeCancelDeadlineAt(NOW.minusHours(3));
+    activity.setActivityStartAt(NOW.minusHours(1));
+    activity.setActivityEndAt(NOW.plusHours(3));
+    when(activities.selectByIdForUpdate(1L)).thenReturn(activity);
+    when(audit.recordChange(
+            eq(100L),
+            eq(7L),
+            eq("activity.changed"),
+            eq("activity"),
+            eq(1L),
+            anyMap(),
+            anyMap(),
+            eq("更正标题")))
+        .thenReturn(503L);
+    when(registrationCycles.selectAffectedUserIds(1L, NOW)).thenReturn(List.of());
+    ActivityChangeRequest request =
+        new ActivityChangeRequest(
+            "新标题",
+            activity.getDescription(),
+            activity.getLocation(),
+            activity.getRegistrationEndAt(),
+            activity.getFreeCancelDeadlineAt(),
+            activity.getActivityStartAt(),
+            activity.getActivityEndAt(),
+            "更正标题");
+
+    ActivityChangeResult result = service.changeActivity(7L, 1L, request);
+
+    assertThat(result.activity().getTitle()).isEqualTo("新标题");
+    verify(activities)
+        .updatePublishedFields(1L, 100L, Map.of("title", "新标题"));
   }
 
   @Test
@@ -466,6 +609,20 @@ class ActivityChangeServiceTest {
         () -> service.changeActivity(7L, 1L, request),
         HttpStatus.UNPROCESSABLE_ENTITY,
         "INVALID_ACTIVITY_TIME");
+    verify(activities, never()).updatePublishedFields(eq(1L), eq(100L), anyMap());
+    verifyNoInteractions(audit, registrationCycles);
+  }
+
+  private void assertActivityTimeChangeRejected(ActivityChangeRequest request) {
+    assertThatThrownBy(() -> service.changeActivity(7L, 1L, request))
+        .isInstanceOfSatisfying(
+            BusinessException.class,
+            error -> {
+              assertThat(error.status()).isEqualTo(HttpStatus.UNPROCESSABLE_ENTITY);
+              assertThat(error.code()).isEqualTo("INVALID_ACTIVITY_TIME");
+              assertThat(error.getMessage())
+                  .isEqualTo("Activity times cannot be changed after activity start");
+            });
     verify(activities, never()).updatePublishedFields(eq(1L), eq(100L), anyMap());
     verifyNoInteractions(audit, registrationCycles);
   }
