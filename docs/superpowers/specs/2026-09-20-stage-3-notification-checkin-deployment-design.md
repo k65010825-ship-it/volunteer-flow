@@ -1,7 +1,7 @@
 # VolunteerFlow 阶段 3：通知、签到、出勤与演示部署设计
 
 - 日期：2026-09-20
-- 状态：对话设计已确认，待书面审核
+- 状态：已确认
 - 技术基线：Java 17、Spring Boot 3.x、MyBatis-Plus、MySQL、Vue 3、TypeScript、Nginx、Docker Compose
 - 前置版本：阶段 1 认证、组织、RBAC、活动；阶段 2 报名、审核、候补、取消与递补
 
