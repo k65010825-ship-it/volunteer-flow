@@ -38,6 +38,10 @@ const router = createRouter({
       component: () => import("../views/MyRegistrationsView.vue"),
     },
     {
+      path: "/notifications",
+      component: () => import("../views/NotificationCenterView.vue"),
+    },
+    {
       path: "/positions/:positionId/registrations",
       component: () => import("../views/RegistrationManagementView.vue"),
       props: (r) => ({ positionId: String(r.params.positionId) }),
