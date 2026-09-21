@@ -54,28 +54,95 @@ describe("NotificationCenterView", () => {
   it("marks all loaded notifications read", async () => {
     mock.onPost("/api/v1/users/me/notifications/read-all").reply(204);
     mock.onGet("/api/v1/users/me/notifications/unread-count").reply(200, { data: { unreadCount: 0 } });
+    let requests = 0;
+    mock.onGet("/api/v1/users/me/notifications").reply(() => {
+      requests += 1;
+      return [200, { data: { items: [{ ...first, readAt: requests > 1 ? "2026-09-20T10:01:00" : null }], nextCursor: null, hasMore: false } }];
+    });
     const { wrapper } = await open();
     await wrapper.get('[data-test="read-all"]').trigger("click");
     await flushPromises();
     expect(wrapper.find('[data-test="notification-item"]').classes()).toContain("notification-read");
   });
-  it("keeps cursor pages read after a successful read-all instead of marking them again", async () => {
-    mock.onPost("/api/v1/users/me/notifications/read-all").reply(204);
-    mock.onGet("/api/v1/users/me/notifications/unread-count").reply(200, { data: { unreadCount: 0 } });
+  it("uses the server readAt value for previously read cursor pages", async () => {
     mock.onGet("/api/v1/users/me/notifications").reply((config) => config.params?.cursor === "next-page"
-      ? [200, { data: { items: [{ id: "2", type: "ACTIVITY_CHANGE", title: "活动信息变更", content: "集合地点已更新", businessType: "ACTIVITY", businessId: "11", readAt: null, createTime: "2026-09-20T09:00:00" }], nextCursor: null, hasMore: false } }]
+      ? [200, { data: { items: [{ id: "2", type: "ACTIVITY_CHANGE", title: "活动信息变更", content: "集合地点已更新", businessType: "ACTIVITY", businessId: "11", readAt: "2026-09-20T10:02:00", createTime: "2026-09-20T09:00:00" }], nextCursor: null, hasMore: false } }]
       : [200, { data: { items: [first], nextCursor: "next-page", hasMore: true } }]);
     mock.onPost("/api/v1/notifications/2/read").reply(204);
     const { wrapper } = await open();
 
-    await wrapper.get('[data-test="read-all"]').trigger("click");
     await wrapper.get('[data-test="load-more"]').trigger("click");
     await flushPromises();
     await wrapper.findAll('[data-test="notification-item"]')[1].trigger("click");
     await flushPromises();
 
-    expect(wrapper.findAll(".unread-dot")).toHaveLength(0);
+    expect(wrapper.findAll(".unread-dot")).toHaveLength(1);
+    expect(wrapper.findAll('[data-test="notification-item"]')[1].classes()).toContain("notification-read");
     expect(mock.history.post.some((request) => request.url?.endsWith("/2/read"))).toBe(false);
+  });
+  it("reloads read-all from the server so a notification inserted before the 204 stays unread", async () => {
+    let completeReadAll!: () => void;
+    let listRequests = 0;
+    mock.onGet("/api/v1/users/me/notifications").reply(() => {
+      listRequests += 1;
+      return listRequests === 1
+        ? [200, { data: { items: [first], nextCursor: null, hasMore: false } }]
+        : [200, { data: { items: [
+            { ...first, readAt: "2026-09-20T10:01:00" },
+            { id: "2", type: "ACTIVITY_CHANGE", title: "新活动通知", content: "在 read-all 完成前插入", businessType: "ACTIVITY", businessId: "11", readAt: null, createTime: "2026-09-20T10:00:01" },
+          ], nextCursor: null, hasMore: false } }];
+    });
+    mock.onPost("/api/v1/users/me/notifications/read-all").reply(() => new Promise((resolve) => {
+      completeReadAll = () => resolve([204]);
+    }));
+    const { wrapper } = await open();
+
+    void wrapper.get('[data-test="read-all"]').trigger("click");
+    await flushPromises();
+    completeReadAll();
+    await flushPromises();
+
+    expect(wrapper.findAll('[data-test="notification-item"]')).toHaveLength(2);
+    expect(wrapper.text()).toContain("新活动通知");
+    expect(wrapper.findAll(".unread-dot")).toHaveLength(1);
+  });
+  it("discards a cursor response that resolves after read-all reloads the list", async () => {
+    let resolveOldCursor!: (response: [number, unknown]) => void;
+    let requests = 0;
+    mock.onGet("/api/v1/users/me/notifications").reply((config) => {
+      requests += 1;
+      if (config.params?.cursor === "next-page") {
+        return new Promise((resolve) => {
+          resolveOldCursor = resolve;
+        });
+      }
+      return requests === 1
+        ? [200, { data: { items: [first], nextCursor: "next-page", hasMore: true } }]
+        : [200, { data: { items: [{ ...first, readAt: "2026-09-20T10:01:00" }], nextCursor: null, hasMore: false } }];
+    });
+    mock.onPost("/api/v1/users/me/notifications/read-all").reply(204);
+    mock.onGet("/api/v1/users/me/notifications/unread-count").reply(200, { data: { unreadCount: 0 } });
+    const { wrapper } = await open();
+
+    void wrapper.get('[data-test="load-more"]').trigger("click");
+    await flushPromises();
+    await wrapper.get('[data-test="read-all"]').trigger("click");
+    await flushPromises();
+    resolveOldCursor([200, { data: { items: [{ id: "stale", type: "ACTIVITY_CHANGE", title: "过期游标响应", content: "不应显示", businessType: "ACTIVITY", businessId: "11", readAt: null, createTime: "2026-09-20T09:00:00" }], nextCursor: null, hasMore: false } }]);
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("过期游标响应");
+    expect(wrapper.findAll('[data-test="notification-item"]')).toHaveLength(1);
+  });
+  it("does not clear locally loaded notifications when read-all fails", async () => {
+    mock.onPost("/api/v1/users/me/notifications/read-all").reply(500);
+    const { wrapper } = await open();
+
+    await wrapper.get('[data-test="read-all"]').trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll('[data-test="notification-item"]')).toHaveLength(1);
+    expect(wrapper.findAll(".unread-dot")).toHaveLength(1);
   });
   it("opens the existing registrations experience for a promotion offer without treating offer id as cycle id", async () => {
     mock.onGet("/api/v1/users/me/notifications").reply(200, { data: { items: [{ ...first, businessType: "PROMOTION_OFFER", businessId: "99" }], nextCursor: null, hasMore: false } });

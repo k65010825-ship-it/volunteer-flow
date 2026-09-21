@@ -20,31 +20,23 @@ const readingAll = ref(false);
 const readingId = ref<string | null>(null);
 const error = ref("");
 const store = useNotificationStore();
-let readAllCompletedAt: Date | null = null;
+let listGeneration = 0;
 
 const canReadAll = computed(
   () => notifications.value.some((notification) => !notification.readAt) && !readingAll.value,
 );
 
-function applyReadAllState(items: UserNotification[]) {
-  const completedAt = readAllCompletedAt;
-  if (!completedAt) return items;
-  return items.map((notification) => {
-    const createdAt = Date.parse(notification.createTime);
-    if (
-      notification.readAt ||
-      !Number.isFinite(createdAt) ||
-      createdAt > completedAt.getTime()
-    )
-      return notification;
-    return { ...notification, readAt: completedAt.toISOString() };
-  });
-}
-
-async function load(reset = false) {
+async function load(reset = false, clearBeforeLoading = false) {
+  const request = reset ? ++listGeneration : listGeneration;
   if (reset) {
     loading.value = true;
+    loadingMore.value = false;
     error.value = "";
+    if (clearBeforeLoading) {
+      notifications.value = [];
+      nextCursor.value = null;
+      hasMore.value = false;
+    }
   } else {
     if (!hasMore.value || !nextCursor.value || loadingMore.value) return;
     loadingMore.value = true;
@@ -54,15 +46,20 @@ async function load(reset = false) {
       cursor: reset ? undefined : nextCursor.value ?? undefined,
       size: PAGE_SIZE,
     });
-    const items = applyReadAllState(page.items);
-    notifications.value = reset ? items : [...notifications.value, ...items];
+    if (request !== listGeneration) return;
+    notifications.value = reset
+      ? page.items
+      : [...notifications.value, ...page.items];
     nextCursor.value = page.nextCursor;
     hasMore.value = page.hasMore;
   } catch {
-    error.value = "通知加载失败，请检查网络后重试。";
+    if (request === listGeneration)
+      error.value = "通知加载失败，请检查网络后重试。";
   } finally {
-    loading.value = false;
-    loadingMore.value = false;
+    if (request === listGeneration) {
+      loading.value = false;
+      loadingMore.value = false;
+    }
   }
 }
 
@@ -99,11 +96,8 @@ async function readAll() {
   readingAll.value = true;
   try {
     await markAllNotificationsRead();
-    readAllCompletedAt = new Date();
-    const readAt = readAllCompletedAt.toISOString();
-    notifications.value.forEach((notification) => {
-      notification.readAt ??= readAt;
-    });
+    // The server is the only atomic source of truth for which rows read-all changed.
+    await load(true, true);
     await store.refreshUnreadCount();
   } catch {
     error.value = "全部标记已读失败，请稍后重试。";
