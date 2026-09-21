@@ -7,9 +7,12 @@ const POLLING_INTERVAL_MS = 30_000;
 export const useNotificationStore = defineStore("notifications", () => {
   const unreadCount = ref(0);
   let timer: ReturnType<typeof setInterval> | undefined;
+  let generation = 0;
 
   async function refreshUnreadCount() {
-    unreadCount.value = await notificationApi.getUnreadCount();
+    const requestGeneration = generation;
+    const count = await notificationApi.getUnreadCount();
+    if (requestGeneration === generation) unreadCount.value = count;
   }
 
   function refreshWhenVisible() {
@@ -17,6 +20,7 @@ export const useNotificationStore = defineStore("notifications", () => {
   }
 
   function stopPolling() {
+    generation += 1;
     if (timer !== undefined) clearInterval(timer);
     timer = undefined;
     document.removeEventListener("visibilitychange", refreshWhenVisible);

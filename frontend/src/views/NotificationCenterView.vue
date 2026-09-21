@@ -20,10 +20,26 @@ const readingAll = ref(false);
 const readingId = ref<string | null>(null);
 const error = ref("");
 const store = useNotificationStore();
+let readAllCompletedAt: Date | null = null;
 
 const canReadAll = computed(
   () => notifications.value.some((notification) => !notification.readAt) && !readingAll.value,
 );
+
+function applyReadAllState(items: UserNotification[]) {
+  const completedAt = readAllCompletedAt;
+  if (!completedAt) return items;
+  return items.map((notification) => {
+    const createdAt = Date.parse(notification.createTime);
+    if (
+      notification.readAt ||
+      !Number.isFinite(createdAt) ||
+      createdAt > completedAt.getTime()
+    )
+      return notification;
+    return { ...notification, readAt: completedAt.toISOString() };
+  });
+}
 
 async function load(reset = false) {
   if (reset) {
@@ -38,7 +54,8 @@ async function load(reset = false) {
       cursor: reset ? undefined : nextCursor.value ?? undefined,
       size: PAGE_SIZE,
     });
-    notifications.value = reset ? page.items : [...notifications.value, ...page.items];
+    const items = applyReadAllState(page.items);
+    notifications.value = reset ? items : [...notifications.value, ...items];
     nextCursor.value = page.nextCursor;
     hasMore.value = page.hasMore;
   } catch {
@@ -55,6 +72,7 @@ function destination(notification: UserNotification) {
     return `/registrations/${notification.businessId}`;
   if (notification.businessType === "ACTIVITY")
     return `/activities/${notification.businessId}`;
+  if (notification.businessType === "PROMOTION_OFFER") return "/registrations";
   return null;
 }
 
@@ -81,7 +99,8 @@ async function readAll() {
   readingAll.value = true;
   try {
     await markAllNotificationsRead();
-    const readAt = new Date().toISOString();
+    readAllCompletedAt = new Date();
+    const readAt = readAllCompletedAt.toISOString();
     notifications.value.forEach((notification) => {
       notification.readAt ??= readAt;
     });

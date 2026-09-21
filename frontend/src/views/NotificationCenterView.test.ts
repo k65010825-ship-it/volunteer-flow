@@ -59,6 +59,44 @@ describe("NotificationCenterView", () => {
     await flushPromises();
     expect(wrapper.find('[data-test="notification-item"]').classes()).toContain("notification-read");
   });
+  it("keeps cursor pages read after a successful read-all instead of marking them again", async () => {
+    mock.onPost("/api/v1/users/me/notifications/read-all").reply(204);
+    mock.onGet("/api/v1/users/me/notifications/unread-count").reply(200, { data: { unreadCount: 0 } });
+    mock.onGet("/api/v1/users/me/notifications").reply((config) => config.params?.cursor === "next-page"
+      ? [200, { data: { items: [{ id: "2", type: "ACTIVITY_CHANGE", title: "活动信息变更", content: "集合地点已更新", businessType: "ACTIVITY", businessId: "11", readAt: null, createTime: "2026-09-20T09:00:00" }], nextCursor: null, hasMore: false } }]
+      : [200, { data: { items: [first], nextCursor: "next-page", hasMore: true } }]);
+    mock.onPost("/api/v1/notifications/2/read").reply(204);
+    const { wrapper } = await open();
+
+    await wrapper.get('[data-test="read-all"]').trigger("click");
+    await wrapper.get('[data-test="load-more"]').trigger("click");
+    await flushPromises();
+    await wrapper.findAll('[data-test="notification-item"]')[1].trigger("click");
+    await flushPromises();
+
+    expect(wrapper.findAll(".unread-dot")).toHaveLength(0);
+    expect(mock.history.post.some((request) => request.url?.endsWith("/2/read"))).toBe(false);
+  });
+  it("opens the existing registrations experience for a promotion offer without treating offer id as cycle id", async () => {
+    mock.onGet("/api/v1/users/me/notifications").reply(200, { data: { items: [{ ...first, businessType: "PROMOTION_OFFER", businessId: "99" }], nextCursor: null, hasMore: false } });
+    mock.onPost("/api/v1/notifications/1/read").reply(204);
+    const { wrapper, router } = await open();
+
+    await wrapper.get('[data-test="notification-item"]').trigger("click");
+    await flushPromises();
+
+    expect(router.currentRoute.value.path).toBe("/registrations");
+  });
+  it("does not navigate when marking a notification read is rejected", async () => {
+    mock.onPost("/api/v1/notifications/1/read").reply(500);
+    const { wrapper, router } = await open();
+
+    await wrapper.get('[data-test="notification-item"]').trigger("click");
+    await flushPromises();
+
+    expect(router.currentRoute.value.path).toBe("/notifications");
+    expect(wrapper.get('[role="alert"]').text()).toContain("标记通知已读失败");
+  });
   it("keeps unknown business types readable without navigating", async () => {
     mock.onGet("/api/v1/users/me/notifications").reply(200, { data: { items: [{ ...first, businessType: "FUTURE_TYPE", businessId: "99" }], nextCursor: null, hasMore: false } });
     mock.onPost("/api/v1/notifications/1/read").reply(204);
