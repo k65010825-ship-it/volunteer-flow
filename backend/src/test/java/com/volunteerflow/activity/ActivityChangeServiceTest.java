@@ -42,6 +42,7 @@ import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 class ActivityChangeServiceTest {
@@ -259,6 +260,26 @@ class ActivityChangeServiceTest {
         HttpStatus.UNPROCESSABLE_ENTITY,
         "TOO_MANY_REGISTRATION_QUESTIONS");
 
+    verify(positions, never()).activateDraft(2L, 100L, 1L);
+    verifyNoInteractions(audit, registrationCycles);
+  }
+
+  @Test
+  void draftPositionPublicationRevalidatesServiceTimesAgainstCurrentActivityWindow() {
+    ActivityPosition draft = activePosition();
+    draft.setStatus("DRAFT");
+    when(positions.selectById(2L)).thenReturn(draft);
+    Activity shortened = publishedActivity();
+    shortened.setActivityStartAt(LocalDateTime.of(2026, 10, 1, 10, 0));
+    when(activities.selectByIdForUpdate(1L)).thenReturn(shortened);
+    when(positions.selectByIdForUpdate(2L)).thenReturn(draft);
+
+    assertBusinessError(
+        () -> service.publishPosition(7L, 2L),
+        HttpStatus.UNPROCESSABLE_ENTITY,
+        "INVALID_POSITION_TIME");
+
+    verifyNoInteractions(activityQuestions, positionQuestions);
     verify(positions, never()).activateDraft(2L, 100L, 1L);
     verifyNoInteractions(audit, registrationCycles);
   }
@@ -786,6 +807,8 @@ class ActivityChangeServiceTest {
         ActivityChangeService.class.getDeclaredMethod("publishPosition", Long.class, Long.class);
 
     assertThat(change.getAnnotation(Transactional.class)).isNotNull();
+    assertThat(change.getAnnotation(Transactional.class).isolation())
+        .isEqualTo(Isolation.READ_COMMITTED);
     assertThat(publication.getAnnotation(Transactional.class)).isNotNull();
   }
 

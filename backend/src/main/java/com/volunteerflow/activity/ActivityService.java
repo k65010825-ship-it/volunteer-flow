@@ -97,6 +97,7 @@ public class ActivityService {
       throw new BusinessException(
           HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
     }
+    authorization.requireMembership(userId, activity.getOrganizationId());
     boolean published = "PUBLISHED".equals(activity.getStatus());
     if (!published && !"DRAFT".equals(activity.getStatus())) {
       throw conflict("ACTIVITY_CHANGE_NOT_ALLOWED", "Positions cannot be added to a final activity");

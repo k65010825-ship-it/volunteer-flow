@@ -9,7 +9,11 @@ import static org.mockito.Mockito.reset;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.fasterxml.jackson.databind.node.TextNode;
+import com.volunteerflow.activity.ActivityChangeService;
+import com.volunteerflow.activity.ActivityChangeService.PositionChangeRequest;
 import com.volunteerflow.activity.ActivityMapper;
+import com.volunteerflow.activity.ActivityPosition;
+import com.volunteerflow.activity.ActivityPositionMapper;
 import com.volunteerflow.activity.ActivityPositionQuestionMapper;
 import com.volunteerflow.activity.ActivityQuestionMapper;
 import com.volunteerflow.activity.ActivityQuestionService;
@@ -68,6 +72,7 @@ class Stage2VmAcceptanceIT {
   private final AppUserMapper users;
   private final OrganizationService organizations;
   private final ActivityService activities;
+  private final ActivityChangeService activityChanges;
   private final ActivityQuestionService questions;
   private final RegistrationSubmissionService submissions;
   private final RegistrationCancellationService cancellations;
@@ -80,6 +85,7 @@ class Stage2VmAcceptanceIT {
   private final JdbcTemplate sql;
   private final Clock clock;
   private final ActivityMapper activityMapper;
+  private final ActivityPositionMapper activityPositions;
   private final ActivityQuestionMapper activityQuestions;
   private final ActivityPositionQuestionMapper positionQuestions;
   private final TransactionTemplate transactions;
@@ -107,6 +113,7 @@ class Stage2VmAcceptanceIT {
       AppUserMapper users,
       OrganizationService organizations,
       ActivityService activities,
+      ActivityChangeService activityChanges,
       ActivityQuestionService questions,
       RegistrationSubmissionService submissions,
       RegistrationCancellationService cancellations,
@@ -119,12 +126,14 @@ class Stage2VmAcceptanceIT {
       JdbcTemplate sql,
       Clock clock,
       ActivityMapper activityMapper,
+      ActivityPositionMapper activityPositions,
       ActivityQuestionMapper activityQuestions,
       ActivityPositionQuestionMapper positionQuestions,
       PlatformTransactionManager transactionManager) {
     this.users = users;
     this.organizations = organizations;
     this.activities = activities;
+    this.activityChanges = activityChanges;
     this.questions = questions;
     this.submissions = submissions;
     this.cancellations = cancellations;
@@ -137,6 +146,7 @@ class Stage2VmAcceptanceIT {
     this.sql = sql;
     this.clock = clock;
     this.activityMapper = activityMapper;
+    this.activityPositions = activityPositions;
     this.activityQuestions = activityQuestions;
     this.positionQuestions = positionQuestions;
     this.transactions = new TransactionTemplate(transactionManager);
@@ -352,7 +362,9 @@ class Stage2VmAcceptanceIT {
         allowCommit.countDown();
       }
       assertThat(publisher.get(15, TimeUnit.SECONDS)).isEqualTo("PUBLISHED");
-      assertThat(editor.get(15, TimeUnit.SECONDS)).isEqualTo("ACTIVITY_NOT_DRAFT");
+      assertThat(editor.get(15, TimeUnit.SECONDS))
+          .isEqualTo(
+              operation.startsWith("POSITION") ? "POSITION_NOT_DRAFT" : "ACTIVITY_NOT_DRAFT");
     } finally {
       start.countDown();
       allowCommit.countDown();
@@ -391,6 +403,91 @@ class Stage2VmAcceptanceIT {
   }
 
   private record QuestionRow(String table, Long id) {}
+
+  @Test
+  void capacityIncreaseSeesReservationCommittedWhileWaitingForThePositionLock()
+      throws Exception {
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    CountDownLatch reservationCreated = new CountDownLatch(1);
+    CountDownLatch allowReservationCommit = new CountDownLatch(1);
+    CountDownLatch changeStarted = new CountDownLatch(1);
+    workersStopped = false;
+    try {
+      createOrganizationAndMembers(21);
+      Fixture fixture = createActivity("FIRST_COME", 18);
+      for (Long memberId : memberIds) {
+        submit(memberId, fixture);
+      }
+      assertThat(cycles.countConfirmed(fixture.positionId())).isEqualTo(18);
+      assertThat(
+              sql.update(
+                  "UPDATE activity_position SET capacity=19, version=version+1 WHERE id = ?",
+                  fixture.positionId()))
+          .isEqualTo(1);
+
+      Future<String> reserver =
+          executor.submit(
+              () ->
+                  transactions.execute(
+                      status -> {
+                        PromotionOffer offer =
+                            promotions.offerNextFirstCome(
+                                fixture.positionId(), ownerId, "Concurrent reservation");
+                        assertThat(offer).isNotNull();
+                        reservationCreated.countDown();
+                        await(allowReservationCommit);
+                        return offer.getStatus();
+                      }));
+      await(reservationCreated);
+      ActivityPosition current = activityPositions.selectById(fixture.positionId());
+      PositionChangeRequest request =
+          new PositionChangeRequest(
+              current.getName(),
+              current.getDescription(),
+              20,
+              current.getRegistrationMode(),
+              current.getPromotionTimeoutMinutes(),
+              current.getServiceStartAt(),
+              current.getServiceEndAt(),
+              current.getMeetingLocation(),
+              "Capacity increased");
+      Future<ActivityChangeService.PositionChangeResult> changer =
+          executor.submit(
+              () -> {
+                changeStarted.countDown();
+                return activityChanges.changePosition(ownerId, fixture.positionId(), request);
+              });
+      await(changeStarted);
+      try {
+        assertThatThrownBy(() -> changer.get(500, TimeUnit.MILLISECONDS))
+            .as("position change must wait for the reservation transaction's position lock")
+            .isInstanceOf(TimeoutException.class);
+      } finally {
+        allowReservationCommit.countDown();
+      }
+
+      assertThat(reserver.get(15, TimeUnit.SECONDS)).isEqualTo("PENDING");
+      assertThat(changer.get(15, TimeUnit.SECONDS).position().getCapacity()).isEqualTo(20);
+      long confirmed = cycles.countConfirmed(fixture.positionId());
+      long pending = offers.countActiveReservations(fixture.positionId());
+      assertThat(confirmed).isEqualTo(18);
+      assertThat(pending).isEqualTo(2);
+      assertThat(confirmed + pending).isEqualTo(20);
+      System.out.println(
+          "Stage2 position-capacity lock assertion passed: confirmed="
+              + confirmed
+              + ", pending="
+              + pending
+              + ", capacity=20.");
+    } finally {
+      allowReservationCommit.countDown();
+      executor.shutdownNow();
+      workersStopped = executor.awaitTermination(30, TimeUnit.SECONDS);
+      if (workersStopped) cleanup();
+      else
+        throw new IllegalStateException("Workers still active; cleanup withheld for run " + prefix);
+    }
+  }
 
   @Test
   void oneHundredConcurrentUsersNeverOversellTwentyPlaces() throws Exception {
@@ -874,6 +971,7 @@ SELECT COUNT(*) FROM (
       for (String table :
           List.of(
               "promotion_offer",
+              "notification",
               "registration_answer",
               "registration_cycle",
               "registration",

@@ -27,6 +27,7 @@ import org.springframework.context.annotation.Profile;
 import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /** Coordinates a published activity change, its audit record, and affected-user notifications. */
@@ -178,7 +179,7 @@ public class ActivityChangeService {
     return new ActivityChangeResult(activity, auditId, notifiedRecipients);
   }
 
-  @Transactional
+  @Transactional(isolation = Isolation.READ_COMMITTED)
   public PositionChangeResult changePosition(
       Long actorId, Long positionId, PositionChangeRequest request) {
     ActivityPosition snapshot = positions.selectById(positionId);
@@ -284,6 +285,7 @@ public class ActivityChangeService {
     if (!"DRAFT".equals(position.getStatus())) {
       throw conflict("POSITION_NOT_DRAFT", "Only a draft position can be published");
     }
+    validatePositionTimes(activity, position.getServiceStartAt(), position.getServiceEndAt());
 
     int commonQuestionCount = activityQuestions.selectIdsByActivityForUpdate(activity.getId()).size();
     long positionQuestionCount =

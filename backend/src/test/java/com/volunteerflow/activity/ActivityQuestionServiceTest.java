@@ -10,9 +10,11 @@ import com.volunteerflow.activity.ActivityQuestionService.QuestionRequest;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.dao.OptimisticLockingFailureException;
 
 class ActivityQuestionServiceTest {
   private final ActivityMapper activityMapper = mock(ActivityMapper.class);
@@ -30,6 +32,17 @@ class ActivityQuestionServiceTest {
           positionQuestionMapper,
           authorization,
           new ObjectMapper());
+
+  @BeforeEach
+  void persistSingleRowQuestionWrites() {
+    when(activityQuestionMapper.insert(any(ActivityQuestion.class))).thenReturn(1);
+    when(activityQuestionMapper.updateDefinition(any(ActivityQuestion.class))).thenReturn(1);
+    when(activityQuestionMapper.deleteById(anyLong())).thenReturn(1);
+    when(positionQuestionMapper.insert(any(ActivityPositionQuestion.class))).thenReturn(1);
+    when(positionQuestionMapper.updateDefinition(any(ActivityPositionQuestion.class)))
+        .thenReturn(1);
+    when(positionQuestionMapper.deleteById(anyLong())).thenReturn(1);
+  }
 
   @Test
   void rejectsChoiceQuestionWithDuplicateOptions() {
@@ -163,6 +176,30 @@ class ActivityQuestionServiceTest {
     verify(positionQuestionMapper, never()).insert(any(ActivityPositionQuestion.class));
   }
 
+  @Test
+  void nonMemberCannotObserveFinalActivityStateThroughPositionQuestions() {
+    Activity canceled = draftActivity();
+    canceled.setStatus("CANCELED");
+    when(positionMapper.selectById(30L)).thenReturn(activePosition());
+    when(activityMapper.selectByIdForUpdate(10L)).thenReturn(canceled);
+    BusinessException hidden =
+        new BusinessException(
+            org.springframework.http.HttpStatus.NOT_FOUND,
+            "ORGANIZATION_NOT_FOUND",
+            "Organization was not found");
+    doThrow(hidden).when(authorization).requireMembership(99L, 100L);
+
+    assertThatThrownBy(
+            () ->
+                service.createPositionQuestion(
+                    99L, 30L, new QuestionRequest("TEXT", "补充说明", false, List.of(), 1)))
+        .isSameAs(hidden);
+
+    verify(authorization, never()).requirePermission(anyLong(), anyLong(), anyString());
+    verify(positionMapper, never()).selectByIdForUpdate(anyLong());
+    verifyNoInteractions(positionQuestionMapper);
+  }
+
   private Activity draftActivity() {
     Activity activity = new Activity();
     activity.setId(10L);
@@ -259,6 +296,50 @@ class ActivityQuestionServiceTest {
       }
       default -> throw new IllegalArgumentException(operation);
     }
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "ACTIVITY_CREATE",
+        "ACTIVITY_UPDATE",
+        "ACTIVITY_DELETE",
+        "POSITION_CREATE",
+        "POSITION_UPDATE",
+        "POSITION_DELETE"
+      })
+  void zeroRowQuestionMutationNeverReturnsSuccess(String operation) {
+    when(activityMapper.selectByIdForUpdate(10L)).thenReturn(draftActivity());
+    when(positionMapper.selectById(30L)).thenReturn(activePosition());
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(activePosition());
+    ActivityQuestion activityQuestion = new ActivityQuestion();
+    activityQuestion.setId(20L);
+    activityQuestion.setOrganizationId(100L);
+    activityQuestion.setActivityId(10L);
+    when(activityQuestionMapper.selectByIdForUpdate(20L)).thenReturn(activityQuestion);
+    ActivityPositionQuestion positionQuestion = new ActivityPositionQuestion();
+    positionQuestion.setId(40L);
+    positionQuestion.setOrganizationId(100L);
+    positionQuestion.setActivityId(10L);
+    positionQuestion.setPositionId(30L);
+    when(positionQuestionMapper.selectByIdForUpdate(40L)).thenReturn(positionQuestion);
+    switch (operation) {
+      case "ACTIVITY_CREATE" ->
+          when(activityQuestionMapper.insert(any(ActivityQuestion.class))).thenReturn(0);
+      case "ACTIVITY_UPDATE" ->
+          when(activityQuestionMapper.updateDefinition(any(ActivityQuestion.class))).thenReturn(0);
+      case "ACTIVITY_DELETE" -> when(activityQuestionMapper.deleteById(20L)).thenReturn(0);
+      case "POSITION_CREATE" ->
+          when(positionQuestionMapper.insert(any(ActivityPositionQuestion.class))).thenReturn(0);
+      case "POSITION_UPDATE" ->
+          when(positionQuestionMapper.updateDefinition(any(ActivityPositionQuestion.class)))
+              .thenReturn(0);
+      case "POSITION_DELETE" -> when(positionQuestionMapper.deleteById(40L)).thenReturn(0);
+      default -> throw new IllegalArgumentException(operation);
+    }
+
+    assertThatThrownBy(() -> mutate(operation))
+        .isInstanceOf(OptimisticLockingFailureException.class);
   }
 
   private void mutate(String operation) {

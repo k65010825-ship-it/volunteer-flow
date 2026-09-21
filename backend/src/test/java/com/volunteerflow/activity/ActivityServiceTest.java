@@ -118,6 +118,25 @@ class ActivityServiceTest {
   }
 
   @Test
+  void nonMemberCannotObserveFinalActivityStateWhenAddingPosition() {
+    Activity canceled = validDraft();
+    canceled.setStatus("CANCELED");
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(canceled);
+    BusinessException hidden =
+        new BusinessException(
+            org.springframework.http.HttpStatus.NOT_FOUND,
+            "ORGANIZATION_NOT_FOUND",
+            "Organization was not found");
+    doThrow(hidden).when(authorization).requireMembership(99L, 100L);
+
+    assertThatThrownBy(() -> service.addPosition(99L, 1L, validPositionRequest()))
+        .isSameAs(hidden);
+
+    verify(authorization, never()).requirePermission(anyLong(), anyLong(), anyString());
+    verify(positionMapper, never()).insert(any(ActivityPosition.class));
+  }
+
+  @Test
   void publicationRequiresAtLeastOneActivePosition() {
     Activity activity = validDraft();
     when(activityMapper.selectByIdForUpdate(1L)).thenReturn(activity);

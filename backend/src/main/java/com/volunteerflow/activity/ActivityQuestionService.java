@@ -13,6 +13,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import org.springframework.context.annotation.Profile;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -57,7 +58,7 @@ public class ActivityQuestionService {
     entity.setOrganizationId(activity.getOrganizationId());
     entity.setActivityId(activityId);
     apply(entity, question);
-    activityQuestions.insert(entity);
+    requireSingleRow(activityQuestions.insert(entity));
     return entity;
   }
 
@@ -72,7 +73,7 @@ public class ActivityQuestionService {
     entity.setActivityId(editable.activity().getId());
     entity.setPositionId(positionId);
     apply(entity, question);
-    positionQuestions.insert(entity);
+    requireSingleRow(positionQuestions.insert(entity));
     return entity;
   }
 
@@ -87,7 +88,7 @@ public class ActivityQuestionService {
       throw questionNotFound();
     }
     apply(entity, validate(request));
-    activityQuestions.updateDefinition(entity);
+    requireSingleRow(activityQuestions.updateDefinition(entity));
     return entity;
   }
 
@@ -100,7 +101,7 @@ public class ActivityQuestionService {
         || !activity.getOrganizationId().equals(entity.getOrganizationId())) {
       throw questionNotFound();
     }
-    activityQuestions.deleteById(questionId);
+    requireSingleRow(activityQuestions.deleteById(questionId));
   }
 
   @Transactional
@@ -110,7 +111,7 @@ public class ActivityQuestionService {
     ActivityPositionQuestion entity = positionQuestions.selectByIdForUpdate(questionId);
     requirePositionQuestion(entity, editable.activity(), positionId);
     apply(entity, validate(request));
-    positionQuestions.updateDefinition(entity);
+    requireSingleRow(positionQuestions.updateDefinition(entity));
     return entity;
   }
 
@@ -119,7 +120,13 @@ public class ActivityQuestionService {
     EditablePosition editable = editablePosition(userId, positionId);
     ActivityPositionQuestion entity = positionQuestions.selectByIdForUpdate(questionId);
     requirePositionQuestion(entity, editable.activity(), positionId);
-    positionQuestions.deleteById(questionId);
+    requireSingleRow(positionQuestions.deleteById(questionId));
+  }
+
+  private void requireSingleRow(int affectedRows) {
+    if (affectedRows != 1) {
+      throw new OptimisticLockingFailureException("Registration question changed concurrently");
+    }
   }
 
   private Activity editableActivity(Long userId, Long activityId) {
@@ -149,6 +156,7 @@ public class ActivityQuestionService {
       throw new BusinessException(
           HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
     }
+    authorization.requireMembership(userId, activity.getOrganizationId());
     boolean published = "PUBLISHED".equals(activity.getStatus());
     if (!published && !"DRAFT".equals(activity.getStatus())) {
       throw new BusinessException(
