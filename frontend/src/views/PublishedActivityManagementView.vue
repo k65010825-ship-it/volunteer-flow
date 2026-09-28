@@ -1,0 +1,418 @@
+<script setup lang="ts">
+import { isAxiosError } from "axios";
+import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
+import {
+  changeActivity,
+  changePosition,
+  createPosition,
+  getActivity,
+  publishPosition,
+  type ActivityChangeRequest,
+  type PositionChangeRequest,
+  type PositionDraftRequest,
+} from "../api/activities";
+import type { Activity, ActivityDetail, EntityId, Position } from "../api/types";
+
+const props = defineProps<{ id: EntityId }>();
+
+type ActivityForm = Omit<
+  ActivityChangeRequest,
+  "reason" | "freeCancelDeadlineAt"
+> & { freeCancelDeadlineAt: string };
+type PositionForm = Omit<
+  PositionChangeRequest,
+  "reason" | "serviceStartAt" | "serviceEndAt" | "meetingLocation"
+> & {
+  serviceStartAt: string;
+  serviceEndAt: string;
+  meetingLocation: string;
+};
+type DraftPositionForm = Omit<
+  PositionDraftRequest,
+  "serviceStartAt" | "serviceEndAt" | "meetingLocation"
+> & {
+  serviceStartAt: string;
+  serviceEndAt: string;
+  meetingLocation: string;
+};
+type Difference = { label: string; before: string; after: string };
+type PendingChange = { kind: "activity" } | { kind: "position"; id: EntityId };
+
+const detail = ref<ActivityDetail | null>(null);
+const loading = ref(true);
+const loadError = ref("");
+const actionError = ref("");
+const confirmationError = ref("");
+const notification = ref("");
+const activityForm = ref<ActivityForm | null>(null);
+const positionForms = reactive<Record<string, PositionForm>>({});
+const newPosition = reactive<DraftPositionForm>({
+  name: "",
+  description: "",
+  capacity: 1,
+  registrationMode: "FIRST_COME",
+  promotionTimeoutMinutes: 120,
+  serviceStartAt: "",
+  serviceEndAt: "",
+  meetingLocation: "",
+});
+const pending = ref<PendingChange | null>(null);
+const reason = ref("");
+const submitting = ref(false);
+let generation = 0;
+let alive = true;
+
+const pendingDifferences = computed(() => {
+  if (!pending.value || !detail.value) return [];
+  if (pending.value.kind === "activity") {
+    return activityDifferences(detail.value.activity, activityForm.value);
+  }
+  const positionId = pending.value.id;
+  return positionDifferences(
+    detail.value.positions.find((item) => item.id === positionId),
+    positionForms[positionId],
+  );
+});
+
+function localDate(value?: string | null) {
+  return value ? value.slice(0, 16) : "";
+}
+
+function activityToForm(activity: Activity): ActivityForm {
+  return {
+    title: activity.title,
+    description: activity.description,
+    location: activity.location,
+    registrationEndAt: localDate(activity.registrationEndAt),
+    freeCancelDeadlineAt: localDate(activity.freeCancelDeadlineAt),
+    activityStartAt: localDate(activity.activityStartAt),
+    activityEndAt: localDate(activity.activityEndAt),
+  };
+}
+
+function positionToForm(position: Position): PositionForm {
+  return {
+    name: position.name,
+    description: position.description,
+    capacity: position.capacity,
+    registrationMode: position.registrationMode,
+    promotionTimeoutMinutes: position.promotionTimeoutMinutes,
+    serviceStartAt: localDate(position.serviceStartAt),
+    serviceEndAt: localDate(position.serviceEndAt),
+    meetingLocation: position.meetingLocation ?? "",
+  };
+}
+
+function setPage(result: ActivityDetail) {
+  detail.value = result;
+  activityForm.value = activityToForm(result.activity);
+  for (const key of Object.keys(positionForms)) delete positionForms[key];
+  for (const position of result.positions)
+    positionForms[position.id] = positionToForm(position);
+}
+
+async function load() {
+  const request = ++generation;
+  loading.value = true;
+  loadError.value = "";
+  actionError.value = "";
+  pending.value = null;
+  reason.value = "";
+  try {
+    const result = await getActivity(props.id);
+    if (alive && request === generation) setPage(result);
+  } catch (error) {
+    if (!alive || request !== generation) return;
+    loadError.value =
+      isAxiosError(error) && error.response?.status === 403
+        ? "你没有管理此活动的权限。"
+        : "活动管理信息加载失败，请刷新重试。";
+  } finally {
+    if (alive && request === generation) loading.value = false;
+  }
+}
+
+function changed(label: string, before: string | number, after: string | number) {
+  return String(before) === String(after) ? [] : [{ label, before: String(before), after: String(after) }];
+}
+
+function activityDifferences(activity: Activity, form: ActivityForm | null): Difference[] {
+  if (!form) return [];
+  return [
+    ...changed("活动标题", activity.title, form.title),
+    ...changed("活动介绍", activity.description, form.description),
+    ...changed("活动地点", activity.location, form.location),
+    ...changed("报名截止时间", localDate(activity.registrationEndAt), form.registrationEndAt),
+    ...changed("免费取消截止时间", localDate(activity.freeCancelDeadlineAt), form.freeCancelDeadlineAt),
+    ...changed("活动开始时间", localDate(activity.activityStartAt), form.activityStartAt),
+    ...changed("活动结束时间", localDate(activity.activityEndAt), form.activityEndAt),
+  ];
+}
+
+function positionDifferences(position?: Position, form?: PositionForm): Difference[] {
+  if (!position || !form) return [];
+  return [
+    ...changed("岗位名称", position.name, form.name),
+    ...changed("岗位说明", position.description, form.description),
+    ...changed("岗位容量", position.capacity, form.capacity),
+    ...changed("递补确认期限", position.promotionTimeoutMinutes, form.promotionTimeoutMinutes),
+    ...changed("服务开始时间", localDate(position.serviceStartAt), form.serviceStartAt),
+    ...changed("服务结束时间", localDate(position.serviceEndAt), form.serviceEndAt),
+    ...changed("集合地点", position.meetingLocation ?? "", form.meetingLocation),
+  ];
+}
+
+function reviewActivity() {
+  actionError.value = "";
+  if (!detail.value || !activityDifferences(detail.value.activity, activityForm.value).length) {
+    actionError.value = "没有可提交的实际变更。";
+    return;
+  }
+  pending.value = { kind: "activity" };
+  reason.value = "";
+  confirmationError.value = "";
+}
+
+function reviewPosition(id: EntityId) {
+  const position = detail.value?.positions.find((item) => item.id === id);
+  const form = positionForms[id];
+  actionError.value = "";
+  if (!position || !form) return;
+  if (form.capacity < position.capacity) {
+    actionError.value = "岗位容量只能增加，不能减少。";
+    return;
+  }
+  if (!positionDifferences(position, form).length) {
+    actionError.value = "没有可提交的实际变更。";
+    return;
+  }
+  pending.value = { kind: "position", id };
+  reason.value = "";
+  confirmationError.value = "";
+}
+
+function activityPayload(form: ActivityForm, why: string): ActivityChangeRequest {
+  return {
+    ...form,
+    freeCancelDeadlineAt: form.freeCancelDeadlineAt || null,
+    reason: why,
+  };
+}
+
+function positionPayload(form: PositionForm, why: string): PositionChangeRequest {
+  return {
+    ...form,
+    serviceStartAt: form.serviceStartAt || null,
+    serviceEndAt: form.serviceEndAt || null,
+    meetingLocation: form.meetingLocation.trim() || null,
+    reason: why,
+  };
+}
+
+function errorMessage(error: unknown) {
+  if (!isAxiosError(error)) return "操作失败，请检查网络后重试。";
+  if (error.response?.status === 403) return "你没有执行此变更的权限。";
+  if (error.response?.status === 409) return "活动状态已变化，请刷新后重试。";
+  if (error.response?.status === 422) {
+    return error.response.data?.code === "NO_EFFECTIVE_CHANGE"
+      ? "后端确认没有有效变更，请刷新后检查。"
+      : "变更内容不符合活动规则，请检查后重试。";
+  }
+  return "操作失败，请检查网络后重试。";
+}
+
+async function submitChange() {
+  if (submitting.value || !pending.value || !detail.value) return;
+  const why = reason.value.trim();
+  if (!why) {
+    confirmationError.value = "请填写变更原因。";
+    return;
+  }
+  const request = generation;
+  const change = pending.value;
+  submitting.value = true;
+  confirmationError.value = "";
+  try {
+    if (change.kind === "activity") {
+      const form = activityForm.value;
+      if (!form) return;
+      const result = await changeActivity(props.id, activityPayload(form, why));
+      if (!alive || request !== generation) return;
+      detail.value = { ...detail.value, activity: result.activity };
+      activityForm.value = activityToForm(result.activity);
+      notification.value = `已通知 ${result.notifiedRecipients} 位受影响成员。`;
+    } else {
+      const form = positionForms[change.id];
+      if (!form) return;
+      const result = await changePosition(change.id, positionPayload(form, why));
+      if (!alive || request !== generation) return;
+      detail.value = {
+        ...detail.value,
+        positions: detail.value.positions.map((item) =>
+          item.id === change.id ? result.position : item,
+        ),
+      };
+      positionForms[change.id] = positionToForm(result.position);
+      notification.value = `已通知 ${result.notifiedRecipients} 位受影响成员。`;
+    }
+    pending.value = null;
+    reason.value = "";
+  } catch (error) {
+    if (alive && request === generation) confirmationError.value = errorMessage(error);
+  } finally {
+    if (alive && request === generation) submitting.value = false;
+  }
+}
+
+function draftPayload(): PositionDraftRequest {
+  return {
+    ...newPosition,
+    name: newPosition.name.trim(),
+    description: newPosition.description.trim(),
+    serviceStartAt: newPosition.serviceStartAt || null,
+    serviceEndAt: newPosition.serviceEndAt || null,
+    meetingLocation: newPosition.meetingLocation.trim() || null,
+  };
+}
+
+async function saveDraft() {
+  if (submitting.value) return;
+  if (!newPosition.name.trim() || !newPosition.description.trim()) {
+    actionError.value = "请填写岗位名称和岗位说明。";
+    return;
+  }
+  const request = generation;
+  submitting.value = true;
+  actionError.value = "";
+  try {
+    const position = await createPosition(props.id, draftPayload());
+    if (!alive || request !== generation || !detail.value) return;
+    detail.value = { ...detail.value, positions: [...detail.value.positions, position] };
+    positionForms[position.id] = positionToForm(position);
+    Object.assign(newPosition, {
+      name: "",
+      description: "",
+      capacity: 1,
+      registrationMode: "FIRST_COME",
+      promotionTimeoutMinutes: 120,
+      serviceStartAt: "",
+      serviceEndAt: "",
+      meetingLocation: "",
+    });
+    notification.value = "岗位草稿已保存，请配置问题后单独发布。";
+  } catch (error) {
+    if (alive && request === generation) actionError.value = errorMessage(error);
+  } finally {
+    if (alive && request === generation) submitting.value = false;
+  }
+}
+
+async function publishDraft(id: EntityId) {
+  if (submitting.value) return;
+  const request = generation;
+  submitting.value = true;
+  actionError.value = "";
+  try {
+    const result = await publishPosition(id);
+    if (!alive || request !== generation || !detail.value) return;
+    detail.value = {
+      ...detail.value,
+      positions: detail.value.positions.map((item) =>
+        item.id === id ? result.position : item,
+      ),
+    };
+    positionForms[id] = positionToForm(result.position);
+    notification.value = `岗位已发布，已通知 ${result.notifiedRecipients} 位受影响成员。`;
+  } catch (error) {
+    if (alive && request === generation) actionError.value = errorMessage(error);
+  } finally {
+    if (alive && request === generation) submitting.value = false;
+  }
+}
+
+watch(() => props.id, load, { immediate: true });
+onBeforeUnmount(() => {
+  alive = false;
+  ++generation;
+});
+</script>
+
+<template>
+  <section class="page detail-page management-page">
+    <button class="back" @click="$router.back()">← 返回活动</button>
+    <p v-if="loading" class="state">正在加载活动管理信息…</p>
+    <div v-else-if="loadError || !detail || !activityForm" class="state" role="alert">
+      <strong>{{ loadError || "活动不存在或当前无法管理。" }}</strong>
+      <button class="secondary" @click="load">重新加载</button>
+    </div>
+    <template v-else>
+      <header class="detail-header">
+        <h1>正式变更管理</h1>
+        <p>已发布活动只能提交正式变更；确认前请核对字段差异和变更原因。</p>
+      </header>
+      <p v-if="notification" class="success" role="status">{{ notification }}</p>
+      <p v-if="actionError" class="error" role="alert">{{ actionError }}</p>
+
+      <form class="change-form" @submit.prevent="reviewActivity">
+        <h2>活动信息</h2>
+        <label>活动标题<input v-model="activityForm.title" data-test="activity-title" maxlength="160" required /></label>
+        <label>活动介绍<textarea v-model="activityForm.description" required /></label>
+        <label>活动地点<input v-model="activityForm.location" maxlength="255" required /></label>
+        <label>报名截止时间<input v-model="activityForm.registrationEndAt" type="datetime-local" required /></label>
+        <label>免费取消截止时间<input v-model="activityForm.freeCancelDeadlineAt" type="datetime-local" /></label>
+        <label>活动开始时间<input v-model="activityForm.activityStartAt" type="datetime-local" required /></label>
+        <label>活动结束时间<input v-model="activityForm.activityEndAt" type="datetime-local" required /></label>
+        <button class="secondary" data-test="review-activity-change" type="button" :disabled="submitting" @click="reviewActivity">查看活动变更差异</button>
+      </form>
+
+      <section class="managed-positions" aria-labelledby="managed-positions-heading">
+        <h2 id="managed-positions-heading">已有岗位</h2>
+        <article v-for="position in detail.positions" :key="position.id" class="managed-position">
+          <template v-if="position.status === 'DRAFT'">
+            <h3>{{ position.name }} <span class="status-badge">草稿</span></h3>
+            <p class="muted">请先配置岗位问题，再单独发布；草稿不会出现在成员报名列表。</p>
+            <button class="primary compact" :data-test="`publish-position-${position.id}`" :disabled="submitting" @click="publishDraft(position.id)">发布岗位</button>
+          </template>
+          <template v-else-if="positionForms[position.id]">
+            <h3>{{ position.name }}</h3>
+            <label>岗位名称<input v-model="positionForms[position.id].name" maxlength="128" required /></label>
+            <label>岗位说明<textarea v-model="positionForms[position.id].description" required /></label>
+            <label>岗位容量<input v-model.number="positionForms[position.id].capacity" :data-test="`position-capacity-${position.id}`" type="number" min="1" required /></label>
+            <p class="muted">报名方式：{{ position.registrationMode === 'FIRST_COME' ? '先到先得' : '负责人审核' }}（发布后不可修改）</p>
+            <label>递补确认期限（分钟）<input v-model.number="positionForms[position.id].promotionTimeoutMinutes" type="number" min="30" max="720" required /></label>
+            <label>服务开始时间<input v-model="positionForms[position.id].serviceStartAt" type="datetime-local" /></label>
+            <label>服务结束时间<input v-model="positionForms[position.id].serviceEndAt" type="datetime-local" /></label>
+            <label>集合地点<input v-model="positionForms[position.id].meetingLocation" maxlength="255" /></label>
+            <button class="secondary" :data-test="`review-position-${position.id}`" :disabled="submitting" @click="reviewPosition(position.id)">查看岗位变更差异</button>
+          </template>
+        </article>
+      </section>
+
+      <form class="change-form draft-position-form" @submit.prevent="saveDraft">
+        <h2>新增岗位草稿</h2>
+        <label>岗位名称<input v-model="newPosition.name" data-test="new-position-name" maxlength="128" required /></label>
+        <label>岗位说明<textarea v-model="newPosition.description" data-test="new-position-description" required /></label>
+        <label>岗位容量<input v-model.number="newPosition.capacity" type="number" min="1" required /></label>
+        <label>报名方式<select v-model="newPosition.registrationMode"><option value="FIRST_COME">先到先得</option><option value="REVIEW">负责人审核</option></select></label>
+        <label>递补确认期限（分钟）<input v-model.number="newPosition.promotionTimeoutMinutes" type="number" min="30" max="720" required /></label>
+        <label>服务开始时间<input v-model="newPosition.serviceStartAt" type="datetime-local" /></label>
+        <label>服务结束时间<input v-model="newPosition.serviceEndAt" type="datetime-local" /></label>
+        <label>集合地点<input v-model="newPosition.meetingLocation" maxlength="255" /></label>
+        <button class="secondary" data-test="save-draft-position" type="button" :disabled="submitting" @click="saveDraft">保存岗位草稿</button>
+      </form>
+
+      <div v-if="pending" class="confirmation-panel" role="dialog" aria-labelledby="change-confirmation-heading">
+        <h2 id="change-confirmation-heading">确认正式变更</h2>
+        <dl data-test="change-summary" class="change-summary">
+          <template v-for="difference in pendingDifferences" :key="difference.label">
+            <dt>{{ difference.label }}</dt><dd><s>{{ difference.before || '未设置' }}</s> → {{ difference.after || '未设置' }}</dd>
+          </template>
+        </dl>
+        <p v-if="pending.kind === 'position'" class="muted">容量增加可能会触发按顺序的候补邀请。</p>
+        <label>变更原因<textarea v-model="reason" data-test="change-reason" maxlength="500" required /></label>
+        <p v-if="confirmationError" class="error" role="alert">{{ confirmationError }}</p>
+        <div class="management-buttons"><button class="primary compact" data-test="submit-activity-change" :disabled="submitting" @click="submitChange">确认提交</button><button class="secondary" :disabled="submitting" @click="pending = null">取消</button></div>
+      </div>
+    </template>
+  </section>
+</template>

@@ -699,3 +699,81 @@ input:focus-visible,
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.manage-link {
+  display: inline-block;
+  margin-top: 4px;
+  text-decoration: none;
+}
+.success {
+  margin: 20px 0;
+  color: var(--green-dark);
+  font-weight: 650;
+}
+.change-form,
+.managed-position,
+.confirmation-panel {
+  display: grid;
+  gap: 14px;
+  margin: 28px 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.change-form h2,
+.managed-positions > h2,
+.confirmation-panel h2,
+.managed-position h3 {
+  margin: 0;
+}
+.change-form label,
+.managed-position label,
+.confirmation-panel label {
+  display: grid;
+  gap: 7px;
+  font-size: 14px;
+  font-weight: 650;
+}
+.change-form input,
+.change-form textarea,
+.change-form select,
+.managed-position input,
+.managed-position textarea,
+.confirmation-panel textarea {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #cfd5df;
+  border-radius: 8px;
+  font: inherit;
+}
+.change-form textarea,
+.managed-position textarea,
+.confirmation-panel textarea {
+  min-height: 92px;
+  resize: vertical;
+}
+.managed-positions {
+  margin-top: 36px;
+}
+.managed-position {
+  margin: 16px 0;
+}
+.confirmation-panel {
+  border-color: #8fd8af;
+  background: #f8fffa;
+}
+.change-summary {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) 1fr;
+  gap: 10px 18px;
+  margin: 0;
+}
+.change-summary dt {
+  color: var(--muted);
+}
+.change-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.compact {
+  width: auto;
+}

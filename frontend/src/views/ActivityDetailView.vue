@@ -208,6 +208,12 @@ const format = (v: string) =>
       ><header class="detail-header">
         <h1>{{ detail.activity.title }}</h1>
         <p>{{ detail.activity.description }}</p>
+        <RouterLink
+          v-if="detail.activity.status === 'PUBLISHED'"
+          class="secondary manage-link"
+          :to="`/activities/${detail.activity.id}/manage`"
+          >管理正式变更</RouterLink
+        >
       </header>
       <dl class="facts">
         <div>

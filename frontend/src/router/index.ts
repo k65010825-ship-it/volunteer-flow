@@ -34,6 +34,11 @@ const router = createRouter({
       props: (r) => ({ id: String(r.params.id) }),
     },
     {
+      path: "/activities/:id/manage",
+      component: () => import("../views/PublishedActivityManagementView.vue"),
+      props: (r) => ({ id: String(r.params.id) }),
+    },
+    {
       path: "/registrations",
       component: () => import("../views/MyRegistrationsView.vue"),
     },
