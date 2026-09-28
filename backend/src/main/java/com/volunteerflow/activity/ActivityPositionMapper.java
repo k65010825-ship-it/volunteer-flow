@@ -18,6 +18,13 @@ public interface ActivityPositionMapper extends BaseMapper<ActivityPosition> {
   List<ActivityPosition> selectActiveByActivity(
       @Param("orgId") Long orgId, @Param("activityId") Long activityId);
 
+  /** Management reads may include unpublished additions; public detail must stay ACTIVE-only. */
+  @Select(
+      "SELECT * FROM activity_position WHERE organization_id=#{orgId} AND activity_id=#{activityId}"
+          + " AND status IN ('ACTIVE','DRAFT') ORDER BY id")
+  List<ActivityPosition> selectManageableByActivity(
+      @Param("orgId") Long orgId, @Param("activityId") Long activityId);
+
   @Select("SELECT * FROM activity_position WHERE id=#{positionId} LIMIT 1 FOR UPDATE")
   @Options(flushCache = Options.FlushCachePolicy.TRUE)
   ActivityPosition selectByIdForUpdate(@Param("positionId") Long positionId);

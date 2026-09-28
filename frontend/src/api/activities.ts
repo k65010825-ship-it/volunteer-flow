@@ -2,9 +2,12 @@ import { apiClient } from "./http";
 import type {
   Activity,
   ActivityDetail,
+  ActivityManagementDetail,
   ActivitySummary,
   EntityId,
+  PositionManagementQuestion,
   Position,
+  QuestionType,
 } from "./types";
 export async function listActivities(
   orgId: EntityId,
@@ -14,6 +17,26 @@ export async function listActivities(
 }
 export async function getActivity(id: EntityId): Promise<ActivityDetail> {
   return (await apiClient.get(`/api/v1/activities/${id}`)).data.data;
+}
+
+type ManagementResponse = {
+  activity: Activity;
+  positions: Array<{ position: Position; questions: PositionManagementQuestion[] }>;
+};
+
+export async function getManagementActivity(
+  id: EntityId,
+): Promise<ActivityManagementDetail> {
+  const response = await apiClient.get<{ data: ManagementResponse }>(
+    `/api/v1/activities/${id}/management`,
+  );
+  return {
+    activity: response.data.data.activity,
+    positions: response.data.data.positions.map(({ position, questions }) => ({
+      ...position,
+      questions,
+    })),
+  };
 }
 
 export interface ActivityChangeRequest {
@@ -48,6 +71,14 @@ export interface PositionDraftRequest {
   serviceStartAt?: string | null;
   serviceEndAt?: string | null;
   meetingLocation?: string | null;
+}
+
+export interface PositionQuestionRequest {
+  type: QuestionType;
+  title: string;
+  required: boolean;
+  options: string[] | null;
+  sortOrder: number;
 }
 
 export interface ActivityChangeResult {
@@ -90,4 +121,33 @@ export async function publishPosition(
   id: EntityId,
 ): Promise<PositionChangeResult> {
   return (await apiClient.post(`/api/v1/positions/${id}/publication`)).data.data;
+}
+
+export async function createPositionQuestion(
+  positionId: EntityId,
+  body: PositionQuestionRequest,
+): Promise<PositionManagementQuestion> {
+  return (
+    await apiClient.post(`/api/v1/positions/${positionId}/questions`, body)
+  ).data.data;
+}
+
+export async function updatePositionQuestion(
+  positionId: EntityId,
+  questionId: EntityId,
+  body: PositionQuestionRequest,
+): Promise<PositionManagementQuestion> {
+  return (
+    await apiClient.put(
+      `/api/v1/positions/${positionId}/questions/${questionId}`,
+      body,
+    )
+  ).data.data;
+}
+
+export async function deletePositionQuestion(
+  positionId: EntityId,
+  questionId: EntityId,
+): Promise<void> {
+  await apiClient.delete(`/api/v1/positions/${positionId}/questions/${questionId}`);
 }

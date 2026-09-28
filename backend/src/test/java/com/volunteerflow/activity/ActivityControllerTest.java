@@ -7,6 +7,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -192,6 +193,18 @@ class ActivityControllerTest {
         .andExpect(jsonPath("$.data.notifiedRecipients").value(3));
 
     verify(changes).publishPosition(21L, 2L);
+  }
+
+  @Test
+  void managementDetailReturnsForbiddenWithoutLeakingDraftPositions() throws Exception {
+    when(activities.managementDetail(21L, 10L))
+        .thenThrow(
+            new BusinessException(
+                HttpStatus.FORBIDDEN, "PERMISSION_DENIED", "Activity management is forbidden"));
+
+    mvc.perform(get("/api/v1/activities/10/management"))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$.code").value("PERMISSION_DENIED"));
   }
 
   private ActivityChangeRequest expectedRequest() {

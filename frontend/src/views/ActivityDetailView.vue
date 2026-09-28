@@ -8,7 +8,7 @@ import {
   type ComponentPublicInstance,
 } from "vue";
 import { useRouter } from "vue-router";
-import { getActivity } from "../api/activities";
+import { getActivity, getManagementActivity } from "../api/activities";
 import {
   getRegistrationForm,
   registrationErrorMessage,
@@ -34,6 +34,7 @@ const answers = ref<Record<string, unknown>>({});
 const errors = ref<Record<string, string>>({});
 const submitting = ref(false);
 const submitError = ref("");
+const canManage = ref(false);
 const questionFields = new Map<
   string,
   InstanceType<typeof RegistrationQuestionField>
@@ -56,6 +57,7 @@ async function loadActivity() {
   errors.value = {};
   submitError.value = "";
   submitting.value = false;
+  canManage.value = false;
   detail.value = null;
   loading.value = true;
   failed.value = false;
@@ -66,6 +68,12 @@ async function loadActivity() {
     if (request === activityRequest) failed.value = true;
   } finally {
     if (request === activityRequest) loading.value = false;
+  }
+  try {
+    await getManagementActivity(props.id);
+    if (request === activityRequest) canManage.value = true;
+  } catch {
+    if (request === activityRequest) canManage.value = false;
   }
 }
 
@@ -209,7 +217,7 @@ const format = (v: string) =>
         <h1>{{ detail.activity.title }}</h1>
         <p>{{ detail.activity.description }}</p>
         <RouterLink
-          v-if="detail.activity.status === 'PUBLISHED'"
+          v-if="canManage"
           class="secondary manage-link"
           :to="`/activities/${detail.activity.id}/manage`"
           >管理正式变更</RouterLink

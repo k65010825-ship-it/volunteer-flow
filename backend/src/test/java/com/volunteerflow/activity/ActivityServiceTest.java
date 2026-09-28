@@ -137,6 +137,62 @@ class ActivityServiceTest {
   }
 
   @Test
+  void managementDetailRequiresChangePermissionAndIncludesDraftPositionsOnlyForManagers() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    ActivityPosition active = activePosition();
+    ActivityPosition draft = activePosition();
+    draft.setId(31L);
+    draft.setStatus("DRAFT");
+    ActivityPositionQuestion question = new ActivityPositionQuestion();
+    question.setId(41L);
+    question.setPositionId(31L);
+    question.setTitle("接待经验");
+    when(activityMapper.selectById(1L)).thenReturn(published);
+    when(positionMapper.selectManageableByActivity(100L, 1L)).thenReturn(List.of(active, draft));
+    when(positionQuestionMapper.selectByPosition(100L, 1L, 30L)).thenReturn(List.of());
+    when(positionQuestionMapper.selectByPosition(100L, 1L, 31L)).thenReturn(List.of(question));
+
+    ActivityService.ActivityManagementDetail detail = service.managementDetail(7L, 1L);
+
+    assertThat(detail.positions()).extracting(ActivityService.ManagedPosition::position)
+        .containsExactly(active, draft);
+    assertThat(detail.positions().get(1).questions()).containsExactly(question);
+    verify(authorization).requirePermission(7L, 100L, "activity:change");
+  }
+
+  @Test
+  void managementDetailDoesNotQueryPositionsWhenCrossOrganizationUserIsRejected() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    when(activityMapper.selectById(1L)).thenReturn(published);
+    BusinessException denied =
+        new BusinessException(
+            org.springframework.http.HttpStatus.NOT_FOUND,
+            "ORGANIZATION_NOT_FOUND",
+            "Organization was not found");
+    doThrow(denied).when(authorization).requireMembership(99L, 100L);
+
+    assertThatThrownBy(() -> service.managementDetail(99L, 1L)).isSameAs(denied);
+
+    verifyNoInteractions(positionMapper, positionQuestionMapper);
+  }
+
+  @Test
+  void publicDetailContinuesToReadOnlyActivePositions() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    ActivityPosition active = activePosition();
+    when(activityMapper.selectById(1L)).thenReturn(published);
+    when(positionMapper.selectActiveByActivity(100L, 1L)).thenReturn(List.of(active));
+
+    ActivityService.ActivityDetail detail = service.detail(7L, 1L);
+
+    assertThat(detail.positions()).containsExactly(active);
+    verify(positionMapper, never()).selectManageableByActivity(anyLong(), anyLong());
+  }
+
+  @Test
   void publicationRequiresAtLeastOneActivePosition() {
     Activity activity = validDraft();
     when(activityMapper.selectByIdForUpdate(1L)).thenReturn(activity);

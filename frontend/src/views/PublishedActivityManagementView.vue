@@ -4,21 +4,32 @@ import { computed, onBeforeUnmount, reactive, ref, watch } from "vue";
 import {
   changeActivity,
   changePosition,
+  createPositionQuestion,
   createPosition,
-  getActivity,
+  deletePositionQuestion,
+  getManagementActivity,
   publishPosition,
+  updatePositionQuestion,
   type ActivityChangeRequest,
   type PositionChangeRequest,
   type PositionDraftRequest,
+  type PositionQuestionRequest,
 } from "../api/activities";
-import type { Activity, ActivityDetail, EntityId, Position } from "../api/types";
+import type {
+  Activity,
+  ActivityManagementDetail,
+  EntityId,
+  Position,
+  PositionManagementQuestion,
+  QuestionType,
+} from "../api/types";
 
 const props = defineProps<{ id: EntityId }>();
 
 type ActivityForm = Omit<
   ActivityChangeRequest,
   "reason" | "freeCancelDeadlineAt"
-> & { freeCancelDeadlineAt: string };
+> & { freeCancelDeadlineAt: string; freeCancelDeadlineChanged: boolean };
 type PositionForm = Omit<
   PositionChangeRequest,
   "reason" | "serviceStartAt" | "serviceEndAt" | "meetingLocation"
@@ -37,8 +48,16 @@ type DraftPositionForm = Omit<
 };
 type Difference = { label: string; before: string; after: string };
 type PendingChange = { kind: "activity" } | { kind: "position"; id: EntityId };
+type QuestionForm = {
+  id?: EntityId;
+  type: QuestionType;
+  title: string;
+  required: boolean;
+  optionsText: string;
+  sortOrder: number;
+};
 
-const detail = ref<ActivityDetail | null>(null);
+const detail = ref<ActivityManagementDetail | null>(null);
 const loading = ref(true);
 const loadError = ref("");
 const actionError = ref("");
@@ -46,6 +65,7 @@ const confirmationError = ref("");
 const notification = ref("");
 const activityForm = ref<ActivityForm | null>(null);
 const positionForms = reactive<Record<string, PositionForm>>({});
+const questionForms = reactive<Record<string, QuestionForm[]>>({});
 const newPosition = reactive<DraftPositionForm>({
   name: "",
   description: "",
@@ -85,8 +105,26 @@ function activityToForm(activity: Activity): ActivityForm {
     location: activity.location,
     registrationEndAt: localDate(activity.registrationEndAt),
     freeCancelDeadlineAt: localDate(activity.freeCancelDeadlineAt),
+    freeCancelDeadlineChanged: false,
     activityStartAt: localDate(activity.activityStartAt),
     activityEndAt: localDate(activity.activityEndAt),
+  };
+}
+
+function questionToForm(question: PositionManagementQuestion): QuestionForm {
+  let options: string[] = [];
+  try {
+    options = question.optionsJson ? JSON.parse(question.optionsJson) : [];
+  } catch {
+    options = [];
+  }
+  return {
+    id: question.id,
+    type: question.questionType,
+    title: question.title,
+    required: question.requiredQuestion,
+    optionsText: options.join("\n"),
+    sortOrder: question.sortOrder,
   };
 }
 
@@ -103,23 +141,37 @@ function positionToForm(position: Position): PositionForm {
   };
 }
 
-function setPage(result: ActivityDetail) {
+function setPage(result: ActivityManagementDetail) {
   detail.value = result;
   activityForm.value = activityToForm(result.activity);
   for (const key of Object.keys(positionForms)) delete positionForms[key];
+  for (const key of Object.keys(questionForms)) delete questionForms[key];
   for (const position of result.positions)
     positionForms[position.id] = positionToForm(position);
+  for (const position of result.positions)
+    questionForms[position.id] = position.questions.map(questionToForm);
+}
+
+function resetInteractionState() {
+  loading.value = true;
+  loadError.value = "";
+  actionError.value = "";
+  confirmationError.value = "";
+  notification.value = "";
+  pending.value = null;
+  reason.value = "";
+  submitting.value = false;
+  detail.value = null;
+  activityForm.value = null;
+  for (const key of Object.keys(positionForms)) delete positionForms[key];
+  for (const key of Object.keys(questionForms)) delete questionForms[key];
 }
 
 async function load() {
   const request = ++generation;
-  loading.value = true;
-  loadError.value = "";
-  actionError.value = "";
-  pending.value = null;
-  reason.value = "";
+  resetInteractionState();
   try {
-    const result = await getActivity(props.id);
+    const result = await getManagementActivity(props.id);
     if (alive && request === generation) setPage(result);
   } catch (error) {
     if (!alive || request !== generation) return;
@@ -136,12 +188,14 @@ function changed(label: string, before: string | number, after: string | number)
   return String(before) === String(after) ? [] : [{ label, before: String(before), after: String(after) }];
 }
 
+const trimmed = (value: string) => value.trim();
+
 function activityDifferences(activity: Activity, form: ActivityForm | null): Difference[] {
   if (!form) return [];
   return [
-    ...changed("活动标题", activity.title, form.title),
-    ...changed("活动介绍", activity.description, form.description),
-    ...changed("活动地点", activity.location, form.location),
+    ...changed("活动标题", trimmed(activity.title), trimmed(form.title)),
+    ...changed("活动介绍", trimmed(activity.description), trimmed(form.description)),
+    ...changed("活动地点", trimmed(activity.location), trimmed(form.location)),
     ...changed("报名截止时间", localDate(activity.registrationEndAt), form.registrationEndAt),
     ...changed("免费取消截止时间", localDate(activity.freeCancelDeadlineAt), form.freeCancelDeadlineAt),
     ...changed("活动开始时间", localDate(activity.activityStartAt), form.activityStartAt),
@@ -152,13 +206,13 @@ function activityDifferences(activity: Activity, form: ActivityForm | null): Dif
 function positionDifferences(position?: Position, form?: PositionForm): Difference[] {
   if (!position || !form) return [];
   return [
-    ...changed("岗位名称", position.name, form.name),
-    ...changed("岗位说明", position.description, form.description),
+    ...changed("岗位名称", trimmed(position.name), trimmed(form.name)),
+    ...changed("岗位说明", trimmed(position.description), trimmed(form.description)),
     ...changed("岗位容量", position.capacity, form.capacity),
     ...changed("递补确认期限", position.promotionTimeoutMinutes, form.promotionTimeoutMinutes),
     ...changed("服务开始时间", localDate(position.serviceStartAt), form.serviceStartAt),
     ...changed("服务结束时间", localDate(position.serviceEndAt), form.serviceEndAt),
-    ...changed("集合地点", position.meetingLocation ?? "", form.meetingLocation),
+    ...changed("集合地点", trimmed(position.meetingLocation ?? ""), trimmed(form.meetingLocation)),
   ];
 }
 
@@ -192,9 +246,15 @@ function reviewPosition(id: EntityId) {
 }
 
 function activityPayload(form: ActivityForm, why: string): ActivityChangeRequest {
+  const { freeCancelDeadlineChanged, freeCancelDeadlineAt, ...rest } = form;
   return {
-    ...form,
-    freeCancelDeadlineAt: form.freeCancelDeadlineAt || null,
+    ...rest,
+    title: trimmed(rest.title),
+    description: trimmed(rest.description),
+    location: trimmed(rest.location),
+    ...(freeCancelDeadlineChanged
+      ? { freeCancelDeadlineAt: freeCancelDeadlineAt || null }
+      : {}),
     reason: why,
   };
 }
@@ -202,6 +262,8 @@ function activityPayload(form: ActivityForm, why: string): ActivityChangeRequest
 function positionPayload(form: PositionForm, why: string): PositionChangeRequest {
   return {
     ...form,
+    name: trimmed(form.name),
+    description: trimmed(form.description),
     serviceStartAt: form.serviceStartAt || null,
     serviceEndAt: form.serviceEndAt || null,
     meetingLocation: form.meetingLocation.trim() || null,
@@ -249,7 +311,7 @@ async function submitChange() {
       detail.value = {
         ...detail.value,
         positions: detail.value.positions.map((item) =>
-          item.id === change.id ? result.position : item,
+          item.id === change.id ? { ...item, ...result.position } : item,
         ),
       };
       positionForms[change.id] = positionToForm(result.position);
@@ -262,6 +324,107 @@ async function submitChange() {
   } finally {
     if (alive && request === generation) submitting.value = false;
   }
+}
+
+function addQuestion(positionId: EntityId) {
+  questionForms[positionId].push({
+    type: "TEXT",
+    title: "",
+    required: false,
+    optionsText: "",
+    sortOrder: questionForms[positionId].length + 1,
+  });
+}
+
+function questionOptions(form: QuestionForm) {
+  return form.optionsText
+    .split("\n")
+    .map(trimmed)
+    .filter(Boolean);
+}
+
+function validQuestion(form: QuestionForm) {
+  if (!trimmed(form.title) || form.sortOrder < 1) return false;
+  if (form.type === "SINGLE_CHOICE" || form.type === "MULTIPLE_CHOICE") {
+    const options = questionOptions(form);
+    return options.length >= 2 && options.length <= 20 && new Set(options).size === options.length;
+  }
+  return true;
+}
+
+function questionPayload(form: QuestionForm): PositionQuestionRequest {
+  return {
+    type: form.type,
+    title: trimmed(form.title),
+    required: form.required,
+    options:
+      form.type === "SINGLE_CHOICE" || form.type === "MULTIPLE_CHOICE"
+        ? questionOptions(form)
+        : null,
+    sortOrder: form.sortOrder,
+  };
+}
+
+function applyQuestion(
+  positionId: EntityId,
+  previous: QuestionForm,
+  question: PositionManagementQuestion,
+) {
+  const forms = questionForms[positionId];
+  const index = previous.id
+    ? forms.findIndex((item) => item.id === previous.id)
+    : forms.indexOf(previous);
+  const next = questionToForm(question);
+  if (index === -1) forms.push(next);
+  else forms[index] = next;
+}
+
+async function saveQuestion(positionId: EntityId, form: QuestionForm) {
+  if (submitting.value) return;
+  if (!validQuestion(form)) {
+    actionError.value = "请填写有效的问题内容；选择题需提供 2 至 20 个不重复选项。";
+    return;
+  }
+  const request = generation;
+  submitting.value = true;
+  actionError.value = "";
+  try {
+    const question = form.id
+      ? await updatePositionQuestion(positionId, form.id, questionPayload(form))
+      : await createPositionQuestion(positionId, questionPayload(form));
+    if (!alive || request !== generation) return;
+    applyQuestion(positionId, form, question);
+  } catch (error) {
+    if (alive && request === generation) actionError.value = errorMessage(error);
+  } finally {
+    if (alive && request === generation) submitting.value = false;
+  }
+}
+
+async function removeQuestion(positionId: EntityId, form: QuestionForm) {
+  if (submitting.value) return;
+  const forms = questionForms[positionId];
+  if (!form.id) {
+    forms.splice(forms.indexOf(form), 1);
+    return;
+  }
+  const request = generation;
+  submitting.value = true;
+  actionError.value = "";
+  try {
+    await deletePositionQuestion(positionId, form.id);
+    if (!alive || request !== generation) return;
+    forms.splice(forms.findIndex((item) => item.id === form.id), 1);
+  } catch (error) {
+    if (alive && request === generation) actionError.value = errorMessage(error);
+  } finally {
+    if (alive && request === generation) submitting.value = false;
+  }
+}
+
+function canPublish(positionId: EntityId) {
+  const forms = questionForms[positionId] ?? [];
+  return forms.length <= 10 && forms.every(validQuestion);
 }
 
 function draftPayload(): PositionDraftRequest {
@@ -287,8 +450,12 @@ async function saveDraft() {
   try {
     const position = await createPosition(props.id, draftPayload());
     if (!alive || request !== generation || !detail.value) return;
-    detail.value = { ...detail.value, positions: [...detail.value.positions, position] };
+    detail.value = {
+      ...detail.value,
+      positions: [...detail.value.positions, { ...position, questions: [] }],
+    };
     positionForms[position.id] = positionToForm(position);
+    questionForms[position.id] = [];
     Object.assign(newPosition, {
       name: "",
       description: "",
@@ -309,6 +476,10 @@ async function saveDraft() {
 
 async function publishDraft(id: EntityId) {
   if (submitting.value) return;
+  if (!canPublish(id)) {
+    actionError.value = "请先修正岗位问题，再发布岗位。";
+    return;
+  }
   const request = generation;
   submitting.value = true;
   actionError.value = "";
@@ -316,9 +487,9 @@ async function publishDraft(id: EntityId) {
     const result = await publishPosition(id);
     if (!alive || request !== generation || !detail.value) return;
     detail.value = {
-      ...detail.value,
-      positions: detail.value.positions.map((item) =>
-        item.id === id ? result.position : item,
+        ...detail.value,
+        positions: detail.value.positions.map((item) =>
+          item.id === id ? { ...item, ...result.position } : item,
       ),
     };
     positionForms[id] = positionToForm(result.position);
@@ -359,7 +530,7 @@ onBeforeUnmount(() => {
         <label>活动介绍<textarea v-model="activityForm.description" required /></label>
         <label>活动地点<input v-model="activityForm.location" maxlength="255" required /></label>
         <label>报名截止时间<input v-model="activityForm.registrationEndAt" type="datetime-local" required /></label>
-        <label>免费取消截止时间<input v-model="activityForm.freeCancelDeadlineAt" type="datetime-local" /></label>
+        <label>免费取消截止时间<input v-model="activityForm.freeCancelDeadlineAt" data-test="free-cancel-deadline" type="datetime-local" @input="activityForm.freeCancelDeadlineChanged = true" /></label>
         <label>活动开始时间<input v-model="activityForm.activityStartAt" type="datetime-local" required /></label>
         <label>活动结束时间<input v-model="activityForm.activityEndAt" type="datetime-local" required /></label>
         <button class="secondary" data-test="review-activity-change" type="button" :disabled="submitting" @click="reviewActivity">查看活动变更差异</button>
@@ -370,8 +541,21 @@ onBeforeUnmount(() => {
         <article v-for="position in detail.positions" :key="position.id" class="managed-position">
           <template v-if="position.status === 'DRAFT'">
             <h3>{{ position.name }} <span class="status-badge">草稿</span></h3>
-            <p class="muted">请先配置岗位问题，再单独发布；草稿不会出现在成员报名列表。</p>
-            <button class="primary compact" :data-test="`publish-position-${position.id}`" :disabled="submitting" @click="publishDraft(position.id)">发布岗位</button>
+            <p class="muted">配置完成后单独发布；草稿不会出现在成员报名列表。</p>
+            <div :data-test="`draft-questions-${position.id}`" class="draft-questions">
+              <h4>岗位问题</h4>
+              <p v-if="!questionForms[position.id]?.length" class="muted">尚未添加岗位问题。</p>
+              <section v-for="(question, index) in questionForms[position.id]" :key="question.id || `new-${index}`" class="draft-question">
+                <label>问题类型<select v-model="question.type"><option value="TEXT">文本</option><option value="SINGLE_CHOICE">单选</option><option value="MULTIPLE_CHOICE">多选</option><option value="BOOLEAN">是/否</option></select></label>
+                <label>问题标题<input v-model="question.title" :data-test="`question-title-${position.id}-${index}`" maxlength="255" /></label>
+                <label v-if="question.type === 'SINGLE_CHOICE' || question.type === 'MULTIPLE_CHOICE'">选项（每行一项）<textarea v-model="question.optionsText" /></label>
+                <label>排序<input v-model.number="question.sortOrder" type="number" min="1" /></label>
+                <label class="inline-check"><input v-model="question.required" type="checkbox" /> 必填</label>
+                <div class="management-buttons"><button class="secondary compact" type="button" :disabled="submitting" @click="saveQuestion(position.id, question)">保存问题</button><button class="secondary compact" type="button" :disabled="submitting" @click="removeQuestion(position.id, question)">删除问题</button></div>
+              </section>
+              <button class="secondary compact" :data-test="`add-question-${position.id}`" type="button" :disabled="submitting || (questionForms[position.id]?.length || 0) >= 10" @click="addQuestion(position.id)">新增岗位问题</button>
+            </div>
+            <button class="primary compact" :data-test="`publish-position-${position.id}`" :disabled="submitting || !canPublish(position.id)" @click="publishDraft(position.id)">发布岗位</button>
           </template>
           <template v-else-if="positionForms[position.id]">
             <h3>{{ position.name }}</h3>

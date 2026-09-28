@@ -107,4 +107,10 @@ public class ActivityController {
       @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long id) {
     return ApiResponse.of(service.detail(currentUser.id(), id));
   }
+
+  @GetMapping("/activities/{id}/management")
+  public ApiResponse<ActivityService.ActivityManagementDetail> managementDetail(
+      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long id) {
+    return ApiResponse.of(service.managementDetail(currentUser.id(), id));
+  }
 }

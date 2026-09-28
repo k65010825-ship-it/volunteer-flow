@@ -234,6 +234,27 @@ public class ActivityService {
         activity, positions.selectActiveByActivity(activity.getOrganizationId(), id));
   }
 
+  /**
+   * Returns the protected editing representation. Draft positions never flow through the public
+   * detail endpoint because their existence is visible only to activity managers.
+   */
+  @Transactional(readOnly = true)
+  public ActivityManagementDetail managementDetail(Long userId, Long id) {
+    Activity activity = required(id);
+    authorization.requireMembership(userId, activity.getOrganizationId());
+    authorization.requirePermission(userId, activity.getOrganizationId(), "activity:change");
+    List<ManagedPosition> managedPositions =
+        positions.selectManageableByActivity(activity.getOrganizationId(), id).stream()
+            .map(
+                position ->
+                    new ManagedPosition(
+                        position,
+                        positionQuestions.selectByPosition(
+                            activity.getOrganizationId(), id, position.getId())))
+            .toList();
+    return new ActivityManagementDetail(activity, managedPositions);
+  }
+
   private Activity required(Long id) {
     Activity activity = activities.selectById(id);
     if (activity == null)
@@ -315,6 +336,11 @@ public class ActivityService {
   public record ActivitySummary(Activity activity, List<ActivityPosition> positions) {}
 
   public record ActivityDetail(Activity activity, List<ActivityPosition> positions) {}
+
+  public record ActivityManagementDetail(Activity activity, List<ManagedPosition> positions) {}
+
+  public record ManagedPosition(
+      ActivityPosition position, List<ActivityPositionQuestion> questions) {}
 
   public record CancelRequest(
       @jakarta.validation.constraints.NotBlank @jakarta.validation.constraints.Size(max = 500)

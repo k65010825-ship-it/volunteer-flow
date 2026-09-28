@@ -46,6 +46,21 @@ export interface ActivityDetail {
   activity: Activity;
   positions: Position[];
 }
+export interface PositionManagementQuestion {
+  id: EntityId;
+  questionType: QuestionType;
+  title: string;
+  requiredQuestion: boolean;
+  optionsJson: string | null;
+  sortOrder: number;
+}
+export interface ManagedPosition extends Position {
+  questions: PositionManagementQuestion[];
+}
+export interface ActivityManagementDetail {
+  activity: Activity;
+  positions: ManagedPosition[];
+}
 
 export type QuestionType =
   | "TEXT"

@@ -54,6 +54,29 @@ async function open() {
 }
 
 describe("ActivityDetailView registration", () => {
+  it("hides the management entry when the protected management probe is forbidden", async () => {
+    mock.onGet("/api/v1/activities/10/management").reply(403, {
+      code: "PERMISSION_DENIED",
+    });
+
+    const { wrapper } = await open();
+
+    expect(wrapper.find(".manage-link").exists()).toBe(false);
+  });
+
+  it("shows the management entry only after the protected management probe succeeds", async () => {
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: activityDetail.activity,
+        positions: activityDetail.positions.map((position) => ({ position, questions: [] })),
+      },
+    });
+
+    const { wrapper } = await open();
+
+    expect(wrapper.get(".manage-link").attributes("href")).toBe("/activities/10/manage");
+  });
+
   it.each<QuestionType>([
     "TEXT",
     "SINGLE_CHOICE",
