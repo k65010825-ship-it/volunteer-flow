@@ -252,7 +252,8 @@ public class ActivityService {
                         positionQuestions.selectByPosition(
                             activity.getOrganizationId(), id, position.getId())))
             .toList();
-    return new ActivityManagementDetail(activity, managedPositions);
+    return new ActivityManagementDetail(
+        activity, managedPositions, activityQuestions.countByActivity(id));
   }
 
   private Activity required(Long id) {
@@ -337,7 +338,8 @@ public class ActivityService {
 
   public record ActivityDetail(Activity activity, List<ActivityPosition> positions) {}
 
-  public record ActivityManagementDetail(Activity activity, List<ManagedPosition> positions) {}
+  public record ActivityManagementDetail(
+      Activity activity, List<ManagedPosition> positions, long commonQuestionCount) {}
 
   public record ManagedPosition(
       ActivityPosition position, List<ActivityPositionQuestion> questions) {}

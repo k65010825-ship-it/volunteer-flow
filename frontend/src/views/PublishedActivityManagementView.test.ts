@@ -240,6 +240,27 @@ describe("PublishedActivityManagementView", () => {
     });
   });
 
+  it("omits the deadline after it is changed and restored before submitting another field", async () => {
+    mock.onPost("/api/v1/activities/10/changes").reply(200, {
+      data: { activity: { ...activity.activity, title: "迎新典礼" }, notifiedRecipients: 0 },
+    });
+    const wrapper = await open();
+
+    await wrapper.get('[data-test="free-cancel-deadline"]').setValue("");
+    await wrapper
+      .get('[data-test="free-cancel-deadline"]')
+      .setValue("2026-09-29T08:00");
+    await wrapper.get('[data-test="activity-title"]').setValue("迎新典礼");
+    await wrapper.get('[data-test="review-activity-change"]').trigger("click");
+    await wrapper.get('[data-test="change-reason"]').setValue("更正标题");
+    await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
+    await flushPromises();
+
+    expect(JSON.parse(mock.history.post[0].data)).not.toHaveProperty(
+      "freeCancelDeadlineAt",
+    );
+  });
+
   it("treats whitespace-only activity edits as a local no-op", async () => {
     const wrapper = await open();
 
@@ -390,6 +411,167 @@ describe("PublishedActivityManagementView", () => {
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("已通知 7 位受影响成员");
+    expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("clears an unsubmitted new-position draft before loading another activity", async () => {
+    mock.onGet("/api/v1/activities/11/management").reply(200, {
+      data: {
+        activity: { ...activity.activity, id: "11", title: "新的活动" },
+        positions: activity.positions.map((position) => ({ position, questions: [] })),
+      },
+    });
+    const wrapper = await open();
+    await wrapper.get('[data-test="new-position-name"]').setValue("活动 A 草稿");
+    await wrapper.get('[data-test="new-position-description"]').setValue("不得提交给活动 B");
+
+    await wrapper.setProps({ id: "11" });
+    await flushPromises();
+
+    expect(wrapper.get<HTMLInputElement>('[data-test="new-position-name"]').element.value).toBe("");
+    expect(
+      wrapper.get<HTMLTextAreaElement>('[data-test="new-position-description"]').element.value,
+    ).toBe("");
+    await wrapper.get('[data-test="save-draft-position"]').trigger("click");
+    expect(mock.history.post).toHaveLength(0);
+  });
+
+  it("blocks publication while a new valid question has not been saved", async () => {
+    mock.reset();
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: activity.activity,
+        commonQuestionCount: 0,
+        positions: [
+          { position: { ...activity.positions[0], id: "99", status: "DRAFT" }, questions: [] },
+        ],
+      },
+    });
+    const wrapper = await open();
+    await wrapper.get('[data-test="add-question-99"]').trigger("click");
+    await wrapper.get('[data-test="question-title-99-0"]').setValue("接待经验");
+
+    expect(wrapper.get('[data-test="publish-position-99"]').attributes("disabled")).toBeDefined();
+    expect(mock.history.post).toHaveLength(0);
+  });
+
+  it("blocks publication while a saved question has unsaved edits", async () => {
+    mock.reset();
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: activity.activity,
+        commonQuestionCount: 0,
+        positions: [
+          {
+            position: { ...activity.positions[0], id: "99", status: "DRAFT" },
+            questions: [{ id: "100", questionType: "TEXT", title: "接待经验", requiredQuestion: false, optionsJson: null, sortOrder: 1 }],
+          },
+        ],
+      },
+    });
+    const wrapper = await open();
+    await wrapper.get('[data-test="question-title-99-0"]').setValue("更新后的经验");
+
+    expect(wrapper.get('[data-test="publish-position-99"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("allows publication after the edited question is saved", async () => {
+    mock.reset();
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: activity.activity,
+        commonQuestionCount: 0,
+        positions: [
+          {
+            position: { ...activity.positions[0], id: "99", status: "DRAFT" },
+            questions: [{ id: "100", questionType: "TEXT", title: "接待经验", requiredQuestion: false, optionsJson: null, sortOrder: 1 }],
+          },
+        ],
+      },
+    });
+    mock.onPut("/api/v1/positions/99/questions/100").reply(200, {
+      data: { id: "100", questionType: "TEXT", title: "更新后的经验", requiredQuestion: false, optionsJson: null, sortOrder: 1 },
+    });
+    const wrapper = await open();
+    await wrapper.get('[data-test="question-title-99-0"]').setValue("更新后的经验");
+    await wrapper.findAll("button").find((button) => button.text() === "保存问题")!.trigger("click");
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="publish-position-99"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("uses common plus position question counts when limiting additions and publication", async () => {
+    const questions = Array.from({ length: 8 }, (_, index) => ({
+      id: String(100 + index), questionType: "TEXT", title: `问题${index}`, requiredQuestion: false, optionsJson: null, sortOrder: index + 1,
+    }));
+    mock.reset();
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: activity.activity,
+        commonQuestionCount: 3,
+        positions: [
+          { position: { ...activity.positions[0], id: "99", status: "DRAFT" }, questions },
+        ],
+      },
+    });
+    const wrapper = await open();
+
+    expect(wrapper.get('[data-test="add-question-99"]').attributes("disabled")).toBeDefined();
+    expect(wrapper.get('[data-test="publish-position-99"]').attributes("disabled")).toBeDefined();
+  });
+
+  it("discards an old question-save response after the route changes", async () => {
+    let finishOld!: (value: [number, unknown]) => void;
+    mock.reset();
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: activity.activity,
+        commonQuestionCount: 0,
+        positions: [{ position: { ...activity.positions[0], id: "99", status: "DRAFT" }, questions: [{ id: "100", questionType: "TEXT", title: "旧问题", requiredQuestion: false, optionsJson: null, sortOrder: 1 }] }],
+      },
+    });
+    mock.onGet("/api/v1/activities/11/management").reply(200, {
+      data: { activity: { ...activity.activity, id: "11", title: "新的活动" }, commonQuestionCount: 0, positions: activity.positions.map((position) => ({ position, questions: [] })) },
+    });
+    mock.onPut("/api/v1/positions/99/questions/100").reply(
+      () => new Promise((resolve) => { finishOld = resolve; }),
+    );
+    const wrapper = await open();
+    await wrapper.get('[data-test="question-title-99-0"]').setValue("旧响应不得写回");
+    await wrapper.findAll("button").find((button) => button.text() === "保存问题")!.trigger("click");
+    await wrapper.setProps({ id: "11" });
+    await flushPromises();
+    finishOld([200, { data: { id: "100", questionType: "TEXT", title: "旧响应不得写回", requiredQuestion: false, optionsJson: null, sortOrder: 1 } }]);
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("旧响应不得写回");
+    expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
+  });
+
+  it("discards an old question-delete response after the route changes", async () => {
+    let finishOld!: (value: [number, unknown]) => void;
+    mock.reset();
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: activity.activity,
+        commonQuestionCount: 0,
+        positions: [{ position: { ...activity.positions[0], id: "99", status: "DRAFT" }, questions: [{ id: "100", questionType: "TEXT", title: "旧问题", requiredQuestion: false, optionsJson: null, sortOrder: 1 }] }],
+      },
+    });
+    mock.onGet("/api/v1/activities/11/management").reply(200, {
+      data: { activity: { ...activity.activity, id: "11", title: "新的活动" }, commonQuestionCount: 0, positions: activity.positions.map((position) => ({ position, questions: [] })) },
+    });
+    mock.onDelete("/api/v1/positions/99/questions/100").reply(
+      () => new Promise((resolve) => { finishOld = resolve; }),
+    );
+    const wrapper = await open();
+    await wrapper.findAll("button").find((button) => button.text() === "删除问题")!.trigger("click");
+    await wrapper.setProps({ id: "11" });
+    await flushPromises();
+    finishOld([204, undefined]);
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("旧问题");
     expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
   });
 

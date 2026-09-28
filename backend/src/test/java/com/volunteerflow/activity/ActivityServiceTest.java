@@ -150,6 +150,7 @@ class ActivityServiceTest {
     question.setTitle("接待经验");
     when(activityMapper.selectById(1L)).thenReturn(published);
     when(positionMapper.selectManageableByActivity(100L, 1L)).thenReturn(List.of(active, draft));
+    when(activityQuestionMapper.countByActivity(1L)).thenReturn(3L);
     when(positionQuestionMapper.selectByPosition(100L, 1L, 30L)).thenReturn(List.of());
     when(positionQuestionMapper.selectByPosition(100L, 1L, 31L)).thenReturn(List.of(question));
 
@@ -158,6 +159,7 @@ class ActivityServiceTest {
     assertThat(detail.positions()).extracting(ActivityService.ManagedPosition::position)
         .containsExactly(active, draft);
     assertThat(detail.positions().get(1).questions()).containsExactly(question);
+    assertThat(detail.commonQuestionCount()).isEqualTo(3);
     verify(authorization).requirePermission(7L, 100L, "activity:change");
   }
 

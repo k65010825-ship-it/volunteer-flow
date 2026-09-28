@@ -77,6 +77,36 @@ describe("ActivityDetailView registration", () => {
     expect(wrapper.get(".manage-link").attributes("href")).toBe("/activities/10/manage");
   });
 
+  it("does not let an older protected management probe change the next activity entry", async () => {
+    let resolveOld!: (value: [number, unknown]) => void;
+    mock.onGet("/api/v1/activities/10/management").reply(
+      () => new Promise((resolve) => { resolveOld = resolve; }),
+    );
+    mock.onGet("/api/v1/activities/11").reply(200, {
+      data: { ...activityDetail, activity: { ...activityDetail.activity, id: "11" } },
+    });
+    mock.onGet("/api/v1/activities/11/management").reply(403, {
+      code: "PERMISSION_DENIED",
+    });
+    const { wrapper } = await open();
+
+    await wrapper.setProps({ id: "11" });
+    await flushPromises();
+    resolveOld([
+      200,
+      {
+        data: {
+          activity: activityDetail.activity,
+          commonQuestionCount: 0,
+          positions: activityDetail.positions.map((position) => ({ position, questions: [] })),
+        },
+      },
+    ]);
+    await flushPromises();
+
+    expect(wrapper.find(".manage-link").exists()).toBe(false);
+  });
+
   it.each<QuestionType>([
     "TEXT",
     "SINGLE_CHOICE",

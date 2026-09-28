@@ -60,6 +60,7 @@ export interface ManagedPosition extends Position {
 export interface ActivityManagementDetail {
   activity: Activity;
   positions: ManagedPosition[];
+  commonQuestionCount: number;
 }
 
 export type QuestionType =

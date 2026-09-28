@@ -22,6 +22,7 @@ export async function getActivity(id: EntityId): Promise<ActivityDetail> {
 type ManagementResponse = {
   activity: Activity;
   positions: Array<{ position: Position; questions: PositionManagementQuestion[] }>;
+  commonQuestionCount: number;
 };
 
 export async function getManagementActivity(
@@ -32,6 +33,7 @@ export async function getManagementActivity(
   );
   return {
     activity: response.data.data.activity,
+    commonQuestionCount: response.data.data.commonQuestionCount,
     positions: response.data.data.positions.map(({ position, questions }) => ({
       ...position,
       questions,

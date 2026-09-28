@@ -29,7 +29,7 @@ const props = defineProps<{ id: EntityId }>();
 type ActivityForm = Omit<
   ActivityChangeRequest,
   "reason" | "freeCancelDeadlineAt"
-> & { freeCancelDeadlineAt: string; freeCancelDeadlineChanged: boolean };
+> & { freeCancelDeadlineAt: string };
 type PositionForm = Omit<
   PositionChangeRequest,
   "reason" | "serviceStartAt" | "serviceEndAt" | "meetingLocation"
@@ -55,6 +55,7 @@ type QuestionForm = {
   required: boolean;
   optionsText: string;
   sortOrder: number;
+  savedSignature?: string;
 };
 
 const detail = ref<ActivityManagementDetail | null>(null);
@@ -105,7 +106,6 @@ function activityToForm(activity: Activity): ActivityForm {
     location: activity.location,
     registrationEndAt: localDate(activity.registrationEndAt),
     freeCancelDeadlineAt: localDate(activity.freeCancelDeadlineAt),
-    freeCancelDeadlineChanged: false,
     activityStartAt: localDate(activity.activityStartAt),
     activityEndAt: localDate(activity.activityEndAt),
   };
@@ -118,7 +118,7 @@ function questionToForm(question: PositionManagementQuestion): QuestionForm {
   } catch {
     options = [];
   }
-  return {
+  const form: QuestionForm = {
     id: question.id,
     type: question.questionType,
     title: question.title,
@@ -126,6 +126,8 @@ function questionToForm(question: PositionManagementQuestion): QuestionForm {
     optionsText: options.join("\n"),
     sortOrder: question.sortOrder,
   };
+  form.savedSignature = questionSignature(form);
+  return form;
 }
 
 function positionToForm(position: Position): PositionForm {
@@ -163,6 +165,7 @@ function resetInteractionState() {
   submitting.value = false;
   detail.value = null;
   activityForm.value = null;
+  resetNewPosition();
   for (const key of Object.keys(positionForms)) delete positionForms[key];
   for (const key of Object.keys(questionForms)) delete questionForms[key];
 }
@@ -246,13 +249,16 @@ function reviewPosition(id: EntityId) {
 }
 
 function activityPayload(form: ActivityForm, why: string): ActivityChangeRequest {
-  const { freeCancelDeadlineChanged, freeCancelDeadlineAt, ...rest } = form;
+  const { freeCancelDeadlineAt, ...rest } = form;
+  const freeCancelChanged =
+    Boolean(detail.value) &&
+    localDate(detail.value!.activity.freeCancelDeadlineAt) !== freeCancelDeadlineAt;
   return {
     ...rest,
     title: trimmed(rest.title),
     description: trimmed(rest.description),
     location: trimmed(rest.location),
-    ...(freeCancelDeadlineChanged
+    ...(freeCancelChanged
       ? { freeCancelDeadlineAt: freeCancelDeadlineAt || null }
       : {}),
     reason: why,
@@ -365,6 +371,14 @@ function questionPayload(form: QuestionForm): PositionQuestionRequest {
   };
 }
 
+function questionSignature(form: QuestionForm) {
+  return JSON.stringify(questionPayload(form));
+}
+
+function isQuestionSaved(form: QuestionForm) {
+  return Boolean(form.id) && form.savedSignature === questionSignature(form);
+}
+
 function applyQuestion(
   positionId: EntityId,
   previous: QuestionForm,
@@ -424,7 +438,31 @@ async function removeQuestion(positionId: EntityId, form: QuestionForm) {
 
 function canPublish(positionId: EntityId) {
   const forms = questionForms[positionId] ?? [];
-  return forms.length <= 10 && forms.every(validQuestion);
+  return (
+    commonQuestionCount() + forms.length <= 10 &&
+    forms.every((form) => validQuestion(form) && isQuestionSaved(form))
+  );
+}
+
+function commonQuestionCount() {
+  return detail.value?.commonQuestionCount ?? 0;
+}
+
+function canAddQuestion(positionId: EntityId) {
+  return commonQuestionCount() + (questionForms[positionId]?.length ?? 0) < 10;
+}
+
+function resetNewPosition() {
+  Object.assign(newPosition, {
+    name: "",
+    description: "",
+    capacity: 1,
+    registrationMode: "FIRST_COME",
+    promotionTimeoutMinutes: 120,
+    serviceStartAt: "",
+    serviceEndAt: "",
+    meetingLocation: "",
+  });
 }
 
 function draftPayload(): PositionDraftRequest {
@@ -456,16 +494,7 @@ async function saveDraft() {
     };
     positionForms[position.id] = positionToForm(position);
     questionForms[position.id] = [];
-    Object.assign(newPosition, {
-      name: "",
-      description: "",
-      capacity: 1,
-      registrationMode: "FIRST_COME",
-      promotionTimeoutMinutes: 120,
-      serviceStartAt: "",
-      serviceEndAt: "",
-      meetingLocation: "",
-    });
+    resetNewPosition();
     notification.value = "岗位草稿已保存，请配置问题后单独发布。";
   } catch (error) {
     if (alive && request === generation) actionError.value = errorMessage(error);
@@ -530,7 +559,7 @@ onBeforeUnmount(() => {
         <label>活动介绍<textarea v-model="activityForm.description" required /></label>
         <label>活动地点<input v-model="activityForm.location" maxlength="255" required /></label>
         <label>报名截止时间<input v-model="activityForm.registrationEndAt" type="datetime-local" required /></label>
-        <label>免费取消截止时间<input v-model="activityForm.freeCancelDeadlineAt" data-test="free-cancel-deadline" type="datetime-local" @input="activityForm.freeCancelDeadlineChanged = true" /></label>
+        <label>免费取消截止时间<input v-model="activityForm.freeCancelDeadlineAt" data-test="free-cancel-deadline" type="datetime-local" /></label>
         <label>活动开始时间<input v-model="activityForm.activityStartAt" type="datetime-local" required /></label>
         <label>活动结束时间<input v-model="activityForm.activityEndAt" type="datetime-local" required /></label>
         <button class="secondary" data-test="review-activity-change" type="button" :disabled="submitting" @click="reviewActivity">查看活动变更差异</button>
@@ -553,8 +582,9 @@ onBeforeUnmount(() => {
                 <label class="inline-check"><input v-model="question.required" type="checkbox" /> 必填</label>
                 <div class="management-buttons"><button class="secondary compact" type="button" :disabled="submitting" @click="saveQuestion(position.id, question)">保存问题</button><button class="secondary compact" type="button" :disabled="submitting" @click="removeQuestion(position.id, question)">删除问题</button></div>
               </section>
-              <button class="secondary compact" :data-test="`add-question-${position.id}`" type="button" :disabled="submitting || (questionForms[position.id]?.length || 0) >= 10" @click="addQuestion(position.id)">新增岗位问题</button>
+              <button class="secondary compact" :data-test="`add-question-${position.id}`" type="button" :disabled="submitting || !canAddQuestion(position.id)" @click="addQuestion(position.id)">新增岗位问题</button>
             </div>
+            <p v-if="!canPublish(position.id)" class="muted">请先保存所有问题；公共问题与岗位问题合计最多 10 个。</p>
             <button class="primary compact" :data-test="`publish-position-${position.id}`" :disabled="submitting || !canPublish(position.id)" @click="publishDraft(position.id)">发布岗位</button>
           </template>
           <template v-else-if="positionForms[position.id]">
