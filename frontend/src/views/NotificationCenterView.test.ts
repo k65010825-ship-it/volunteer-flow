@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory, createRouter } from "vue-router";
 import { apiClient } from "../api/http";
 import NotificationCenterView from "./NotificationCenterView.vue";
+import { useNotificationStore } from "../stores/notifications";
 
 const mock = new MockAdapter(apiClient);
 const wrappers: ReturnType<typeof mount>[] = [];
@@ -33,6 +34,41 @@ async function open() {
 }
 
 describe("NotificationCenterView", () => {
+  it("enables read-all when the loaded page is read but global unread items remain", async () => {
+    const store = useNotificationStore();
+    store.unreadCount = 3;
+    mock.onGet("/api/v1/users/me/notifications").reply(200, { data: {
+      items: [{ ...first, readAt: "2026-09-20T10:01:00" }],
+      nextCursor: "older-unread", hasMore: true,
+    } });
+    mock.onPost("/api/v1/users/me/notifications/read-all").reply(204);
+    mock.onGet("/api/v1/users/me/notifications/unread-count")
+      .reply(200, { data: { unreadCount: 0 } });
+    const { wrapper } = await open();
+    expect(wrapper.get<HTMLButtonElement>('[data-test="read-all"]').element.disabled).toBe(false);
+    await wrapper.get('[data-test="read-all"]').trigger("click");
+    await flushPromises();
+    expect(mock.history.post.filter((r) => r.url?.endsWith("/read-all"))).toHaveLength(1);
+    expect(mock.history.get.filter((r) => r.url?.endsWith("/notifications"))).toHaveLength(2);
+    expect(store.unreadCount).toBe(0);
+    expect(wrapper.get<HTMLButtonElement>('[data-test="read-all"]').element.disabled).toBe(true);
+  });
+
+  it.each(["岗位信息变更", "新岗位已发布"])("opens the parent activity for %s", async (title) => {
+    mock.onGet("/api/v1/users/me/notifications").reply(200, { data: {
+      items: [{ ...first, type: "POSITION_CHANGE", title, businessType: "ACTIVITY", businessId: "11" }],
+      nextCursor: null, hasMore: false,
+    } });
+    let finish!: (reply: [number]) => void;
+    mock.onPost("/api/v1/notifications/1/read").reply(() => new Promise((resolve) => { finish = resolve; }));
+    const { wrapper, router } = await open();
+    await wrapper.get('[data-test="notification-item"]').trigger("click");
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe("/notifications");
+    finish([204]);
+    await flushPromises();
+    expect(router.currentRoute.value.path).toBe("/activities/11");
+  });
   it("loads the next cursor page without replacing already loaded notifications", async () => {
     const { wrapper } = await open();
     await wrapper.get('[data-test="load-more"]').trigger("click");

@@ -8,11 +8,14 @@ export const useNotificationStore = defineStore("notifications", () => {
   const unreadCount = ref(0);
   let timer: ReturnType<typeof setInterval> | undefined;
   let generation = 0;
+  let requestSequence = 0;
 
   async function refreshUnreadCount() {
     const requestGeneration = generation;
+    const sequence = ++requestSequence;
     const count = await notificationApi.getUnreadCount();
-    if (requestGeneration === generation) unreadCount.value = count;
+    if (requestGeneration === generation && sequence === requestSequence)
+      unreadCount.value = count;
   }
 
   function refreshWhenVisible() {

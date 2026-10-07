@@ -251,6 +251,12 @@ class PromotionServiceTest {
     ArgumentCaptor<PromotionOffer> inserted = ArgumentCaptor.forClass(PromotionOffer.class);
     verify(offers).insert(inserted.capture());
     assertThat(inserted.getValue().getRegistrationCycleId()).isEqualTo(102L);
+    Long nextOfferId = inserted.getValue().getId();
+    assertThat(nextOfferId).isNotEqualTo(300L);
+    assertThat(notifications.commands()).containsExactly(new NotificationCommand(
+        10L, 22L, "PROMOTION_OFFER", "递补邀请", "请及时确认", "PROMOTION_OFFER",
+        nextOfferId, "promotion-offer:" + nextOfferId + ":created"));
+    assertThat(notifications.commands()).noneMatch(command -> command.userId().equals(21L));
   }
 
   @Test

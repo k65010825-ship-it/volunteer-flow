@@ -53,6 +53,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.stream.LongStream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -403,6 +405,133 @@ class Stage2VmAcceptanceIT {
   }
 
   private record QuestionRow(String table, Long id) {}
+
+  @ParameterizedTest
+  @ValueSource(strings = {"change", "cancel"})
+  void pendingOfferExpiryRecipientMatrixUsesLiveTimeBeforeCleanup(String action) {
+    try {
+      createOrganizationAndMembers(11);
+      Fixture fixture = createActivity("FIRST_COME", 1);
+      List<RegistrationResult> submitted = memberIds.stream()
+          .map(userId -> submit(userId, fixture)).toList();
+      String[] statuses = {"CONFIRMED", "PENDING_REVIEW", "WAITLISTED", "WAITLISTED",
+          "WAITLISTED", "WAITLISTED", "CANCELED", "REJECTED", "PROMOTION_DECLINED",
+          "PROMOTION_EXPIRED", "LATE_CANCELED"};
+      LocalDateTime boundary = offers.currentDatabaseTime();
+      for (int i = 0; i < statuses.length; i++) {
+        sql.update("UPDATE registration_cycle SET status=? WHERE id=? AND organization_id=?",
+            statuses[i], submitted.get(i).cycleId(), organizationId);
+      }
+      seedRecipientOffer(fixture, submitted.get(3).cycleId(), "PENDING", boundary.plusDays(1));
+      seedRecipientOffer(fixture, submitted.get(4).cycleId(), "PENDING", boundary.minusSeconds(1));
+      seedRecipientOffer(fixture, submitted.get(5).cycleId(), "PENDING", boundary);
+      seedRecipientOffer(fixture, submitted.get(8).cycleId(), "DECLINED", boundary.plusDays(1));
+      seedRecipientOffer(fixture, submitted.get(9).cycleId(), "EXPIRED", boundary.minusSeconds(1));
+      // Two eligible facts for the same user still produce one notification.
+      sql.update("""
+          INSERT INTO registration_cycle
+            (id,organization_id,registration_id,activity_id,position_id,user_id,cycle_number,status,submitted_at)
+          SELECT ?,organization_id,registration_id,activity_id,position_id,user_id,2,'PENDING_REVIEW',submitted_at
+          FROM registration_cycle WHERE id=? AND organization_id=?
+          """, IdWorker.getId(), submitted.get(0).cycleId(), organizationId);
+      if (action.equals("cancel")) {
+        activities.cancel(ownerId, fixture.activityId(), "Recipient matrix");
+      } else {
+        var original = activityMapper.selectById(fixture.activityId());
+        activityChanges.changeActivity(ownerId, fixture.activityId(),
+            new ActivityChangeService.ActivityChangeRequest(
+                "Recipient matrix title", original.getDescription(), original.getLocation(),
+                original.getRegistrationEndAt(), original.getFreeCancelDeadlineAt(),
+                original.getActivityStartAt(), original.getActivityEndAt(), "Recipient matrix"));
+      }
+      List<Long> expected = memberIds.subList(0, 4);
+      assertThat(sql.queryForList(
+          "SELECT user_id FROM notification WHERE organization_id=? AND notification_type=?",
+          Long.class, organizationId, action.equals("cancel") ? "ACTIVITY_CANCELED" : "ACTIVITY_CHANGE"))
+          .containsExactlyInAnyOrderElementsOf(expected);
+      // Fixed boundary also exercises expires_at == now, not merely a slightly later wall clock.
+      assertThat(cycles.selectAffectedUserIds(fixture.activityId(), boundary))
+          .containsExactlyInAnyOrderElementsOf(expected);
+      assertThat(cycles.selectAffectedUserIdsForActivityCancellation(organizationId, fixture.activityId()))
+          .containsExactlyInAnyOrderElementsOf(expected);
+      assertThat(sql.queryForObject("SELECT status FROM promotion_offer WHERE registration_cycle_id=?",
+          String.class, submitted.get(4).cycleId())).isEqualTo("PENDING");
+      System.out.println("Stage3A recipient matrix passed for " + action
+          + ": 4 distinct eligible users, expired/equal PENDING excluded before cleanup.");
+    } finally {
+      cleanup();
+    }
+  }
+
+  private void seedRecipientOffer(Fixture fixture, Long cycleId, String status, LocalDateTime expiryAt) {
+    PromotionOffer offer = new PromotionOffer();
+    offer.setId(IdWorker.getId());
+    offer.setOrganizationId(organizationId);
+    offer.setActivityId(fixture.activityId());
+    offer.setPositionId(fixture.positionId());
+    offer.setRegistrationCycleId(cycleId);
+    offer.setStatus(status);
+    offer.setExpiresAt(expiryAt);
+    offer.setCreatedBy(ownerId);
+    offer.setVersion(0);
+    offers.insert(offer);
+  }
+
+  @Test
+  void cancellationWaitingForFormalChangePreservesCommittedFieldsAndCurrentNotificationTitle()
+      throws Exception {
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    CountDownLatch changeWritten = new CountDownLatch(1);
+    CountDownLatch allowChangeCommit = new CountDownLatch(1);
+    CountDownLatch cancelStarted = new CountDownLatch(1);
+    workersStopped = false;
+    try {
+      createOrganizationAndMembers(1);
+      Fixture fixture = createActivity("FIRST_COME", 2);
+      submit(memberIds.get(0), fixture);
+      var original = activityMapper.selectById(fixture.activityId());
+      LocalDateTime changedStart = original.getActivityStartAt().plusHours(1);
+      LocalDateTime changedEnd = original.getActivityEndAt().plusHours(1);
+      Future<?> changer = executor.submit(() -> transactions.execute(status -> {
+        activityChanges.changeActivity(ownerId, fixture.activityId(),
+            new ActivityChangeService.ActivityChangeRequest(
+                "Committed current title", original.getDescription(), original.getLocation(),
+                original.getRegistrationEndAt(), original.getFreeCancelDeadlineAt(),
+                changedStart, changedEnd, "Schedule change"));
+        changeWritten.countDown();
+        await(allowChangeCommit);
+        return null;
+      }));
+      await(changeWritten);
+      Future<?> canceler = executor.submit(() -> {
+        cancelStarted.countDown();
+        return activities.cancel(ownerId, fixture.activityId(), "Weather");
+      });
+      await(cancelStarted);
+      assertThatThrownBy(() -> canceler.get(500, TimeUnit.MILLISECONDS))
+          .as("cancellation waits for the formal change transaction")
+          .isInstanceOf(TimeoutException.class);
+      allowChangeCommit.countDown();
+      changer.get(15, TimeUnit.SECONDS);
+      canceler.get(15, TimeUnit.SECONDS);
+      var current = activityMapper.selectById(fixture.activityId());
+      assertThat(current.getStatus()).isEqualTo("CANCELED");
+      assertThat(current.getTitle()).isEqualTo("Committed current title");
+      assertThat(current.getActivityStartAt()).isEqualTo(changedStart);
+      assertThat(current.getActivityEndAt()).isEqualTo(changedEnd);
+      assertThat(current.getVersion()).isEqualTo(original.getVersion() + 2);
+      assertThat(sql.queryForObject(
+          "SELECT content FROM notification WHERE organization_id=? AND notification_type='ACTIVITY_CANCELED'",
+          String.class, organizationId)).startsWith("Committed current title已取消");
+      System.out.println("Stage3A cancellation lock assertion passed: CANCELED, current title/time preserved.");
+    } finally {
+      allowChangeCommit.countDown();
+      executor.shutdownNow();
+      workersStopped = executor.awaitTermination(30, TimeUnit.SECONDS);
+      if (workersStopped) cleanup();
+      else throw new IllegalStateException("Workers still active; cleanup withheld for run " + prefix);
+    }
+  }
 
   @Test
   void capacityIncreaseSeesReservationCommittedWhileWaitingForThePositionLock()
@@ -813,6 +942,9 @@ SELECT COUNT(*) FROM (
   }
 
   private void createOrganizationAndMembers(int members) {
+    // Persist run identity in the test log before any committed fixture write, so a lost
+    // database connection during finally can be recovered without guessing cleanup targets.
+    System.out.println("Stage2 fixture starting: run=" + prefix + ", members=" + members);
     AppUser platformAdmin = user("admin", "PLATFORM_ADMIN");
     outsiderId = platformAdmin.getId();
     ownerId = user("owner", "USER").getId();
@@ -824,6 +956,7 @@ SELECT COUNT(*) FROM (
                 prefix, "isolated Stage 2 acceptance", ownerId));
     organizationId = organization.getId();
     organizationIds.add(organizationId);
+    System.out.println("Stage2 fixture organization: run=" + prefix + ", id=" + organizationId);
     var invitation =
         organizations.createInvite(
             ownerId,

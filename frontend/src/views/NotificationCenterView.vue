@@ -23,7 +23,8 @@ const store = useNotificationStore();
 let listGeneration = 0;
 
 const canReadAll = computed(
-  () => notifications.value.some((notification) => !notification.readAt) && !readingAll.value,
+  () => (store.unreadCount > 0 || notifications.value.some((notification) => !notification.readAt))
+    && !readingAll.value,
 );
 
 async function load(reset = false, clearBeforeLoading = false) {

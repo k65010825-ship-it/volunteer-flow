@@ -71,6 +71,12 @@ public interface RegistrationCycleMapper extends BaseMapper<RegistrationCycle> {
               AND o.expires_at > CURRENT_TIMESTAMP(6)
           )
         )
+        AND NOT EXISTS (
+          SELECT 1 FROM promotion_offer o
+          WHERE c.status='WAITLISTED' AND o.registration_cycle_id=c.id
+            AND o.organization_id=c.organization_id AND o.activity_id=c.activity_id
+            AND (o.status<>'PENDING' OR o.expires_at <= CURRENT_TIMESTAMP(6))
+        )
       ORDER BY c.user_id
       """)
   List<Long> selectAffectedUserIdsForActivityCancellation(
@@ -92,6 +98,12 @@ public interface RegistrationCycleMapper extends BaseMapper<RegistrationCycle> {
               AND o.status='PENDING'
               AND o.expires_at > #{now}
           )
+        )
+        AND NOT EXISTS (
+          SELECT 1 FROM promotion_offer o
+          WHERE c.status='WAITLISTED' AND o.registration_cycle_id=c.id
+            AND o.organization_id=c.organization_id AND o.activity_id=c.activity_id
+            AND (o.status<>'PENDING' OR o.expires_at <= #{now})
         )
       ORDER BY c.user_id
       """)

@@ -1,6 +1,6 @@
 import { flushPromises, mount } from "@vue/test-utils";
 import MockAdapter from "axios-mock-adapter";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../api/http";
 import type { ActivityDetail } from "../api/types";
 import PublishedActivityManagementView from "./PublishedActivityManagementView.vue";
@@ -50,6 +50,7 @@ beforeEach(() => {
 afterEach(() => {
   wrappers.splice(0).forEach((wrapper) => wrapper.unmount());
   mock.reset();
+  vi.useRealTimers();
 });
 
 async function open(id = "10") {
@@ -60,6 +61,76 @@ async function open(id = "10") {
 }
 
 describe("PublishedActivityManagementView", () => {
+  it.each(["title", "description", "started-description"])(
+    "preserves original ISO precision for a pure %s change", async (field) => {
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(new Date(field === "started-description"
+        ? "2026-10-01T10:00:00" : "2026-09-20T10:00:00"));
+      const original = {
+        ...activity.activity,
+        registrationEndAt: "2026-09-30T08:00:17.123456",
+        freeCancelDeadlineAt: "2026-09-29T08:00:18.234567",
+        activityStartAt: "2026-10-01T08:00:19.345678",
+        activityEndAt: "2026-10-01T12:00:20.456789",
+      };
+      mock.onGet("/api/v1/activities/10/management").reply(200, { data: {
+        activity: original,
+        positions: activity.positions.map((position) => ({ position, questions: [] })),
+      } });
+      const wrapper = await open();
+      await wrapper.get(field === "title" ? '[data-test="activity-title"]' : '.change-form textarea')
+        .setValue("仅更正文字");
+      await wrapper.get('[data-test="review-activity-change"]').trigger("click");
+      const summary = wrapper.get('[data-test="change-summary"]').text();
+      expect(summary).not.toContain("时间");
+      await wrapper.get('[data-test="change-reason"]').setValue("文字更正");
+      await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
+      await flushPromises();
+      expect(JSON.parse(mock.history.post[0].data)).toMatchObject({
+        registrationEndAt: original.registrationEndAt,
+        activityStartAt: original.activityStartAt,
+        activityEndAt: original.activityEndAt,
+      });
+      expect(JSON.parse(mock.history.post[0].data)).not.toHaveProperty("freeCancelDeadlineAt");
+    },
+  );
+
+  it("preserves service-time seconds and microseconds for a position text change", async () => {
+    const position = { ...activity.positions[0],
+      serviceStartAt: "2026-10-01T09:00:21.123456", serviceEndAt: "2026-10-01T11:00:32.654321" };
+    mock.onGet("/api/v1/activities/10/management").reply(200, { data: {
+      activity: activity.activity, positions: [{ position, questions: [] }],
+    } });
+    const wrapper = await open();
+    await wrapper.get('.managed-position textarea').setValue("仅更正岗位说明");
+    await wrapper.get('[data-test="review-position-20"]').trigger("click");
+    expect(wrapper.get('[data-test="change-summary"]').text()).not.toContain("服务开始时间");
+    expect(wrapper.get('[data-test="change-summary"]').text()).not.toContain("服务结束时间");
+    await wrapper.get('[data-test="change-reason"]').setValue("岗位说明更正");
+    await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
+    await flushPromises();
+    expect(JSON.parse(mock.history.post[0].data)).toMatchObject({
+      serviceStartAt: "2026-10-01T09:00:21.123456", serviceEndAt: "2026-10-01T11:00:32.654321",
+    });
+  });
+
+  it("sends a minute value only for the actually edited time and shows that same difference", async () => {
+    const original = { ...activity.activity, registrationEndAt: "2026-09-30T08:00:17.123456" };
+    mock.onGet("/api/v1/activities/10/management").reply(200, { data: {
+      activity: original, positions: activity.positions.map((position) => ({ position, questions: [] })),
+    } });
+    const wrapper = await open();
+    await wrapper.get('.change-form input[type="datetime-local"]').setValue("2026-09-30T09:15");
+    await wrapper.get('[data-test="review-activity-change"]').trigger("click");
+    expect(wrapper.get('[data-test="change-summary"]').text()).toContain("2026-09-30T09:15");
+    expect(wrapper.get('[data-test="change-summary"]').text()).toContain("2026-09-30T08:00:17.123456");
+    await wrapper.get('[data-test="change-reason"]').setValue("延长报名时间");
+    await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
+    await flushPromises();
+    expect(JSON.parse(mock.history.post[0].data)).toMatchObject({
+      registrationEndAt: "2026-09-30T09:15", activityStartAt: "2026-10-01T08:00:00",
+    });
+  });
   it("summarizes only actually changed allowed activity fields", async () => {
     const wrapper = await open();
 

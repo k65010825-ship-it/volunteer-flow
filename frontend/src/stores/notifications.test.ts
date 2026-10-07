@@ -30,6 +30,22 @@ afterEach(() => {
 });
 
 describe("notification polling request lifecycle", () => {
+  it("keeps the latest count when an older request in the same session resolves last", async () => {
+    const oldRequest = deferredReply();
+    const newRequest = deferredReply();
+    mock.onGet("/api/v1/users/me/notifications/unread-count")
+      .replyOnce(() => oldRequest.reply);
+    mock.onGet("/api/v1/users/me/notifications/unread-count")
+      .replyOnce(() => newRequest.reply);
+    const store = useNotificationStore();
+    const older = store.refreshUnreadCount();
+    const newer = store.refreshUnreadCount();
+    newRequest.resolve([200, { data: { unreadCount: 0 } }]);
+    await newer;
+    oldRequest.resolve([200, { data: { unreadCount: 9 } }]);
+    await older;
+    expect(store.unreadCount).toBe(0);
+  });
   it("does not write an unread response that resolves after polling stops", async () => {
     const pending = deferredReply();
     mock.onGet("/api/v1/users/me/notifications/unread-count").reply(() => pending.reply);

@@ -1,6 +1,7 @@
 package com.volunteerflow.activity;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import org.apache.ibatis.annotations.*;
@@ -11,6 +12,13 @@ public interface ActivityMapper extends BaseMapper<Activity> {
   @Select("SELECT * FROM activity WHERE id=#{id} FOR UPDATE")
   @Options(flushCache = Options.FlushCachePolicy.TRUE)
   Activity selectByIdForUpdate(@Param("id") Long id);
+
+  @Update("""
+      UPDATE activity SET status='CANCELED', canceled_at=#{canceledAt}, version=version+1
+      WHERE id=#{id} AND organization_id=#{organizationId} AND status IN ('DRAFT','PUBLISHED')
+      """)
+  int cancelCurrent(@Param("id") Long id, @Param("organizationId") Long organizationId,
+      @Param("canceledAt") LocalDateTime canceledAt);
 
   @Select(
       "SELECT * FROM activity WHERE organization_id=#{orgId} AND status='PUBLISHED' ORDER BY"

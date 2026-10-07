@@ -274,13 +274,14 @@ class ActivityServiceTest {
     Activity activity = validDraft();
     activity.setTitle("迎新志愿服务");
     activity.setStatus("PUBLISHED");
-    when(activityMapper.selectById(1L)).thenReturn(activity);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(activity);
+    when(activityMapper.cancelCurrent(eq(1L), eq(100L), any())).thenReturn(1);
     when(cycleMapper.selectAffectedUserIdsForActivityCancellation(100L, 1L))
         .thenReturn(List.of(21L, 22L, 21L));
     notifications.beforeWrite(
         () -> {
           assertThat(activity.getStatus()).isEqualTo("CANCELED");
-          verify(activityMapper).updateById(activity);
+          verify(activityMapper).cancelCurrent(1L, 100L, LocalDateTime.now(clock));
         });
 
     Activity result = service.cancel(7L, 1L, "天气原因");
@@ -306,9 +307,12 @@ class ActivityServiceTest {
                 "ACTIVITY",
                 1L,
                 "activity:1:canceled"));
-    var order = inOrder(cycleMapper, activityMapper);
+    var order = inOrder(cycleMapper, activityMapper, authorization);
+    order.verify(activityMapper).selectByIdForUpdate(1L);
+    order.verify(authorization).requirePermission(7L, 100L, "activity:cancel");
     order.verify(cycleMapper).selectAffectedUserIdsForActivityCancellation(100L, 1L);
-    order.verify(activityMapper).updateById(activity);
+    order.verify(activityMapper).cancelCurrent(1L, 100L, LocalDateTime.now(clock));
+    verify(activityMapper, never()).updateById(any(Activity.class));
   }
 
   @Test
@@ -316,10 +320,10 @@ class ActivityServiceTest {
     Activity activity = validDraft();
     activity.setTitle("迎新志愿服务");
     activity.setStatus("PUBLISHED");
-    when(activityMapper.selectById(1L)).thenReturn(activity);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(activity);
     when(cycleMapper.selectAffectedUserIdsForActivityCancellation(100L, 1L))
         .thenReturn(List.of(21L));
-    when(activityMapper.updateById(activity)).thenReturn(0);
+    when(activityMapper.cancelCurrent(eq(1L), eq(100L), any())).thenReturn(0);
 
     assertThatThrownBy(() -> service.cancel(7L, 1L, "天气原因"))
         .isInstanceOf(OptimisticLockingFailureException.class);

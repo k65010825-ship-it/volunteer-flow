@@ -134,6 +134,16 @@ public class ActivityChangeService {
       throw semantic("NO_EFFECTIVE_CHANGE", "No activity field has changed");
     }
 
+    if (after.containsKey("activityStartAt") || after.containsKey("activityEndAt")) {
+      // Keep the same activity -> positions lock order as position changes/publication.
+      // Read current rows, not a pre-lock snapshot of their explicit service windows.
+      for (ActivityPosition position :
+          positions.selectActiveByActivityForUpdate(activity.getOrganizationId(), activityId)) {
+        validatePositionTimes(request.activityStartAt(), request.activityEndAt(),
+            position.getServiceStartAt(), position.getServiceEndAt());
+      }
+    }
+
     if (activities.updatePublishedFields(activityId, activity.getOrganizationId(), after) != 1) {
       throw new OptimisticLockingFailureException("Published activity changed concurrently");
     }
@@ -362,19 +372,25 @@ public class ActivityChangeService {
             "POSITION_CHANGE",
             title,
             content,
-            "POSITION",
-            position.getId(),
+            "ACTIVITY",
+            activity.getId(),
             "position-change:" + position.getId() + ":" + auditId));
   }
 
   private void validatePositionTimes(
       Activity activity, LocalDateTime serviceStartAt, LocalDateTime serviceEndAt) {
+    validatePositionTimes(activity.getActivityStartAt(), activity.getActivityEndAt(),
+        serviceStartAt, serviceEndAt);
+  }
+
+  private void validatePositionTimes(LocalDateTime activityStartAt, LocalDateTime activityEndAt,
+      LocalDateTime serviceStartAt, LocalDateTime serviceEndAt) {
     boolean oneTimeMissing = (serviceStartAt == null) != (serviceEndAt == null);
     if (oneTimeMissing
         || (serviceStartAt != null
             && (!serviceStartAt.isBefore(serviceEndAt)
-                || serviceStartAt.isBefore(activity.getActivityStartAt())
-                || serviceEndAt.isAfter(activity.getActivityEndAt())))) {
+                || serviceStartAt.isBefore(activityStartAt)
+                || serviceEndAt.isAfter(activityEndAt)))) {
       throw semantic(
           "INVALID_POSITION_TIME",
           "Position service times must be a valid pair within the activity schedule");

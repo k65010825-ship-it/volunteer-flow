@@ -99,6 +99,11 @@ function localDate(value?: string | null) {
   return value ? value.slice(0, 16) : "";
 }
 
+// datetime-local is a minute-resolution editor, not the source of unchanged timestamps.
+function timePayload(value: string, original?: string | null) {
+  return value === localDate(original) ? original ?? null : value || null;
+}
+
 function activityToForm(activity: Activity): ActivityForm {
   return {
     title: activity.title,
@@ -191,6 +196,10 @@ function changed(label: string, before: string | number, after: string | number)
   return String(before) === String(after) ? [] : [{ label, before: String(before), after: String(after) }];
 }
 
+function changedTime(label: string, original: string | null | undefined, value: string) {
+  return changed(label, original ?? "", timePayload(value, original) ?? "");
+}
+
 const trimmed = (value: string) => value.trim();
 
 function activityDifferences(activity: Activity, form: ActivityForm | null): Difference[] {
@@ -199,10 +208,10 @@ function activityDifferences(activity: Activity, form: ActivityForm | null): Dif
     ...changed("活动标题", trimmed(activity.title), trimmed(form.title)),
     ...changed("活动介绍", trimmed(activity.description), trimmed(form.description)),
     ...changed("活动地点", trimmed(activity.location), trimmed(form.location)),
-    ...changed("报名截止时间", localDate(activity.registrationEndAt), form.registrationEndAt),
-    ...changed("免费取消截止时间", localDate(activity.freeCancelDeadlineAt), form.freeCancelDeadlineAt),
-    ...changed("活动开始时间", localDate(activity.activityStartAt), form.activityStartAt),
-    ...changed("活动结束时间", localDate(activity.activityEndAt), form.activityEndAt),
+    ...changedTime("报名截止时间", activity.registrationEndAt, form.registrationEndAt),
+    ...changedTime("免费取消截止时间", activity.freeCancelDeadlineAt, form.freeCancelDeadlineAt),
+    ...changedTime("活动开始时间", activity.activityStartAt, form.activityStartAt),
+    ...changedTime("活动结束时间", activity.activityEndAt, form.activityEndAt),
   ];
 }
 
@@ -213,8 +222,8 @@ function positionDifferences(position?: Position, form?: PositionForm): Differen
     ...changed("岗位说明", trimmed(position.description), trimmed(form.description)),
     ...changed("岗位容量", position.capacity, form.capacity),
     ...changed("递补确认期限", position.promotionTimeoutMinutes, form.promotionTimeoutMinutes),
-    ...changed("服务开始时间", localDate(position.serviceStartAt), form.serviceStartAt),
-    ...changed("服务结束时间", localDate(position.serviceEndAt), form.serviceEndAt),
+    ...changedTime("服务开始时间", position.serviceStartAt, form.serviceStartAt),
+    ...changedTime("服务结束时间", position.serviceEndAt, form.serviceEndAt),
     ...changed("集合地点", trimmed(position.meetingLocation ?? ""), trimmed(form.meetingLocation)),
   ];
 }
@@ -258,6 +267,9 @@ function activityPayload(form: ActivityForm, why: string): ActivityChangeRequest
     title: trimmed(rest.title),
     description: trimmed(rest.description),
     location: trimmed(rest.location),
+    registrationEndAt: timePayload(form.registrationEndAt, detail.value!.activity.registrationEndAt)!,
+    activityStartAt: timePayload(form.activityStartAt, detail.value!.activity.activityStartAt)!,
+    activityEndAt: timePayload(form.activityEndAt, detail.value!.activity.activityEndAt)!,
     ...(freeCancelChanged
       ? { freeCancelDeadlineAt: freeCancelDeadlineAt || null }
       : {}),
@@ -265,13 +277,13 @@ function activityPayload(form: ActivityForm, why: string): ActivityChangeRequest
   };
 }
 
-function positionPayload(form: PositionForm, why: string): PositionChangeRequest {
+function positionPayload(form: PositionForm, original: Position, why: string): PositionChangeRequest {
   return {
     ...form,
     name: trimmed(form.name),
     description: trimmed(form.description),
-    serviceStartAt: form.serviceStartAt || null,
-    serviceEndAt: form.serviceEndAt || null,
+    serviceStartAt: timePayload(form.serviceStartAt, original.serviceStartAt),
+    serviceEndAt: timePayload(form.serviceEndAt, original.serviceEndAt),
     meetingLocation: form.meetingLocation.trim() || null,
     reason: why,
   };
@@ -311,8 +323,9 @@ async function submitChange() {
       notification.value = `已通知 ${result.notifiedRecipients} 位受影响成员。`;
     } else {
       const form = positionForms[change.id];
-      if (!form) return;
-      const result = await changePosition(change.id, positionPayload(form, why));
+      const original = detail.value.positions.find((position) => position.id === change.id);
+      if (!form || !original) return;
+      const result = await changePosition(change.id, positionPayload(form, original, why));
       if (!alive || request !== generation) return;
       detail.value = {
         ...detail.value,

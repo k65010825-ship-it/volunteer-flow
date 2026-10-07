@@ -95,6 +95,55 @@ class ActivityChangeServiceTest {
     verifyNoInteractions(audit, registrationCycles, promotions);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"shorten", "shift"})
+  void activityWindowChangeRejectsStrandedActivePositionWithoutWrites(String scenario) {
+    Activity activity = publishedActivity();
+    ActivityPosition inherited = activePosition();
+    inherited.setServiceStartAt(null);
+    inherited.setServiceEndAt(null);
+    when(activities.selectByIdForUpdate(1L)).thenReturn(activity);
+    when(positions.selectActiveByActivityForUpdate(100L, 1L))
+        .thenReturn(List.of(inherited, activePosition()));
+    LocalDateTime start = activity.getActivityStartAt();
+    LocalDateTime end = activity.getActivityEndAt();
+    if (scenario.equals("shorten")) end = end.minusHours(1);
+    else { start = start.plusDays(1); end = end.plusDays(1); }
+    ActivityChangeRequest request = copyWithTimes(
+        changedTitleRequest(), activity.getRegistrationEndAt(), start, end);
+
+    assertBusinessError(() -> service.changeActivity(7L, 1L, request),
+        HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_POSITION_TIME");
+
+    verify(activities, never()).updatePublishedFields(eq(1L), eq(100L), anyMap());
+    verifyNoInteractions(audit, registrationCycles);
+    assertThat(notifications.commands()).isEmpty();
+  }
+
+  @Test
+  void activityWindowChangeLocksAllActivePositionsAfterActivityAndAllowsExactBoundaries() {
+    Activity activity = publishedActivity();
+    ActivityPosition explicit = activePosition();
+    ActivityPosition inherited = activePosition();
+    inherited.setId(3L);
+    inherited.setServiceStartAt(null);
+    inherited.setServiceEndAt(null);
+    when(activities.selectByIdForUpdate(1L)).thenReturn(activity);
+    when(positions.selectActiveByActivityForUpdate(100L, 1L))
+        .thenReturn(List.of(explicit, inherited));
+    ActivityChangeRequest request = copyWithTimes(changedTitleRequest(),
+        activity.getRegistrationEndAt(), explicit.getServiceStartAt(), explicit.getServiceEndAt());
+
+    ActivityChangeResult result = service.changeActivity(7L, 1L, request);
+
+    assertThat(result.activity().getActivityStartAt()).isEqualTo(explicit.getServiceStartAt());
+    assertThat(result.activity().getActivityEndAt()).isEqualTo(explicit.getServiceEndAt());
+    var order = inOrder(activities, positions);
+    order.verify(activities).selectByIdForUpdate(1L);
+    order.verify(positions).selectActiveByActivityForUpdate(100L, 1L);
+    order.verify(activities).updatePublishedFields(eq(1L), eq(100L), anyMap());
+  }
+
   @Test
   void positionChangeRejectsCapacityDecrease() {
     arrangeLockedPosition(activePosition());
@@ -168,8 +217,8 @@ class ActivityChangeServiceTest {
                 "POSITION_CHANGE",
                 "岗位信息变更",
                 "礼仪岗已更新：增加一个名额",
-                "POSITION",
-                2L,
+                "ACTIVITY",
+                1L,
                 "position-change:2:601"));
     var order = inOrder(activities, positions, audit, registrationCycles, promotions);
     order.verify(activities).selectByIdForUpdate(1L);
@@ -237,6 +286,9 @@ class ActivityChangeServiceTest {
     assertThat(notifications.commands())
         .extracting(NotificationCommand::deduplicationKey)
         .containsOnly("position-change:2:602");
+    assertThat(notifications.commands())
+        .extracting(NotificationCommand::businessType, NotificationCommand::businessId)
+        .containsOnly(org.assertj.core.groups.Tuple.tuple("ACTIVITY", 1L));
     var order = inOrder(activities, positions, activityQuestions, positionQuestions);
     order.verify(activities).selectByIdForUpdate(1L);
     order.verify(positions).selectByIdForUpdate(2L);

@@ -183,7 +183,11 @@ public class ActivityService {
 
   @Transactional
   public Activity cancel(Long userId, Long id, String reason) {
-    Activity activity = required(id);
+    Activity activity = activities.selectByIdForUpdate(id);
+    if (activity == null) {
+      throw new BusinessException(
+          HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+    }
     authorization.requirePermission(userId, activity.getOrganizationId(), "activity:cancel");
     if ("CANCELED".equals(activity.getStatus()) || "FINISHED".equals(activity.getStatus()))
       throw conflict("ACTIVITY_FINAL", "Activity is already final");
@@ -192,11 +196,13 @@ public class ActivityService {
         new LinkedHashSet<>(
             registrationCycles.selectAffectedUserIdsForActivityCancellation(
                 activity.getOrganizationId(), id));
-    activity.setStatus("CANCELED");
-    activity.setCanceledAt(now());
-    if (activities.updateById(activity) != 1) {
+    LocalDateTime canceledAt = now();
+    if (activities.cancelCurrent(id, activity.getOrganizationId(), canceledAt) != 1) {
       throw new OptimisticLockingFailureException("Activity changed concurrently");
     }
+    activity.setStatus("CANCELED");
+    activity.setCanceledAt(canceledAt);
+    if (activity.getVersion() != null) activity.setVersion(activity.getVersion() + 1);
     audit.record(activity.getOrganizationId(), userId, "activity.canceled", "activity", id, reason);
     String cancellationContent =
         activity.getTitle()
