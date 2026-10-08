@@ -191,6 +191,7 @@ public class PromotionService {
     offer.setStatus(accepted ? "ACCEPTED" : "DECLINED");
     offer.setRespondedAt(now);
     cycle.setStatus(accepted ? "CONFIRMED" : "PROMOTION_DECLINED");
+    cycle.setAttendanceStatus(accepted ? "PENDING" : "NOT_REQUIRED");
     if (offers.updateById(offer) != 1 || cycles.updateById(cycle) != 1) {
       throw conflict("PROMOTION_OFFER_CONFLICT", "Invitation changed concurrently");
     }

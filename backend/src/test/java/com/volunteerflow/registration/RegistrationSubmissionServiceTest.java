@@ -109,6 +109,7 @@ class RegistrationSubmissionServiceTest {
     assertThat(cycle.getPositionId()).isEqualTo(20L);
     assertThat(cycle.getCycleNumber()).isEqualTo(1);
     assertThat(cycle.getStatus()).isEqualTo("CONFIRMED");
+    assertThat(cycle.getAttendanceStatus()).isEqualTo("PENDING");
     assertThat(cycle.getSubmittedAt()).isEqualTo(LocalDateTime.now(clock));
     verify(audit)
         .record(
@@ -182,6 +183,7 @@ class RegistrationSubmissionServiceTest {
     when(cycleMapper.countActiveWaitlistBefore(20L, 1L)).thenReturn(0L);
     RegistrationResult result = service.submit(21L, 10L, requestFor(20L));
     assertThat(result.status()).isEqualTo("WAITLISTED");
+    assertThat(insertedCycle().getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     assertThat(result.waitlistSequence()).isEqualTo(1L);
     assertThat(result.currentPosition()).isEqualTo(1);
     assertThat(position.getNextWaitlistSequence()).isEqualTo(2L);
@@ -205,6 +207,7 @@ class RegistrationSubmissionServiceTest {
     position.setRegistrationMode("REVIEW");
     RegistrationResult result = service.submit(21L, 10L, requestFor(20L));
     assertThat(result.status()).isEqualTo("PENDING_REVIEW");
+    assertThat(insertedCycle().getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     assertThat(result.waitlistSequence()).isNull();
     assertThat(result.currentPosition()).isNull();
     verifyNoInteractions(offerMapper);

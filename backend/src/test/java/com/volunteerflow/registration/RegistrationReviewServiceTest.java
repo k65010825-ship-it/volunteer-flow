@@ -83,8 +83,13 @@ class RegistrationReviewServiceTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"CONFIRM,CONFIRMED", "WAITLIST,WAITLISTED", "REJECT,REJECTED"})
-  void appliesEveryAllowedDecisionAndRecordsReview(String decision, String resultingStatus) {
+  @CsvSource({
+    "CONFIRM,CONFIRMED,PENDING",
+    "WAITLIST,WAITLISTED,NOT_REQUIRED",
+    "REJECT,REJECTED,NOT_REQUIRED"
+  })
+  void appliesEveryAllowedDecisionAndRecordsReview(
+      String decision, String resultingStatus, String attendanceStatus) {
     when(cycleMapper.countConfirmed(20L)).thenReturn(18L);
     when(offerMapper.countActiveReservations(20L)).thenReturn(1L);
 
@@ -92,6 +97,7 @@ class RegistrationReviewServiceTest {
 
     assertThat(result).isSameAs(lockedCycle);
     assertThat(result.getStatus()).isEqualTo(resultingStatus);
+    assertThat(result.getAttendanceStatus()).isEqualTo(attendanceStatus);
     assertThat(result.getWaitlistSequence()).isNull();
     assertThat(result.getReviewedBy()).isEqualTo(7L);
     assertThat(result.getReviewedAt()).isEqualTo(LocalDateTime.now(clock));

@@ -89,6 +89,7 @@ class PromotionExpiryJobTest {
     assertThat(offer.getStatus()).isEqualTo("EXPIRED");
     assertThat(offer.getRespondedAt()).isEqualTo(now);
     assertThat(cycle.getStatus()).isEqualTo("PROMOTION_EXPIRED");
+    assertThat(cycle.getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     var order = inOrder(members, policies, cycles, offers, audit, promotions);
     order.verify(members).selectMemberForUpdateAnyStatus(7L, 10L);
     order.verify(policies).lockPositionForRegistrationChange(30L);

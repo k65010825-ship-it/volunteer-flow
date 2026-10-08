@@ -29,6 +29,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.springframework.http.HttpStatus;
 
@@ -56,6 +58,67 @@ class RegistrationQueryServiceTest {
             userMapper,
             authorization,
             new ObjectMapper());
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"NOT_REQUIRED", "PENDING", "CHECKED_IN", "NO_SHOW"})
+  void memberDetailExposesStoredAttendanceRatherThanDerivingFromConfirmedStatus(
+      String attendanceStatus) {
+    RegistrationCycle cycle = cycle(101L, 100L, 21L, "CONFIRMED", null);
+    cycle.setAttendanceStatus(attendanceStatus);
+    when(registrationMapper.selectOwnedById(100L, 21L)).thenReturn(registration(100L, 21L));
+    when(cycleMapper.selectActiveOrLatest(100L)).thenReturn(cycle);
+    when(answerMapper.selectByCycle(101L)).thenReturn(List.of());
+
+    OwnRegistrationView view = service.getOwn(21L, 100L);
+
+    assertThat(new ObjectMapper().findAndRegisterModules()
+            .valueToTree(view).path("attendanceStatus").asText())
+        .isEqualTo(attendanceStatus);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"NOT_REQUIRED", "PENDING", "CHECKED_IN", "NO_SHOW"})
+  void memberListExposesStoredAttendanceRatherThanDerivingFromConfirmedStatus(
+      String attendanceStatus) {
+    RegistrationCycle cycle = cycle(101L, 100L, 21L, "CONFIRMED", null);
+    cycle.setAttendanceStatus(attendanceStatus);
+    when(registrationMapper.selectOwnedByUser(21L))
+        .thenReturn(List.of(registration(100L, 21L)));
+    when(cycleMapper.selectActiveOrLatestOwned(21L, List.of(100L)))
+        .thenReturn(List.of(cycle));
+    when(answerMapper.selectByCycles(List.of(101L))).thenReturn(List.of());
+    when(offerMapper.selectPendingByCycles(List.of(101L))).thenReturn(List.of());
+    when(cycleMapper.selectWaitlistMetricsOwned(21L, List.of(101L)))
+        .thenReturn(List.of(new WaitlistMetrics(101L, null, 0L)));
+
+    List<OwnRegistrationView> views = service.listOwn(21L);
+
+    assertThat(new ObjectMapper().findAndRegisterModules()
+            .valueToTree(views.get(0)).path("attendanceStatus").asText())
+        .isEqualTo(attendanceStatus);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"NOT_REQUIRED", "PENDING", "CHECKED_IN", "NO_SHOW"})
+  void managementListExposesStoredAttendanceRatherThanDerivingFromConfirmedStatus(
+      String attendanceStatus) {
+    RegistrationCycle cycle = cycle(101L, 100L, 21L, "CONFIRMED", null);
+    cycle.setAttendanceStatus(attendanceStatus);
+    Page<RegistrationCycle> page = new Page<>(1, 20, 1);
+    page.setRecords(List.of(cycle));
+    when(positionMapper.selectById(20L)).thenReturn(position(20L, 7L));
+    when(cycleMapper.selectForPosition(any(), eq(7L), eq(20L), eq("CONFIRMED")))
+        .thenReturn(page);
+    when(userMapper.selectByIds(List.of(21L))).thenReturn(List.of(user(21L)));
+    when(answerMapper.selectByCycles(List.of(101L))).thenReturn(List.of());
+    when(offerMapper.selectByCycles(List.of(101L))).thenReturn(List.of());
+
+    ManagedRegistrationPage result = service.listForPosition(9L, 20L, "CONFIRMED", 1, 20);
+
+    assertThat(new ObjectMapper().findAndRegisterModules().valueToTree(result.items().get(0))
+            .path("attendanceStatus").asText())
+        .isEqualTo(attendanceStatus);
   }
 
   @Test
@@ -353,6 +416,7 @@ class RegistrationQueryServiceTest {
     cycle.setUserId(userId);
     cycle.setCycleNumber(1);
     cycle.setStatus(status);
+    cycle.setAttendanceStatus("NOT_REQUIRED");
     cycle.setWaitlistSequence(waitlistSequence);
     cycle.setSubmittedAt(LocalDateTime.of(2026, 9, 15, 9, 0));
     cycle.setReviewedBy(31L);

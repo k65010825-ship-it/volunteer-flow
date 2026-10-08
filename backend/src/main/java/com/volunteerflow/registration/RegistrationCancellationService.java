@@ -106,6 +106,7 @@ public class RegistrationCancellationService {
       }
     }
     cycle.setStatus(late ? "LATE_CANCELED" : "CANCELED");
+    cycle.setAttendanceStatus("NOT_REQUIRED");
     cycle.setCanceledAt(now);
     cycle.setCancelReason(reason);
     if (cycles.updateById(cycle) != 1) {

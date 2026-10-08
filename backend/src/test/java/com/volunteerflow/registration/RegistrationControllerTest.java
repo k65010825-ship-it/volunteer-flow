@@ -310,6 +310,7 @@ class RegistrationControllerTest {
         1,
         "CONFIRMED",
         LocalDateTime.of(2026, 9, 17, 10, 0),
+        "PENDING",
         null,
         null,
         0L,

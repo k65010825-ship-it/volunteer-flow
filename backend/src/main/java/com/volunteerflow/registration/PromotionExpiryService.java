@@ -83,6 +83,7 @@ public class PromotionExpiryService {
     offer.setStatus("EXPIRED");
     offer.setRespondedAt(now);
     cycle.setStatus("PROMOTION_EXPIRED");
+    cycle.setAttendanceStatus("NOT_REQUIRED");
     if (offers.updateById(offer) != 1 || cycles.updateById(cycle) != 1) {
       throw PromotionService.conflict(
           "PROMOTION_OFFER_CONFLICT", "Invitation changed concurrently");

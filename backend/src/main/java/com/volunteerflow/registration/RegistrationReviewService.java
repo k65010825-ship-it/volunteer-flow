@@ -101,6 +101,7 @@ public class RegistrationReviewService {
 
     String resultingStatus = resultingStatus(decision, position);
     cycle.setStatus(resultingStatus);
+    cycle.setAttendanceStatus("CONFIRMED".equals(resultingStatus) ? "PENDING" : "NOT_REQUIRED");
     cycle.setWaitlistSequence(null);
     cycle.setReviewedBy(actorId);
     cycle.setReviewedAt(LocalDateTime.now(clock));

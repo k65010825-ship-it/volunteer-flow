@@ -220,6 +220,7 @@ class PromotionServiceTest {
     assertThat(result.getStatus()).isEqualTo("ACCEPTED");
     assertThat(result.getRespondedAt()).isEqualTo(now);
     assertThat(cycle.getStatus()).isEqualTo("CONFIRMED");
+    assertThat(cycle.getAttendanceStatus()).isEqualTo("PENDING");
     var order = inOrder(members, policies, cycles, offers);
     order.verify(members).selectActiveMemberForUpdate(21L, 10L);
     order.verify(policies).lockPositionForRegistrationChange(20L);
@@ -248,6 +249,7 @@ class PromotionServiceTest {
     service.respond(21L, 300L, new PromotionResponseRequest("DECLINE"));
     assertThat(offer.getStatus()).isEqualTo("DECLINED");
     assertThat(cycle.getStatus()).isEqualTo("PROMOTION_DECLINED");
+    assertThat(cycle.getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     ArgumentCaptor<PromotionOffer> inserted = ArgumentCaptor.forClass(PromotionOffer.class);
     verify(offers).insert(inserted.capture());
     assertThat(inserted.getValue().getRegistrationCycleId()).isEqualTo(102L);

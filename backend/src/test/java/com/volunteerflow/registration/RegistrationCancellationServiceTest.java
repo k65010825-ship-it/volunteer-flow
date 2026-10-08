@@ -34,6 +34,7 @@ class RegistrationCancellationServiceTest {
   void arrange() {
     cycle = cycle(101L, 100L, 21L);
     cycle.setStatus("CONFIRMED");
+    cycle.setAttendanceStatus("PENDING");
     when(registrations.selectOwnedById(100L, 21L)).thenReturn(registration(100L, 21L));
     when(cycles.selectActiveOrLatest(100L)).thenReturn(cycle);
     when(cycles.selectActiveCycleForUpdate(100L)).thenReturn(cycle);
@@ -49,6 +50,7 @@ class RegistrationCancellationServiceTest {
   void nullDeadlineFallsBackToActivityStartAndExactDeadlineRemainsFree() {
     RegistrationCycle result = service.cancel(21L, 100L, new CancellationRequest(null));
     assertThat(result.getStatus()).isEqualTo("CANCELED");
+    assertThat(result.getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     assertThat(result.getCanceledAt()).isEqualTo(now);
     verify(promotions).offerNextFirstCome(20L, 21L, "Registration canceled");
     verify(audit).record(10L, 21L, "registration.canceled", "registration_cycle", 101L, null);
@@ -60,6 +62,7 @@ class RegistrationCancellationServiceTest {
         .thenReturn(new CancellationTiming(now.minusSeconds(1), now.plusDays(1)));
     RegistrationCycle result = service.cancel(21L, 100L, new CancellationRequest("  Sick  "));
     assertThat(result.getStatus()).isEqualTo("LATE_CANCELED");
+    assertThat(result.getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     assertThat(result.getCancelReason()).isEqualTo("Sick");
     verify(audit)
         .record(
@@ -132,6 +135,7 @@ class RegistrationCancellationServiceTest {
     cycle.setStatus(status);
     service.cancel(21L, 100L, new CancellationRequest(null));
     assertThat(cycle.getStatus()).isEqualTo("CANCELED");
+    assertThat(cycle.getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     verifyNoInteractions(promotions);
   }
 

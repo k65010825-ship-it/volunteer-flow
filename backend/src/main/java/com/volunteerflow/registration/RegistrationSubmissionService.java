@@ -188,14 +188,17 @@ public class RegistrationSubmissionService {
     cycle.setVersion(0);
     if ("REVIEW".equals(position.getRegistrationMode())) {
       cycle.setStatus("PENDING_REVIEW");
+      cycle.setAttendanceStatus("NOT_REQUIRED");
     } else if ("FIRST_COME".equals(position.getRegistrationMode())) {
       long occupied =
           cycles.countConfirmed(position.getId())
               + offers.countActiveReservations(position.getId());
       if (occupied < position.getCapacity()) {
         cycle.setStatus("CONFIRMED");
+        cycle.setAttendanceStatus("PENDING");
       } else {
         cycle.setStatus("WAITLISTED");
+        cycle.setAttendanceStatus("NOT_REQUIRED");
         cycle.setWaitlistSequence(policies.allocateNextWaitlistSequence(position));
       }
     } else {
