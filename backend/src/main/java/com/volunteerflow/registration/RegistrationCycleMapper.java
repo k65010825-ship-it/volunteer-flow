@@ -14,6 +14,32 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface RegistrationCycleMapper extends BaseMapper<RegistrationCycle> {
+  @Select("""
+      SELECT COUNT(*) FROM registration_cycle c FORCE INDEX (idx_cycle_activity_status_id)
+      LEFT JOIN registration_cycle newer
+        ON newer.registration_id=c.registration_id AND newer.cycle_number > c.cycle_number
+      WHERE c.organization_id=#{organizationId} AND c.activity_id=#{activityId}
+        AND c.status='CONFIRMED' AND newer.id IS NULL
+      """)
+  @Options(useCache = false)
+  long countCurrentConfirmedForActivity(@Param("organizationId") Long organizationId,
+      @Param("activityId") Long activityId);
+
+  /** Join the exact cycle, tenant, activity and member; invalid/old-cycle records cannot grant attendance. */
+  @Update("""
+      UPDATE registration_cycle c FORCE INDEX (idx_cycle_activity_status_id)
+      LEFT JOIN registration_cycle newer
+        ON newer.registration_id=c.registration_id AND newer.cycle_number > c.cycle_number
+      LEFT JOIN checkin_record r ON r.activity_id=c.activity_id AND r.user_id=c.user_id
+        AND r.organization_id=c.organization_id AND r.registration_cycle_id=c.id AND r.status='VALID'
+      SET c.attendance_status=CASE WHEN r.id IS NOT NULL THEN 'CHECKED_IN' ELSE 'NO_SHOW' END,
+          c.version=c.version+1
+      WHERE c.organization_id=#{organizationId} AND c.activity_id=#{activityId}
+        AND c.status='CONFIRMED' AND newer.id IS NULL
+      """)
+  int finalizeCurrentConfirmedAttendance(@Param("organizationId") Long organizationId,
+      @Param("activityId") Long activityId);
+
   /** Called only after activity/session and membership locks. Never resurrect an old cycle. */
   @Select("""
       SELECT c.* FROM registration_cycle c

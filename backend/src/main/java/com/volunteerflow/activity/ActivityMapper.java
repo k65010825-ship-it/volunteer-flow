@@ -8,6 +8,33 @@ import org.apache.ibatis.annotations.*;
 
 @Mapper
 public interface ActivityMapper extends BaseMapper<Activity> {
+  /** Project only cursor keys; the V9 index and LIMIT keep every scheduler read bounded. */
+  @Select("""
+      <script>
+      SELECT id,activity_end_at FROM activity FORCE INDEX (idx_activity_status_end_id)
+      WHERE status='PUBLISHED' AND activity_end_at&lt;=#{now}
+      <if test="cursorEndAt != null">
+        AND (activity_end_at > #{cursorEndAt}
+             OR (activity_end_at = #{cursorEndAt} AND id > #{cursorId}))
+      </if>
+      ORDER BY activity_end_at,id LIMIT #{batchSize}
+      </script>
+      """)
+  @ConstructorArgs({@Arg(column = "id", javaType = Long.class),
+      @Arg(column = "activity_end_at", javaType = LocalDateTime.class)})
+  @Options(useCache = false)
+  List<DueActivityId> selectDueIds(@Param("now") LocalDateTime now,
+      @Param("cursorEndAt") LocalDateTime cursorEndAt, @Param("cursorId") Long cursorId,
+      @Param("batchSize") int batchSize);
+
+  @Update("""
+      UPDATE activity SET status='FINISHED'
+      WHERE id=#{id} AND status='PUBLISHED' AND activity_end_at <= #{now}
+      """)
+  int claimFinished(@Param("id") Long id, @Param("now") LocalDateTime now);
+
+  record DueActivityId(Long id, LocalDateTime activityEndAt) {}
+
   /** Shared serialization point for publication and draft question mutations. */
   @Select("SELECT * FROM activity WHERE id=#{id} FOR UPDATE")
   @Options(flushCache = Options.FlushCachePolicy.TRUE)
