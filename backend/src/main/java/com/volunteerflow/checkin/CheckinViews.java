@@ -17,7 +17,7 @@ public final class CheckinViews {
   /** Rate is a fraction in [0,1], rounded to four decimal places; empty cohorts return 0. */
   public record AttendanceSummary(Long activityId, String activityStatus, boolean finalStatistics,
       Long confirmedCount, Long checkedInCount, Long noShowCount, Long pendingCount,
-      BigDecimal checkinRate, List<PositionAttendance> positions) {}
+      BigDecimal checkinRate, List<PositionAttendance> positions, SessionView correctionSession) {}
 
   public record PositionAttendance(Long positionId, String positionName, Long confirmedCount,
       Long checkedInCount, Long noShowCount, Long pendingCount, BigDecimal checkinRate) {}

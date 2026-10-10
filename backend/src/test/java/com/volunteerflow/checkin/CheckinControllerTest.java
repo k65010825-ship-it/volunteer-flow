@@ -8,14 +8,20 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import com.volunteerflow.auth.CurrentUser;
+import com.volunteerflow.activity.Activity;
+import com.volunteerflow.activity.ActivityMapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.volunteerflow.checkin.CheckinService.*;
 import com.volunteerflow.checkin.CheckinSessionService.*;
 import com.volunteerflow.checkin.CheckinViews.*;
 import com.volunteerflow.infrastructure.security.SecurityConfig;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.infrastructure.web.JacksonConfig;
+import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import java.math.BigDecimal;
+import java.time.Clock;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,6 +42,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @Import({SecurityConfig.class, JacksonConfig.class})
 class CheckinControllerTest {
   @Autowired MockMvc mvc;
+  @Autowired ObjectMapper json;
   @MockitoBean CheckinSessionService sessions;
   @MockitoBean CheckinService checkins;
   @MockitoBean AttendanceQueryService queries;
@@ -123,7 +130,7 @@ class CheckinControllerTest {
   void summaryUsesPrincipalAndKeepsNumericRateWithGlobalStringLongs() throws Exception {
     when(queries.summary(21L, 11L)).thenReturn(new AttendanceSummary(11L, "FINISHED", true,
         5L, 2L, 1L, 2L, new BigDecimal("0.4"),
-        List.of(new PositionAttendance(12L, "Reception", 3L, 1L, 1L, 1L, new BigDecimal("0.3333")))));
+        List.of(new PositionAttendance(12L, "Reception", 3L, 1L, 1L, 1L, new BigDecimal("0.3333"))), null));
     var response = perform(get("/api/v1/activities/11/attendance-summary").param("actorId", "999"), null)
         .andExpect(status().isOk()).andExpect(jsonPath("$.data.finalStatistics").value(true))
         .andExpect(jsonPath("$.data.confirmedCount").value("5"))
@@ -131,6 +138,51 @@ class CheckinControllerTest {
         .andExpect(jsonPath("$.data.positions[0].positionId").value("12")).andReturn();
     noSecrets(response.getResponse().getContentAsString());
     verify(queries).summary(21L, 11L);
+  }
+
+  @ParameterizedTest @ValueSource(strings = {"CLOSED", "EXPIRED"})
+  void freshManagerCanDiscoverHistoricalSessionAndCorrectNoShowAfterFinalization(String status) throws Exception {
+    var realQueries = finishedQueries(session(status));
+    when(queries.summary(21L, 11L)).thenAnswer(i -> realQueries.summary(21L, 11L));
+    when(queries.current(21L, 11L)).thenAnswer(i -> realQueries.current(21L, 11L));
+    when(queries.manualRequest(21L, 101L, 201L, "present"))
+        .thenAnswer(i -> realQueries.manualRequest(21L, 101L, 201L, "present"));
+    when(checkins.manualCheckin(21L, 101L, new ManualCheckinRequest(201L, 301L, "present")))
+        .thenReturn(result("MANUAL"));
+
+    // Fresh manager has no stored session ID: discover it from the authorized summary.
+    var summary = perform(get("/api/v1/activities/11/attendance-summary"), null)
+        .andExpect(status().isOk()).andExpect(jsonPath("$.data.finalStatistics").value(true))
+        .andExpect(jsonPath("$.data.noShowCount").value("1"))
+        .andExpect(jsonPath("$.data.correctionSession.sessionId").value("101"))
+        .andExpect(jsonPath("$.data.correctionSession.status").value(status)).andReturn();
+    String body = summary.getResponse().getContentAsString();
+    noSecrets(body);
+    String sessionId = json.readTree(body).path("data").path("correctionSession").path("sessionId").asText();
+    perform(post("/api/v1/check-in-sessions/" + sessionId + "/manual-check-ins"),
+        "{\"registrationId\":\"201\",\"reason\":\"present\"}")
+        .andExpect(status().isCreated()).andExpect(jsonPath("$.data.method").value("MANUAL"));
+    verify(checkins).manualCheckin(21L, 101L, new ManualCheckinRequest(201L, 301L, "present"));
+
+    // Historical references are management-only; current.session still means effective now.
+    var current = perform(get("/api/v1/activities/11/check-in-sessions/current"), null)
+        .andExpect(status().isOk()).andReturn();
+    var currentData = json.readTree(current.getResponse().getContentAsString()).path("data");
+    assertThat(currentData.path("session").isNull()).isTrue();
+    assertThat(currentData.has("correctionSession")).isFalse();
+    assertThat(currentData.path("attendance").path("attendanceStatus").asText()).isEqualTo("NO_SHOW");
+  }
+
+  @Test
+  void finishedActivityThatNeverHadSessionReturnsExplicitNullCorrectionReference() throws Exception {
+    var realQueries = finishedQueries(null);
+    when(queries.summary(21L, 11L)).thenAnswer(i -> realQueries.summary(21L, 11L));
+    var response = perform(get("/api/v1/activities/11/attendance-summary"), null)
+        .andExpect(status().isOk()).andExpect(jsonPath("$.data.finalStatistics").value(true)).andReturn();
+    var data = json.readTree(response.getResponse().getContentAsString()).path("data");
+    assertThat(data.has("correctionSession")).isTrue();
+    assertThat(data.path("correctionSession").isNull()).isTrue();
+    verifyNoInteractions(checkins);
   }
 
   @ParameterizedTest @ValueSource(strings = {
@@ -214,6 +266,23 @@ class CheckinControllerTest {
     request.with(authentication(principal)).header("X-Request-Id", "checkin-request");
     if (json != null) request.contentType(MediaType.APPLICATION_JSON).content(json);
     return mvc.perform(request);
+  }
+  private AttendanceQueryService finishedQueries(SessionView historical) {
+    Activity activity = new Activity();
+    activity.setId(11L); activity.setOrganizationId(10L); activity.setStatus("FINISHED");
+    activity.setActivityEndAt(now.minusHours(1));
+    ActivityMapper activities = mock(ActivityMapper.class);
+    when(activities.selectById(11L)).thenReturn(activity);
+    AttendanceMapper projections = mock(AttendanceMapper.class);
+    when(projections.selectTotals(10L, 11L)).thenReturn(new AttendanceCounts(1L, 0L, 1L, 0L));
+    when(projections.selectPositions(10L, 11L)).thenReturn(List.of(new PositionCounts(12L, "Reception", 1L, 0L, 1L, 0L)));
+    when(projections.selectCorrectionSession(10L, 11L)).thenReturn(historical);
+    when(projections.selectSessionReference(101L)).thenReturn(new SessionReference(11L, 10L));
+    when(projections.selectRegistrationTarget(10L, 11L, 201L)).thenReturn(new RegistrationTarget(301L, "CONFIRMED"));
+    when(projections.selectOwnAttendance(10L, 11L, 21L))
+        .thenReturn(new OwnAttendance(201L, 301L, 12L, "Reception", "NO_SHOW", null, null));
+    return new AttendanceQueryService(activities, projections, mock(OrganizationAuthorizationService.class),
+        Clock.fixed(now.toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
   }
   private SessionView session(String status) { return new SessionView(101L, 11L, "STATIC_CODE", status, now, now.plusMinutes(15)); }
   private CheckinResult result(String method) { return new CheckinResult(401L, 11L, 21L, method, now); }

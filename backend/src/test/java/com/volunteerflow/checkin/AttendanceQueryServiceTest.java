@@ -215,6 +215,16 @@ class AttendanceQueryServiceTest {
     assertThat(target).contains("c.registration_id=?", "c.organization_id=?", "c.activity_id=?", "NOT EXISTS");
   }
 
+  @Test
+  void correctionSessionQueryIsTenantActivityScopedDeterministicAndDoesNotRequireEffectiveOpenState() {
+    BoundSql query = bound("selectCorrectionSession");
+    assertThat(normalize(query.getSql())).contains("organization_id=?", "activity_id=?",
+        "ORDER BY opens_at DESC,id DESC LIMIT 1", "id AS session_id")
+        .doesNotContain("static_code_hash", "SELECT *", "status='OPEN'", "opens_at <=", "closes_at >");
+    assertThat(query.getParameterMappings()).extracting(p -> p.getProperty())
+        .containsExactly("organizationId", "activityId");
+  }
+
   private BoundSql bound(String method) {
     MybatisConfiguration config = new MybatisConfiguration();
     config.addMapper(AttendanceMapper.class);

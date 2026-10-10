@@ -53,7 +53,8 @@ public class AttendanceQueryService {
         .toList();
     return new AttendanceSummary(activityId, activity.getStatus(), "FINISHED".equals(activity.getStatus()),
         counts.confirmedCount(), counts.checkedInCount(), counts.noShowCount(), counts.pendingCount(),
-        rate(counts.checkedInCount(), counts.confirmedCount()), positions);
+        rate(counts.checkedInCount(), counts.confirmedCount()), positions,
+        projections.selectCorrectionSession(activity.getOrganizationId(), activityId));
   }
 
   public CheckinRequest selfRequest(Long userId, Long sessionId, String code) {

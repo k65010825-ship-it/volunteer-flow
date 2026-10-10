@@ -27,6 +27,28 @@ public interface AttendanceMapper {
   SessionView selectCurrentSession(@Param("organizationId") Long organizationId,
       @Param("activityId") Long activityId, @Param("now") LocalDateTime now);
 
+  /**
+   * Manager-only correction routing. Manual check-in accepts any existing session state;
+   * choose the latest deterministically, without requiring an effective OPEN session.
+   * No session ever created yields null; this query does not fabricate or reopen one.
+   */
+  @Select("""
+      SELECT id AS session_id,activity_id,session_type,status,opens_at,closes_at
+      FROM checkin_session
+      WHERE organization_id=#{organizationId} AND activity_id=#{activityId}
+      ORDER BY opens_at DESC,id DESC LIMIT 1
+      """)
+  @ConstructorArgs({
+    @Arg(column = "session_id", javaType = Long.class),
+    @Arg(column = "activity_id", javaType = Long.class),
+    @Arg(column = "session_type", javaType = String.class),
+    @Arg(column = "status", javaType = String.class),
+    @Arg(column = "opens_at", javaType = LocalDateTime.class),
+    @Arg(column = "closes_at", javaType = LocalDateTime.class)
+  })
+  SessionView selectCorrectionSession(@Param("organizationId") Long organizationId,
+      @Param("activityId") Long activityId);
+
   @Select("""
       SELECT c.registration_id,c.id AS registration_cycle_id,c.position_id,p.name AS position_name,
              c.attendance_status,r.id AS record_id,r.checked_in_at
