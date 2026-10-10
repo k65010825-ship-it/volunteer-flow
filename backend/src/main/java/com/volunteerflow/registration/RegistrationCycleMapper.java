@@ -8,10 +8,42 @@ import org.apache.ibatis.annotations.Arg;
 import org.apache.ibatis.annotations.ConstructorArgs;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.apache.ibatis.annotations.Options;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface RegistrationCycleMapper extends BaseMapper<RegistrationCycle> {
+  /** Called only after activity/session and membership locks. Never resurrect an old cycle. */
+  @Select("""
+      SELECT c.* FROM registration_cycle c
+      WHERE c.organization_id=#{organizationId} AND c.activity_id=#{activityId}
+        AND c.user_id=#{userId} AND c.status='CONFIRMED'
+        AND NOT EXISTS (
+          SELECT 1 FROM registration_cycle newer
+          WHERE newer.registration_id=c.registration_id AND newer.cycle_number > c.cycle_number
+        )
+      ORDER BY c.cycle_number DESC,c.id DESC LIMIT 1 FOR UPDATE
+      """)
+  @Options(flushCache = Options.FlushCachePolicy.TRUE, useCache = false)
+  RegistrationCycle selectEffectiveConfirmedForUpdate(
+      @Param("organizationId") Long organizationId,
+      @Param("activityId") Long activityId,
+      @Param("userId") Long userId);
+
+  @Update("""
+      UPDATE registration_cycle SET attendance_status='CHECKED_IN',version=version+1
+      WHERE id=#{cycleId} AND organization_id=#{organizationId} AND activity_id=#{activityId}
+        AND user_id=#{userId} AND status='CONFIRMED' AND version=#{version}
+        AND attendance_status IN ('PENDING','NO_SHOW')
+      """)
+  int markCheckedIn(
+      @Param("cycleId") Long cycleId,
+      @Param("organizationId") Long organizationId,
+      @Param("activityId") Long activityId,
+      @Param("userId") Long userId,
+      @Param("version") Integer version);
+
   @Select("SELECT * FROM registration_cycle WHERE id=#{cycleId} FOR UPDATE")
   RegistrationCycle selectByIdForUpdate(@Param("cycleId") Long cycleId);
 
