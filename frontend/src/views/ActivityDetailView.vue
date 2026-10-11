@@ -9,6 +9,7 @@ import {
 } from "vue";
 import { useRouter } from "vue-router";
 import { getActivity, getManagementActivity } from "../api/activities";
+import { getAttendanceSummary, getCurrentCheckin } from "../api/checkins";
 import {
   getRegistrationForm,
   registrationErrorMessage,
@@ -35,6 +36,8 @@ const errors = ref<Record<string, string>>({});
 const submitting = ref(false);
 const submitError = ref("");
 const canManage = ref(false);
+const canCheckin = ref(false);
+const canManageCheckin = ref(false);
 const questionFields = new Map<
   string,
   InstanceType<typeof RegistrationQuestionField>
@@ -58,6 +61,8 @@ async function loadActivity() {
   submitError.value = "";
   submitting.value = false;
   canManage.value = false;
+  canCheckin.value = false;
+  canManageCheckin.value = false;
   detail.value = null;
   loading.value = true;
   failed.value = false;
@@ -75,6 +80,17 @@ async function loadActivity() {
   } catch {
     if (request === activityRequest) canManage.value = false;
   }
+  // These protected probes use check-in permissions, independent of activity management.
+  if (request !== activityRequest) return;
+  const activityId = props.id;
+  await Promise.all([
+    getCurrentCheckin(activityId).then((current) => {
+      if (request === activityRequest) canCheckin.value = Boolean(current.attendance);
+    }).catch(() => {}),
+    getAttendanceSummary(activityId).then(() => {
+      if (request === activityRequest) canManageCheckin.value = true;
+    }).catch(() => {}),
+  ]);
 }
 
 async function loadForm() {
@@ -223,6 +239,10 @@ const format = (v: string) =>
           >管理正式变更</RouterLink
         >
       </header>
+      <nav class="checkin-actions" aria-label="活动签到">
+        <RouterLink v-if="canCheckin" class="secondary" data-test="checkin-link" :to="`/activities/${detail.activity.id}/check-in`">活动签到</RouterLink>
+        <RouterLink v-if="canManageCheckin" class="secondary" data-test="checkin-management-link" :to="`/activities/${detail.activity.id}/check-in-management`">签到管理</RouterLink>
+      </nav>
       <dl class="facts">
         <div>
           <dt>活动时间</dt>

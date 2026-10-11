@@ -39,6 +39,16 @@ const router = createRouter({
       props: (r) => ({ id: String(r.params.id) }),
     },
     {
+      path: "/activities/:id/check-in",
+      component: () => import("../views/ActivityCheckinView.vue"),
+      props: (r) => ({ id: String(r.params.id) }),
+    },
+    {
+      path: "/activities/:id/check-in-management",
+      component: () => import("../views/CheckinManagementView.vue"),
+      props: (r) => ({ id: String(r.params.id) }),
+    },
+    {
       path: "/registrations",
       component: () => import("../views/MyRegistrationsView.vue"),
     },

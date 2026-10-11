@@ -777,3 +777,41 @@ input:focus-visible,
 .compact {
   width: auto;
 }
+/* Check-in pages reuse the existing cards, forms and action colors. */
+.checkin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin: 16px 0;
+}
+.checkin-actions a {
+  text-decoration: none;
+}
+.checkin-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+  padding: 16px 0;
+  line-height: 1.6;
+}
+.checkin-code {
+  font-size: 32px;
+  letter-spacing: 3px;
+  color: var(--green-dark);
+  overflow-wrap: anywhere;
+}
+.checkin-page .managed-position h3,
+.checkin-page .confirmation-panel p {
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .checkin-page .change-form,
+  .checkin-page .managed-position,
+  .checkin-page .confirmation-panel {
+    padding: 16px;
+    min-width: 0;
+  }
+  .checkin-page .checkin-actions > button {
+    width: 100%;
+  }
+}
