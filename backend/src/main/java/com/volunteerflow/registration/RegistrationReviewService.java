@@ -1,7 +1,9 @@
 package com.volunteerflow.registration;
 
+import com.volunteerflow.activity.Activity;
 import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityPositionMapper;
+import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.notification.NotificationWriter;
@@ -20,7 +22,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Applies organization-scoped manual decisions using the shared member-position-cycle lock order.
+ * Applies decisions in activity-member-position-cycle order, sharing the finalizer's ancestor lock.
  */
 @Service
 @Profile("!test")
@@ -30,6 +32,7 @@ public class RegistrationReviewService {
   private final RegistrationMapper registrations;
   private final RegistrationCycleMapper cycles;
   private final ActivityPositionMapper positions;
+  private final ActivityRegistrationPolicyService policies;
   private final OrganizationMemberMapper members;
   private final PromotionOfferMapper offers;
   private final OrganizationAuthorizationService authorization;
@@ -41,6 +44,7 @@ public class RegistrationReviewService {
       RegistrationMapper registrations,
       RegistrationCycleMapper cycles,
       ActivityPositionMapper positions,
+      ActivityRegistrationPolicyService policies,
       OrganizationMemberMapper members,
       PromotionOfferMapper offers,
       OrganizationAuthorizationService authorization,
@@ -50,6 +54,7 @@ public class RegistrationReviewService {
     this.registrations = registrations;
     this.cycles = cycles;
     this.positions = positions;
+    this.policies = policies;
     this.members = members;
     this.offers = offers;
     this.authorization = authorization;
@@ -78,6 +83,8 @@ public class RegistrationReviewService {
 
     authorization.requirePermission(
         actorId, registration.getOrganizationId(), "registration:review");
+    Activity activity = policies.lockActivityForRegistrationChange(
+        registration.getOrganizationId(), registration.getActivityId());
     if (members.selectActiveMemberForUpdate(
             registration.getUserId(), registration.getOrganizationId())
         == null) {
@@ -100,11 +107,15 @@ public class RegistrationReviewService {
     }
 
     String resultingStatus = resultingStatus(decision, position);
+    LocalDateTime reviewedAt = LocalDateTime.now(clock);
+    if ("CONFIRMED".equals(resultingStatus)) {
+      ActivityRegistrationPolicyService.requireActivityOpenForConfirmation(activity, reviewedAt);
+    }
     cycle.setStatus(resultingStatus);
     cycle.setAttendanceStatus("CONFIRMED".equals(resultingStatus) ? "PENDING" : "NOT_REQUIRED");
     cycle.setWaitlistSequence(null);
     cycle.setReviewedBy(actorId);
-    cycle.setReviewedAt(LocalDateTime.now(clock));
+    cycle.setReviewedAt(reviewedAt);
     cycle.setReviewReason(reason);
     if (cycles.updateById(cycle) != 1) {
       throw conflict("REGISTRATION_CONFLICT", "Registration changed concurrently");

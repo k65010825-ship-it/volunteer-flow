@@ -3,6 +3,7 @@ package com.volunteerflow.registration;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import com.volunteerflow.activity.Activity;
 import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
@@ -47,6 +48,10 @@ class PromotionServiceTest {
     cycle = cycle(101L, 100L, 21L);
     position = position();
     offer = offer(300L, 101L);
+    Activity activity = new Activity();
+    activity.setId(11L); activity.setOrganizationId(10L); activity.setStatus("PUBLISHED");
+    activity.setActivityEndAt(now.plusHours(2));
+    when(policies.lockActivityForRegistrationChange(10L, 11L)).thenReturn(activity);
     when(registrations.selectById(100L)).thenReturn(registration);
     when(cycles.selectActiveOrLatest(100L)).thenReturn(cycle);
     when(cycles.selectById(101L)).thenReturn(cycle);
@@ -222,6 +227,7 @@ class PromotionServiceTest {
     assertThat(cycle.getStatus()).isEqualTo("CONFIRMED");
     assertThat(cycle.getAttendanceStatus()).isEqualTo("PENDING");
     var order = inOrder(members, policies, cycles, offers);
+    order.verify(policies).lockActivityForRegistrationChange(10L, 11L);
     order.verify(members).selectActiveMemberForUpdate(21L, 10L);
     order.verify(policies).lockPositionForRegistrationChange(20L);
     order.verify(cycles).selectByIdForUpdate(101L);

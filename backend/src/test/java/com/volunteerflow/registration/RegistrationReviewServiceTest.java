@@ -4,8 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
+import com.volunteerflow.activity.Activity;
 import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityPositionMapper;
+import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
@@ -31,6 +33,7 @@ class RegistrationReviewServiceTest {
   private final RegistrationMapper registrations = mock(RegistrationMapper.class);
   private final RegistrationCycleMapper cycleMapper = mock(RegistrationCycleMapper.class);
   private final ActivityPositionMapper positions = mock(ActivityPositionMapper.class);
+  private final ActivityRegistrationPolicyService policies = mock(ActivityRegistrationPolicyService.class);
   private final OrganizationMemberMapper members = mock(OrganizationMemberMapper.class);
   private final PromotionOfferMapper offerMapper = mock(PromotionOfferMapper.class);
   private final OrganizationAuthorizationService authorization =
@@ -43,6 +46,7 @@ class RegistrationReviewServiceTest {
           registrations,
           cycleMapper,
           positions,
+          policies,
           members,
           offerMapper,
           authorization,
@@ -61,6 +65,10 @@ class RegistrationReviewServiceTest {
     snapshot = cycle("PENDING_REVIEW");
     lockedCycle = cycle("PENDING_REVIEW");
     lockedPosition = position("REVIEW");
+    Activity activity = new Activity();
+    activity.setId(11L); activity.setOrganizationId(10L); activity.setStatus("PUBLISHED");
+    activity.setActivityEndAt(LocalDateTime.now(clock).plusHours(2));
+    when(policies.lockActivityForRegistrationChange(10L, 11L)).thenReturn(activity);
 
     when(registrations.selectById(100L)).thenReturn(registration);
     when(cycleMapper.selectActiveOrLatest(100L)).thenReturn(snapshot);
@@ -253,11 +261,12 @@ class RegistrationReviewServiceTest {
   }
 
   @Test
-  void locksTargetMemberThenPositionThenCycle() {
+  void locksActivityThenTargetMemberThenPositionThenCycle() {
     service.decide(7L, 100L, decision("REJECT"));
 
-    var order = inOrder(authorization, members, positions, cycleMapper);
+    var order = inOrder(authorization, policies, members, positions, cycleMapper);
     order.verify(authorization).requirePermission(7L, 10L, "registration:review");
+    order.verify(policies).lockActivityForRegistrationChange(10L, 11L);
     order.verify(members).selectActiveMemberForUpdate(21L, 10L);
     order.verify(positions).selectByIdForUpdate(20L);
     order.verify(cycleMapper).selectActiveCycleForUpdate(100L);

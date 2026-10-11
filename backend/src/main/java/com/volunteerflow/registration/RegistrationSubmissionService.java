@@ -26,7 +26,7 @@ import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Serializes submissions by member first, then position, and persists the whole attempt atomically.
+ * Serializes submissions by activity, member, then position; persists the whole attempt atomically.
  */
 @Service
 @Profile("!test")
@@ -86,6 +86,8 @@ public class RegistrationSubmissionService {
       Long userId, Long activityId, SubmitRegistrationRequest request) {
     Long organizationId =
         policies.loadForm(userId, activityId, request.positionId()).activity().getOrganizationId();
+    // The preliminary form is routing only. Take the finalizer's ancestor before any downstream lock.
+    policies.lockActivityForRegistrationChange(organizationId, activityId);
     if (members.selectActiveMemberForUpdate(userId, organizationId) == null) {
       throw new BusinessException(
           HttpStatus.NOT_FOUND, "ORGANIZATION_NOT_FOUND", "Organization was not found");
@@ -94,6 +96,7 @@ public class RegistrationSubmissionService {
         policies.lockPolicyForSubmission(userId, activityId, request.positionId());
     LocalDateTime submittedAt = LocalDateTime.now(clock);
     requireOpenWindow(policy.activity(), submittedAt);
+    ActivityRegistrationPolicyService.requireActivityOpenForConfirmation(policy.activity(), submittedAt);
 
     Registration registration = registrations.selectByActivityAndUser(activityId, userId);
     if (registration != null && cycles.selectActiveCycleForUpdate(registration.getId()) != null) {

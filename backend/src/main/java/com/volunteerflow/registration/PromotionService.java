@@ -1,6 +1,7 @@
 package com.volunteerflow.registration;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.volunteerflow.activity.Activity;
 import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
@@ -166,6 +167,9 @@ public class PromotionService {
         || !matchesOffer(snapshot, cycleSnapshot)) {
       throw notFound("PROMOTION_OFFER_NOT_FOUND");
     }
+    // Response must take the shared ancestor before member/position/cycle/offer, never after them.
+    Activity activity = policies.lockActivityForRegistrationChange(
+        cycleSnapshot.getOrganizationId(), cycleSnapshot.getActivityId());
     requireMember(userId, cycleSnapshot.getOrganizationId(), "PROMOTION_OFFER_NOT_FOUND");
     ActivityPosition position =
         policies.lockPositionForRegistrationChange(cycleSnapshot.getPositionId());
@@ -188,6 +192,7 @@ public class PromotionService {
       throw conflict("REGISTRATION_NOT_WAITLISTED", "Registration is no longer waitlisted");
     }
     boolean accepted = "ACCEPT".equals(decision);
+    if (accepted) ActivityRegistrationPolicyService.requireActivityOpenForConfirmation(activity, now);
     offer.setStatus(accepted ? "ACCEPTED" : "DECLINED");
     offer.setRespondedAt(now);
     cycle.setStatus(accepted ? "CONFIRMED" : "PROMOTION_DECLINED");

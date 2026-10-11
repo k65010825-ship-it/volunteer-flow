@@ -67,6 +67,7 @@ class RegistrationSubmissionServiceTest {
     activity.setStatus("PUBLISHED");
     activity.setRegistrationStartAt(LocalDateTime.now(clock));
     activity.setRegistrationEndAt(LocalDateTime.now(clock).plusHours(1));
+    activity.setActivityEndAt(LocalDateTime.now(clock).plusHours(3));
     position = new ActivityPosition();
     position.setId(20L);
     position.setOrganizationId(100L);
@@ -121,6 +122,7 @@ class RegistrationSubmissionServiceTest {
             "CONFIRMED");
     var order = inOrder(members, policies, registrations, cycleMapper, audit);
     order.verify(policies).loadForm(21L, 10L, 20L);
+    order.verify(policies).lockActivityForRegistrationChange(100L, 10L);
     order.verify(members).selectActiveMemberForUpdate(21L, 100L);
     order.verify(policies).lockPolicyForSubmission(21L, 10L, 20L);
     order.verify(registrations).selectByActivityAndUser(10L, 21L);

@@ -57,6 +57,25 @@ public class ActivityRegistrationPolicyService {
     return new RegistrationPolicy(activity, position, loadQuestions(activity, position));
   }
 
+  /** Registration writers acquire this ancestor before any member/position/cycle/offer lock. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public Activity lockActivityForRegistrationChange(Long organizationId, Long activityId) {
+    Activity activity = activities.selectByIdForUpdate(activityId);
+    if (activity == null || !organizationId.equals(activity.getOrganizationId())) {
+      throw new BusinessException(HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+    }
+    return activity;
+  }
+
+  /** Call after all blocking locks, while still holding the parent activity, immediately before CONFIRMED writes. */
+  public static void requireActivityOpenForConfirmation(Activity activity, LocalDateTime now) {
+    if (activity == null || !"PUBLISHED".equals(activity.getStatus())
+        || activity.getActivityEndAt() == null || !now.isBefore(activity.getActivityEndAt())) {
+      throw new BusinessException(HttpStatus.CONFLICT, "ACTIVITY_NOT_OPEN_FOR_CONFIRMATION",
+          "Activity is no longer open for confirmation");
+    }
+  }
+
   /** Allocates from a position already locked by the caller, in that same transaction. */
   @Transactional(propagation = Propagation.MANDATORY)
   public long allocateNextWaitlistSequence(ActivityPosition lockedPosition) {
