@@ -1,0 +1,17 @@
+target/
+config/application-local.yml
+
+*.log
+logs/
+**/logs/
+
+.idea/
+.vscode/
+*.iml
+
+.env
+.env.*
+!.env.example
+
+.git/
+.gitignore
