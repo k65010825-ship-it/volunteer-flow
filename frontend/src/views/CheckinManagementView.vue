@@ -137,6 +137,7 @@ async function correct(member: CheckinMember) {
 }
 watch(() => [props.id, router?.currentRoute.value.fullPath], () => {
   ++routeEpoch;
+  membersLoading.value = false;
   clearCode(); summary.value = null; session.value = null; members.value = []; reasons.value = {};
   search.value = ""; duration.value = 15; busy.value = false; success.value = ""; memberError.value = "";
   void load();

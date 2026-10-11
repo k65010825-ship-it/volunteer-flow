@@ -177,6 +177,23 @@ describe("CheckinManagementView", () => {
     const w = await open(); expect(w.get('[role="alert"]').text()).toContain("权限"); expect(w.find('[data-test="open-session"]').exists()).toBe(false);
     expect(mock.history.get.some(r => r.url?.includes("positions"))).toBe(false);
   });
+  it.each([403, 500])("keeps refresh usable after navigation while an old member read finishes and destination summary fails with %s", async status => {
+    let finishOld!: (value: [number, unknown]) => void;
+    mock.onGet("/api/v1/positions/20/registrations").reply(() => new Promise(resolve => { finishOld = resolve; }));
+    const w = await open();
+    const refresh = () => w.findAll("button").find(button => button.text() === "刷新管理数据")!;
+    expect(refresh().attributes("disabled")).toBeDefined();
+    mock.onGet("/api/v1/activities/11/attendance-summary").reply(status, { code: "PERMISSION_DENIED" });
+    await w.setProps({ id: "11" }); await flushPromises();
+    finishOld([200, { data: { items: [member], total: "1" } }]); await flushPromises();
+    expect(w.find('[data-test="member-30"]').exists()).toBe(false);
+    expect(refresh().attributes("disabled")).toBeUndefined();
+    mock.onGet("/api/v1/activities/11/attendance-summary").reply(200, { data: { ...summary, activityId: "11", positions: [], correctionSession: null, confirmedCount: "0" } });
+    mock.onGet("/api/v1/activities/11/check-in-sessions/current").reply(200, { data: { session: null, attendance: null } });
+    await refresh().trigger("click"); await flushPromises();
+    expect(w.get('[data-test="attendance-totals"]').text()).toContain("已录取 0");
+    expect(mock.history.get.filter(request => request.url === "/api/v1/activities/11/attendance-summary")).toHaveLength(2);
+  });
   it("reports clipboard denial without losing the one-time code", async () => {
     vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockRejectedValue(new Error("denied")) } });
     const w = await open(); await w.get('[data-test="open-session"]').trigger("click"); await flushPromises();
