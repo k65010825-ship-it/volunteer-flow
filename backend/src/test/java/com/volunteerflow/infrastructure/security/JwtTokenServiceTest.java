@@ -40,7 +40,12 @@ class JwtTokenServiceTest {
     Instant now = Instant.now().truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
     var valid = components(Clock.fixed(now, ZoneOffset.UTC));
     String token = valid.service().issue(user()).value();
-    String tampered = token.substring(0, token.length() - 1) + (token.endsWith("a") ? "b" : "a");
+    int signatureStart = token.lastIndexOf('.') + 1;
+    char firstSignatureCharacter = token.charAt(signatureStart);
+    String tampered =
+        token.substring(0, signatureStart)
+            + (firstSignatureCharacter == 'a' ? 'b' : 'a')
+            + token.substring(signatureStart + 1);
 
     assertThatThrownBy(() -> valid.decoder().decode(tampered)).isInstanceOf(JwtException.class);
 
