@@ -42,6 +42,17 @@ class BackendContainerContractTest {
   }
 
   @Test
+  void dockerfileNormalizesWindowsMavenWrapperBeforeExecutingIt() throws IOException {
+    String dockerfile = Files.readString(BACKEND_ROOT.resolve("Dockerfile"));
+
+    int normalization = dockerfile.indexOf("sed -i 's/\\r$//' mvnw");
+    int firstWrapperExecution = dockerfile.indexOf("./mvnw");
+
+    assertThat(normalization).isGreaterThanOrEqualTo(0);
+    assertThat(firstWrapperExecution).isGreaterThan(normalization);
+  }
+
+  @Test
   void readinessIsDatabaseBackedButDoesNotRequireRedis() throws IOException {
     String application =
         Files.readString(BACKEND_ROOT.resolve("src/main/resources/application.yml"));
