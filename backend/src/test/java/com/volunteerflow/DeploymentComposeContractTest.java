@@ -93,13 +93,17 @@ class DeploymentComposeContractTest {
     String gitignore = Files.readString(REPOSITORY_ROOT.resolve(".gitignore"));
 
     assertThat(example)
-        .contains("DB_HOST=replace-with-vm-host-or-reachable-mysql-dns")
-        .contains("DB_PORT=3306")
-        .contains("DB_NAME=volunteer_flow")
-        .contains("DB_USERNAME=replace-with-database-user")
-        .contains("DB_PASSWORD=replace-with-database-password")
-        .contains("JWT_SECRET=replace-with-at-least-32-random-characters")
+        .contains("DB_HOST='replace-with-vm-host-or-reachable-mysql-dns'")
+        .contains("DB_PORT='replace-with-mysql-host-port'")
+        .contains("DB_NAME='volunteer_flow'")
+        .contains("DB_USERNAME='replace-with-database-user'")
+        .contains("DB_PASSWORD='replace-with-database-password'")
+        .contains("JWT_SECRET='replace-with-at-least-32-random-characters'")
+        .contains("BOOTSTRAP_ADMIN_USERNAME=''")
+        .contains("BOOTSTRAP_ADMIN_PASSWORD=''")
+        .contains("Keep single quotes around free-form values")
         .contains("APP_PORT=8088")
+        .doesNotContain("DB_PORT=3306")
         .doesNotContain("192.168.")
         .doesNotContain("127.0.0.1");
     assertThat(gitignore).contains("deploy/.env");
