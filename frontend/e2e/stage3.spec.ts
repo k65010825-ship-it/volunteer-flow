@@ -158,7 +158,6 @@ test("completes Stage 3 notifications, change, self check-in, manual check-in an
     await administrator.page.locator('[data-test="open-session"]').click();
     const code = (await administrator.page.locator('[data-test="plaintext-code"]').textContent())?.trim();
     if (!code) throw new Error("Open-session response did not expose its one-time code");
-    assertCodeAbsentFromBackendLogs(code);
     await administrator.page.getByRole("button", { name: "刷新管理数据" }).click();
     await expect(administrator.page.locator('[data-test="plaintext-code"]')).toHaveCount(0);
 
@@ -188,6 +187,10 @@ test("completes Stage 3 notifications, change, self check-in, manual check-in an
     const denied = await secondMember.page.goto(`/activities/${activityId}/check-in-management`);
     expect(denied?.status()).toBe(200);
     await expect(secondMember.page.getByRole("alert")).toContainText("你没有执行此操作的权限");
+
+    // This must be the final code-bearing operation: inspect logs only after every action that used
+    // the one-time value, while the value is still held solely inside this test process.
+    assertCodeAbsentFromBackendLogs(code);
   } finally {
     await Promise.all([
       member.context.close(),

@@ -5,9 +5,6 @@ param(
   [string]$BaseUrl = 'http://localhost:8088',
 
   [Parameter()]
-  [string]$BackendConfigPath = '',
-
-  [Parameter()]
   [string]$ComposeEnvFile = ''
 )
 
@@ -17,13 +14,68 @@ $ErrorActionPreference = 'Stop'
 $repositoryRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $backendRoot = Join-Path $repositoryRoot 'backend'
 $frontendRoot = Join-Path $repositoryRoot 'frontend'
-$defaultBackendConfig = Join-Path $backendRoot 'config/application-local.yml'
 $defaultComposeEnv = Join-Path $repositoryRoot 'deploy/.env'
 $startLocation = (Get-Location).Path
 $runId = [Guid]::NewGuid().ToString('D').ToLowerInvariant()
 $primaryFailure = $null
 $cleanupFailure = $null
-$resolvedBackendConfig = $null
+$fixtureEnvironmentNames = @(
+  'DB_HOST',
+  'DB_PORT',
+  'DB_NAME',
+  'DB_USERNAME',
+  'DB_PASSWORD',
+  'JWT_SECRET',
+  'BOOTSTRAP_ADMIN_USERNAME',
+  'BOOTSTRAP_ADMIN_PASSWORD',
+  'BOOTSTRAP_ADMIN_REAL_NAME',
+  'BOOTSTRAP_ADMIN_STUDENT_NUMBER',
+  'BOOTSTRAP_ADMIN_CONTACT'
+)
+$requiredFixtureEnvironmentNames = @(
+  'DB_HOST',
+  'DB_PORT',
+  'DB_NAME',
+  'DB_USERNAME',
+  'DB_PASSWORD',
+  'JWT_SECRET'
+)
+
+function Read-ComposeEnvironmentFile([string]$Path) {
+  $values = @{}
+  $lineNumber = 0
+
+  foreach ($rawLine in [IO.File]::ReadLines($Path, [Text.Encoding]::UTF8)) {
+    $lineNumber++
+    $line = $rawLine.Trim()
+    if ([string]::IsNullOrWhiteSpace($line) -or $line.StartsWith('#')) {
+      continue
+    }
+    if ($line -notmatch '^(?<name>[A-Za-z_][A-Za-z0-9_]*)=(?<raw>.*)$') {
+      throw "Invalid environment entry at line $lineNumber"
+    }
+
+    $name = $Matches['name']
+    if ($values.ContainsKey($name)) {
+      throw "Duplicate environment key $name"
+    }
+    $rawValue = $Matches['raw'].Trim()
+    if ($rawValue.StartsWith("'")) {
+      if ($rawValue -notmatch "^'(?<value>(?:[^']|\\')*)'$") {
+        throw "Invalid single-quoted value for $name"
+      }
+      $value = [Regex]::Replace($Matches['value'], "\\'", "'")
+    } else {
+      if ($rawValue -notmatch '^[A-Za-z0-9._:/-]*$') {
+        throw "Unquoted environment value for $name contains unsupported characters"
+      }
+      $value = $rawValue
+    }
+    $values[$name] = $value
+  }
+
+  return $values
+}
 
 $normalizedBaseUrl = $BaseUrl.Trim().TrimEnd('/')
 $parsedBaseUrl = $null
@@ -32,33 +84,42 @@ if (-not [Uri]::TryCreate($normalizedBaseUrl, [UriKind]::Absolute, [ref]$parsedB
   throw 'BaseUrl must be an absolute HTTP or HTTPS URL'
 }
 
-if ([string]::IsNullOrWhiteSpace($BackendConfigPath)) {
-  if (-not [string]::IsNullOrWhiteSpace($env:STAGE3_E2E_BACKEND_CONFIG)) {
-    $BackendConfigPath = $env:STAGE3_E2E_BACKEND_CONFIG
-  } elseif (Test-Path -LiteralPath $defaultBackendConfig -PathType Leaf) {
-    $BackendConfigPath = $defaultBackendConfig
-  }
-}
-
-if (-not [string]::IsNullOrWhiteSpace($BackendConfigPath)) {
-  $resolvedBackendConfig = (Resolve-Path -LiteralPath $BackendConfigPath).Path
-} elseif (@('DB_USERNAME', 'DB_PASSWORD', 'JWT_SECRET') | Where-Object {
-    [string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($_))
-  }) {
-  throw 'Provide BackendConfigPath/STAGE3_E2E_BACKEND_CONFIG or existing DB and JWT environment variables'
-}
-
 if ([string]::IsNullOrWhiteSpace($ComposeEnvFile)) {
   $ComposeEnvFile = $defaultComposeEnv
 }
 $resolvedComposeEnv = (Resolve-Path -LiteralPath $ComposeEnvFile).Path
+$composeEnvironment = Read-ComposeEnvironmentFile $resolvedComposeEnv
+
+foreach ($name in $fixtureEnvironmentNames) {
+  if (-not $composeEnvironment.ContainsKey($name)) {
+    throw "Compose environment is missing $name"
+  }
+}
+foreach ($name in $requiredFixtureEnvironmentNames) {
+  $value = [string]$composeEnvironment[$name]
+  if ([string]::IsNullOrWhiteSpace($value) -or $value -match '(?i)replace-with|placeholder|change-me') {
+    throw "Compose environment has an unresolved required value for $name"
+  }
+}
+if ([string]$composeEnvironment['DB_PORT'] -notmatch '^\d{1,5}$' -or
+    [int]$composeEnvironment['DB_PORT'] -lt 1 -or
+    [int]$composeEnvironment['DB_PORT'] -gt 65535) {
+  throw 'Compose environment DB_PORT must be an integer from 1 to 65535'
+}
+try {
+  $jwtBytes = [Convert]::FromBase64String([string]$composeEnvironment['JWT_SECRET'])
+} catch {
+  throw 'Compose environment JWT_SECRET must use standard Base64 encoding'
+}
+if ($jwtBytes.Length -lt 32) {
+  throw 'Compose environment JWT_SECRET must decode to at least 32 bytes'
+}
 
 $managedEnvironment = @(
   'PLAYWRIGHT_BASE_URL',
   'S3_E2E_RUN_ID',
-  'STAGE3_COMPOSE_ENV_FILE',
-  'SPRING_CONFIG_ADDITIONAL_LOCATION'
-)
+  'STAGE3_COMPOSE_ENV_FILE'
+) + $fixtureEnvironmentNames
 $previousEnvironment = @{}
 foreach ($name in $managedEnvironment) {
   $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
@@ -91,9 +152,8 @@ try {
   $env:PLAYWRIGHT_BASE_URL = $normalizedBaseUrl
   $env:S3_E2E_RUN_ID = $runId
   $env:STAGE3_COMPOSE_ENV_FILE = $resolvedComposeEnv
-  if ($resolvedBackendConfig) {
-    $configUri = ([Uri]$resolvedBackendConfig).AbsoluteUri
-    $env:SPRING_CONFIG_ADDITIONAL_LOCATION = $configUri
+  foreach ($name in $fixtureEnvironmentNames) {
+    [Environment]::SetEnvironmentVariable($name, [string]$composeEnvironment[$name])
   }
 
   Invoke-Fixture 'seed'

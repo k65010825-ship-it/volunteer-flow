@@ -18,6 +18,10 @@
 
 部署主机需要：
 
+- Windows PowerShell 5.1 或 PowerShell 7；当前 E2E wrapper 调用 `mvnw.cmd`，不支持直接从 Linux shell 运行；
+- Java 17，供 Maven fixture 的 seed/cleanup 测试进程使用；
+- Node.js 22 与 npm，并已在 `frontend` 执行 `npm ci`；
+- Chromium；首次验收前在 `frontend` 执行 `npx playwright install chromium`；
 - Docker Engine 或 Docker Desktop，以及 Docker Compose v2；
 - 能拉取 Eclipse Temurin 17、Node 22 和 Nginx 1.27 基础镜像；
 - 能从 `backend` 容器访问外部 MySQL 的网络路径；
@@ -42,7 +46,7 @@ git check-ignore deploy/.env
 - `DB_HOST`：容器可达的外部 MySQL 地址或 DNS 名；
 - `DB_PORT`：外部 MySQL 对部署主机/容器开放的真实端口；
 - `DB_NAME`、`DB_USERNAME`、`DB_PASSWORD`：目标库连接信息；
-- `JWT_SECRET`：至少 32 个字符的随机值；
+- `JWT_SECRET`：至少 32 个随机字节的标准 Base64 编码；32 字节通常编码为 44 个字符；
 - `APP_PORT`：Nginx 对外端口，默认 `8088`；
 - `BOOTSTRAP_ADMIN_*`：仅在确实需要初始化管理员时填写，否则保持为空。
 
@@ -94,14 +98,14 @@ Playwright 运行前还需要：
 
 - 前端依赖已经通过 `npm ci` 安装；
 - Chromium 已通过 `npx playwright install chromium` 安装；
-- 后端测试进程可使用本地配置文件或已存在的数据库/JWT 环境变量；
-- `deploy/.env` 存在，但脚本不会读取或打印其中的凭据正文。
+- `deploy/.env` 存在且所有必填占位符已经替换；wrapper 会安全解析单引号值，并拒绝缺失项、占位符、无效端口或不能解码到至少 32 字节的 JWT Base64；
+- Compose 与 Maven fixture 使用同一份 `deploy/.env`。wrapper 把其中的数据库、JWT 和 bootstrap 值仅注入 seed/cleanup 子进程，并在 `finally` 中恢复调用者原有环境；它不会打印这些值。
 
 执行完整场景：
 
 ```powershell
-.\deploy\run-stage3-e2e.ps1 -BaseUrl "http://localhost:8088"
-.\deploy\run-stage3-e2e.ps1 -BaseUrl "http://localhost:8088"
+.\deploy\run-stage3-e2e.ps1 -BaseUrl "http://localhost:8088" -ComposeEnvFile "deploy/.env"
+.\deploy\run-stage3-e2e.ps1 -BaseUrl "http://localhost:8088" -ComposeEnvFile "deploy/.env"
 ```
 
 两轮都成功后，才能记录“公开 Nginx 浏览器流程通过”。脚本使用独立 UUID 生成 `s3e2e-` 数据，并在 `finally` 中精确清理；若主体流程和清理同时失败，必须检查两段输出，不得用 `TRUNCATE`、全表删除或模糊前缀删除补救。还要检查后端日志，确认浏览器进程持有的一次性签到码没有出现在日志中。

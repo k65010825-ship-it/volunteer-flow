@@ -241,7 +241,7 @@ VolunteerFlow/
 
 回归命令：后端执行 `.\mvnw.cmd clean verify`；前端依次执行 `npm test`、`npm run typecheck` 和 `npm run build`。
 
-演示部署使用仓库根目录的 `deploy/`，不会创建或管理 MySQL。复制 `deploy/.env.example` 为被 Git 忽略的 `deploy/.env`，填写容器可达的外部 MySQL 地址和真实端口后再执行。完整命令、安全边界、停止和回滚步骤见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。
+演示部署使用仓库根目录的 `deploy/`，不会创建或管理 MySQL。复制 `deploy/.env.example` 为被 Git 忽略的 `deploy/.env`，填写容器可达的外部 MySQL 地址、真实端口及标准 Base64 JWT 密钥后再执行。E2E wrapper 当前要求 Windows PowerShell、Java 17、Node.js/npm 和 Chromium，并保证 Compose 与 Maven fixture 使用同一份环境文件。完整命令、安全边界、停止和回滚步骤见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。
 
 ## 阶段 2 已验证的能力
 

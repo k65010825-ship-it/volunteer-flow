@@ -4,9 +4,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.Base64;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -40,6 +42,18 @@ class Stage3E2eFixtureContractTest {
 
     assertThat(wrapper)
         .contains("[Guid]::NewGuid().ToString('D').ToLowerInvariant()")
+        .contains("Read-ComposeEnvironmentFile")
+        .contains("DB_HOST")
+        .contains("DB_PORT")
+        .contains("DB_NAME")
+        .contains("DB_USERNAME")
+        .contains("DB_PASSWORD")
+        .contains("JWT_SECRET")
+        .contains("BOOTSTRAP_ADMIN_USERNAME")
+        .contains("BOOTSTRAP_ADMIN_PASSWORD")
+        .contains("BOOTSTRAP_ADMIN_REAL_NAME")
+        .contains("BOOTSTRAP_ADMIN_STUDENT_NUMBER")
+        .contains("BOOTSTRAP_ADMIN_CONTACT")
         .contains("-Dstage3.e2e.action=$fixtureActionValue")
         .contains("Invoke-Fixture 'seed'")
         .contains("Invoke-Fixture 'cleanup'")
@@ -48,6 +62,8 @@ class Stage3E2eFixtureContractTest {
         .contains("try {")
         .contains("finally {")
         .contains("Set-Location -LiteralPath $startLocation")
+        .doesNotContain("BackendConfigPath")
+        .doesNotContain("SPRING_CONFIG_ADDITIONAL_LOCATION")
         .doesNotContain("Write-Host $env:")
         .doesNotContain("Write-Output $env:");
   }
@@ -61,9 +77,26 @@ class Stage3E2eFixtureContractTest {
     Path deploy = Files.createDirectories(temporaryDirectory.resolve("deploy"));
     Path backend = Files.createDirectories(temporaryDirectory.resolve("backend"));
     Files.createDirectories(temporaryDirectory.resolve("frontend"));
-    Files.createDirectories(backend.resolve("config"));
-    Files.writeString(backend.resolve("config/application-local.yml"), "# stub\n");
-    Files.writeString(deploy.resolve(".env"), "# stub\n");
+    String jwtSecret =
+        Base64.getEncoder()
+            .encodeToString(
+                "0123456789abcdef0123456789abcdef".getBytes(StandardCharsets.UTF_8));
+    Files.writeString(
+        deploy.resolve(".env"),
+        "DB_HOST='fixture-db.internal'\n"
+            + "DB_PORT='3307'\n"
+            + "DB_NAME='volunteer_flow'\n"
+            + "DB_USERNAME='fixture-user'\n"
+            + "DB_PASSWORD='fixture$#password'\n"
+            + "JWT_SECRET='"
+            + jwtSecret
+            + "'\n"
+            + "BOOTSTRAP_ADMIN_USERNAME='fixture-bootstrap'\n"
+            + "BOOTSTRAP_ADMIN_PASSWORD='Fixture$#Bootstrap1'\n"
+            + "BOOTSTRAP_ADMIN_REAL_NAME='Fixture $Admin #1'\n"
+            + "BOOTSTRAP_ADMIN_STUDENT_NUMBER='fixture-001'\n"
+            + "BOOTSTRAP_ADMIN_CONTACT='ops$#@example.invalid'\n"
+            + "APP_PORT=8088\n");
     String wrapper =
         Files.readString(REPOSITORY_ROOT.resolve("deploy/run-stage3-e2e.ps1"))
             .replace("& .\\mvnw.cmd `", "& $env:S3_E2E_MAVEN_STUB `");
@@ -74,7 +107,16 @@ class Stage3E2eFixtureContractTest {
     Files.writeString(
         mavenStub,
         "param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Remaining)\n"
-            + "Add-Content -LiteralPath $env:S3_E2E_CAPTURE -Value ($Remaining -join ' ')\n"
+            + "$required = @('DB_HOST','DB_PORT','DB_NAME','DB_USERNAME','DB_PASSWORD','JWT_SECRET',"
+            + "'BOOTSTRAP_ADMIN_USERNAME','BOOTSTRAP_ADMIN_PASSWORD','BOOTSTRAP_ADMIN_REAL_NAME',"
+            + "'BOOTSTRAP_ADMIN_STUDENT_NUMBER','BOOTSTRAP_ADMIN_CONTACT')\n"
+            + "foreach ($name in $required) { if ($null -eq [Environment]::GetEnvironmentVariable($name)) { exit 91 } }\n"
+            + "if ($env:DB_PASSWORD -cne 'fixture$#password') { exit 92 }\n"
+            + "if ($env:BOOTSTRAP_ADMIN_PASSWORD -cne 'Fixture$#Bootstrap1') { exit 95 }\n"
+            + "if ($env:BOOTSTRAP_ADMIN_REAL_NAME -cne 'Fixture $Admin #1') { exit 93 }\n"
+            + "if ($env:BOOTSTRAP_ADMIN_CONTACT -cne 'ops$#@example.invalid') { exit 94 }\n"
+            + "$action = ($Remaining | Where-Object { $_ -like '-Dstage3.e2e.action=*' }) -join ''\n"
+            + "Add-Content -LiteralPath $env:S3_E2E_CAPTURE -Value \"$action|environment-ok\"\n"
             + "& cmd.exe /c exit 0\n");
     Path commandDirectory = Files.createDirectories(temporaryDirectory.resolve("commands"));
     Files.writeString(commandDirectory.resolve("npx.cmd"), "@echo off\r\nexit /b 0\r\n");
@@ -101,8 +143,15 @@ class Stage3E2eFixtureContractTest {
     assertThat(process.exitValue()).as(output).isZero();
     assertThat(capture).as(output).exists();
     assertThat(Files.readAllLines(capture))
-        .anySatisfy(line -> assertThat(line).contains("-Dstage3.e2e.action=seed"))
-        .anySatisfy(line -> assertThat(line).contains("-Dstage3.e2e.action=cleanup"));
+        .containsExactlyInAnyOrder(
+            "-Dstage3.e2e.action=seed|environment-ok",
+            "-Dstage3.e2e.action=cleanup|environment-ok");
+    assertThat(output)
+        .doesNotContain("fixture$#password")
+        .doesNotContain("Fixture$#Bootstrap1")
+        .doesNotContain("Fixture $Admin #1")
+        .doesNotContain("ops$#@example.invalid")
+        .doesNotContain(jwtSecret);
   }
 
   @Test
@@ -147,6 +196,14 @@ class Stage3E2eFixtureContractTest {
         .doesNotContain("console.log")
         .doesNotContain("message.args()")
         .doesNotContain("message.text()");
+
+    int scenario = spec.indexOf("completes Stage 3 notifications");
+    int lastCodeUsingAction = spec.indexOf("你没有执行此操作的权限", scenario);
+    int finalLogAssertion = spec.lastIndexOf("assertCodeAbsentFromBackendLogs(code)");
+    int scenarioFinally = spec.indexOf("  } finally {", scenario);
+    assertThat(finalLogAssertion).isGreaterThan(lastCodeUsingAction);
+    assertThat(finalLogAssertion).isLessThan(scenarioFinally);
+    assertThat(countOccurrences(spec, "assertCodeAbsentFromBackendLogs(code)")).isEqualTo(1);
   }
 
   @Test
@@ -178,5 +235,15 @@ class Stage3E2eFixtureContractTest {
                 "powershell.exe"),
             Path.of("C:\\Program Files\\PowerShell\\7\\pwsh.exe"));
     return candidates.stream().filter(Files::isRegularFile).findFirst().orElse(null);
+  }
+
+  private static int countOccurrences(String value, String token) {
+    int count = 0;
+    int offset = 0;
+    while ((offset = value.indexOf(token, offset)) >= 0) {
+      count++;
+      offset += token.length();
+    }
+    return count;
   }
 }
