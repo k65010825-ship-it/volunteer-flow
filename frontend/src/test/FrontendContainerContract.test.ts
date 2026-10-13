@@ -42,6 +42,17 @@ describe("frontend container contract", () => {
     expect(nginx).not.toContain("proxy_pass http://backend:8080/");
   });
 
+  it("keeps exact API and actuator roots out of the SPA fallback", () => {
+    const nginx = readRepositoryFile("deploy/nginx/nginx.conf");
+
+    expect(nginx).toMatch(
+      /location = \/api\s*\{[\s\S]*?proxy_pass http:\/\/backend:8080;/,
+    );
+    expect(nginx).toMatch(
+      /location = \/actuator\s*\{[\s\S]*?proxy_pass http:\/\/backend:8080;/,
+    );
+  });
+
   it("forwards the original request metadata without exposing the upstream name", () => {
     const nginx = readRepositoryFile("deploy/nginx/nginx.conf");
 
