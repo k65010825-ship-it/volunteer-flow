@@ -1,6 +1,12 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import {
+  expect,
+  test,
+  type Browser,
+  type BrowserContext,
+  type Page,
+} from "@playwright/test";
 
 const runId = process.env.S3_E2E_RUN_ID;
 if (!runId || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(runId)) {
@@ -14,6 +20,22 @@ const password = `S3!${runId.replaceAll("-", "").slice(0, 12)}aZ9`;
 // This file handles a one-time plaintext code. Disable automatic artifacts so the code can never
 // be captured after it is opened; the project defaults remain available to non-secret specs.
 test.use({ trace: "off", screenshot: "off" });
+
+type BrowserFailure = "pageerror" | "console.error";
+
+function observeContext(context: BrowserContext, failures: BrowserFailure[]) {
+  const observePage = (page: Page) => {
+    // Keep only the failure category. Console arguments and text may contain the one-time code or
+    // credentials, so diagnostics must never serialize them into assertion output or artifacts.
+    page.on("pageerror", () => failures.push("pageerror"));
+    page.on("console", (message) => {
+      if (message.type() === "error") failures.push("console.error");
+    });
+  };
+
+  context.pages().forEach(observePage);
+  context.on("page", observePage);
+}
 
 async function login(page: Page, suffix: "admin" | "member1" | "member2") {
   await page.goto("/login");
@@ -37,8 +59,10 @@ async function openFixtureActivity(page: Page) {
 async function newLoggedInPage(
   browser: Browser,
   suffix: "admin" | "member1" | "member2",
+  failures: BrowserFailure[],
 ) {
   const context = await browser.newContext();
+  observeContext(context, failures);
   const page = await context.newPage();
   await login(page, suffix);
   return { context, page };
@@ -74,18 +98,28 @@ function assertCodeAbsentFromBackendLogs(code: string) {
   }
 }
 
-test("redirects a protected notification deep link to login through Nginx", async ({ page }) => {
-  await page.goto("/notifications");
-  await expect(page).toHaveURL(/\/login\?redirect=\/notifications$/);
-  await expect(page.getByRole("heading", { name: "欢迎回到 VolunteerFlow" })).toBeVisible();
-});
+test(
+  "redirects a protected notification deep link to login through Nginx",
+  async ({ context, page }) => {
+    const browserFailures: BrowserFailure[] = [];
+    observeContext(context, browserFailures);
+    try {
+      await page.goto("/notifications");
+      await expect(page).toHaveURL(/\/login\?redirect=\/notifications$/);
+      await expect(page.getByRole("heading", { name: "欢迎回到 VolunteerFlow" })).toBeVisible();
+    } finally {
+      expect(browserFailures, "Browser emitted page or console errors").toEqual([]);
+    }
+  },
+);
 
 test("completes Stage 3 notifications, change, self check-in, manual check-in and authorization", async ({
   browser,
 }) => {
-  const member = await newLoggedInPage(browser, "member1");
-  const administrator = await newLoggedInPage(browser, "admin");
-  const secondMember = await newLoggedInPage(browser, "member2");
+  const browserFailures: BrowserFailure[] = [];
+  const member = await newLoggedInPage(browser, "member1", browserFailures);
+  const administrator = await newLoggedInPage(browser, "admin", browserFailures);
+  const secondMember = await newLoggedInPage(browser, "member2", browserFailures);
 
   try {
     await member.page.goto("/notifications");
@@ -160,5 +194,6 @@ test("completes Stage 3 notifications, change, self check-in, manual check-in an
       administrator.context.close(),
       secondMember.context.close(),
     ]);
+    expect(browserFailures, "Browser emitted page or console errors").toEqual([]);
   }
 });

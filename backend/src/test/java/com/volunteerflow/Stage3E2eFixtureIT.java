@@ -152,6 +152,13 @@ class Stage3E2eFixtureIT {
             administrator.getPlatformRole(),
             new OrganizationService.CreateOrganizationRequest(
                 prefix, "Isolated Stage 3 browser fixture", administrator.getId()));
+
+    // Organization creation requires temporary platform authority. The browser identity should
+    // exercise organization-scoped OWNER permissions and see only this fixture organization even
+    // when the E2E database contains unrelated organizations.
+    administrator.setPlatformRole("USER");
+    assertThat(users.updateById(administrator)).isEqualTo(1);
+
     var invitation =
         organizations.createInvite(
             administrator.getId(),

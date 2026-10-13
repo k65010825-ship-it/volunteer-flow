@@ -9,7 +9,9 @@ export default defineConfig({
   testDir: "./e2e",
   fullyParallel: false,
   workers: 1,
-  retries: 1,
+  // This spec owns one stateful cross-process fixture. A retry would replay mutations against the
+  // same run ID instead of creating an independent attempt-specific fixture.
+  retries: 0,
   reporter: "list",
   use: {
     baseURL,

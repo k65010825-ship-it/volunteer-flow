@@ -64,24 +64,25 @@ foreach ($name in $managedEnvironment) {
   $previousEnvironment[$name] = [Environment]::GetEnvironmentVariable($name)
 }
 
-function Invoke-InLocation([string]$Path, [scriptblock]$Action) {
+function Invoke-InLocation([string]$Path, [scriptblock]$Operation) {
   Push-Location -LiteralPath $Path
   try {
-    & $Action
+    & $Operation
   } finally {
     Pop-Location
   }
 }
 
-function Invoke-Fixture([string]$Action) {
+function Invoke-Fixture([string]$FixtureAction) {
+  $fixtureActionValue = $FixtureAction
   Invoke-InLocation $backendRoot {
     & .\mvnw.cmd `
       '-Dtest=Stage3E2eFixtureIT' `
-      "-Dstage3.e2e.action=$Action" `
+      "-Dstage3.e2e.action=$fixtureActionValue" `
       "-Dstage3.e2e.run-id=$runId" `
       test
     if ($LASTEXITCODE -ne 0) {
-      throw "Stage 3 E2E fixture $Action failed"
+      throw "Stage 3 E2E fixture $fixtureActionValue failed"
     }
   }
 }
