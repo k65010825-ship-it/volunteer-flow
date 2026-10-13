@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc -b && vite build",
-    "test": "vitest run",
+    "test": "vitest run --exclude e2e/**",
     "typecheck": "vue-tsc -b"
   },
   "dependencies": {
@@ -16,6 +16,7 @@
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.0",
     "@types/node": "^26.5.1",
     "@vitejs/plugin-vue": "^6.0.9",
     "@vue/test-utils": "^2.5.0",
