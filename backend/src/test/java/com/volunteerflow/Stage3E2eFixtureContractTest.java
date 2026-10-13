@@ -42,18 +42,9 @@ class Stage3E2eFixtureContractTest {
 
     assertThat(wrapper)
         .contains("[Guid]::NewGuid().ToString('D').ToLowerInvariant()")
-        .contains("Read-ComposeEnvironmentFile")
-        .contains("DB_HOST")
-        .contains("DB_PORT")
-        .contains("DB_NAME")
-        .contains("DB_USERNAME")
-        .contains("DB_PASSWORD")
-        .contains("JWT_SECRET")
-        .contains("BOOTSTRAP_ADMIN_USERNAME")
-        .contains("BOOTSTRAP_ADMIN_PASSWORD")
-        .contains("BOOTSTRAP_ADMIN_REAL_NAME")
-        .contains("BOOTSTRAP_ADMIN_STUDENT_NUMBER")
-        .contains("BOOTSTRAP_ADMIN_CONTACT")
+        .contains("Import-Module")
+        .contains("Read-Stage3EnvironmentFile")
+        .contains("Invoke-WithStage3Environment")
         .contains("-Dstage3.e2e.action=$fixtureActionValue")
         .contains("Invoke-Fixture 'seed'")
         .contains("Invoke-Fixture 'cleanup'")
@@ -101,6 +92,8 @@ class Stage3E2eFixtureContractTest {
         Files.readString(REPOSITORY_ROOT.resolve("deploy/run-stage3-e2e.ps1"))
             .replace("& .\\mvnw.cmd `", "& $env:S3_E2E_MAVEN_STUB `");
     Files.writeString(deploy.resolve("run-stage3-e2e.ps1"), wrapper);
+    Files.copy(
+        REPOSITORY_ROOT.resolve("deploy/stage3-env.psm1"), deploy.resolve("stage3-env.psm1"));
 
     Path capture = temporaryDirectory.resolve("fixture-actions.txt");
     Path mavenStub = temporaryDirectory.resolve("maven-stub.ps1");
@@ -134,6 +127,22 @@ class Stage3E2eFixtureContractTest {
     environment.put("S3_E2E_MAVEN_STUB", mavenStub.toString());
     environment.put("S3_E2E_CAPTURE", capture.toString());
     environment.put("PATH", commandDirectory + ";" + environment.get("PATH"));
+    for (String name :
+        List.of(
+            "DB_HOST",
+            "DB_PORT",
+            "DB_NAME",
+            "DB_USERNAME",
+            "DB_PASSWORD",
+            "JWT_SECRET",
+            "BOOTSTRAP_ADMIN_USERNAME",
+            "BOOTSTRAP_ADMIN_PASSWORD",
+            "BOOTSTRAP_ADMIN_REAL_NAME",
+            "BOOTSTRAP_ADMIN_STUDENT_NUMBER",
+            "BOOTSTRAP_ADMIN_CONTACT",
+            "APP_PORT")) {
+      environment.put(name, "caller-conflict-" + name);
+    }
 
     Process process = processBuilder.start();
     boolean completed = process.waitFor(Duration.ofSeconds(30).toMillis(), TimeUnit.MILLISECONDS);

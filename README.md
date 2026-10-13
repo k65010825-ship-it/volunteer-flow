@@ -241,7 +241,7 @@ VolunteerFlow/
 
 回归命令：后端执行 `.\mvnw.cmd clean verify`；前端依次执行 `npm test`、`npm run typecheck` 和 `npm run build`。
 
-演示部署使用仓库根目录的 `deploy/`，不会创建或管理 MySQL。复制 `deploy/.env.example` 为被 Git 忽略的 `deploy/.env`，填写容器可达的外部 MySQL 地址、真实端口及标准 Base64 JWT 密钥后再执行。E2E wrapper 当前要求 Windows PowerShell、Java 17、Node.js/npm 和 Chromium，并保证 Compose 与 Maven fixture 使用同一份环境文件。完整命令、安全边界、停止和回滚步骤见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。
+演示部署使用仓库根目录的 `deploy/`，不会创建或管理 MySQL。复制 `deploy/.env.example` 为被 Git 忽略的 `deploy/.env`，填写容器可达的外部 MySQL 地址、真实端口及标准 Base64 JWT 密钥后再执行。所有 Compose 操作统一通过 `deploy/run-stage3-stack.ps1`，脚本会隔离调用者已有的同名环境变量；E2E wrapper 当前要求 Windows PowerShell、Java 17、Node.js/npm 和 Chromium，并保证 Compose 与 Maven fixture 使用同一份环境文件。完整命令、安全边界、停止和回滚步骤见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。
 
 ## 阶段 2 已验证的能力
 
@@ -312,11 +312,11 @@ $env:SPRING_FLYWAY_ENABLED = 'false'
 
 | 本地检查 | 2026-10-13 实测结果 |
 |---|---|
-| 后端 `clean verify` | 600 个测试通过，0 失败、0 错误、0 跳过，JAR 重新打包成功 |
+| 后端 `clean verify` | 604 个测试通过，0 失败、0 错误、0 跳过，JAR 重新打包成功 |
 | 前端 Vitest | 16 个测试文件、142 个测试通过（`--maxWorkers=2`） |
 | 前端 TypeScript / Vite | 类型检查通过；生产构建转换 118 个模块并成功生成 `dist` |
 | Playwright `--list` | Chromium 项目发现 1 个测试文件中的 2 个场景；只完成发现/编译，未执行浏览器流程 |
-| PowerShell 解析 | `smoke-test.ps1` 与 `run-stage3-e2e.ps1` 均为 0 个解析错误 |
+| PowerShell 解析 | `stage3-env.psm1`、`run-stage3-stack.ps1`、`smoke-test.ps1` 与 `run-stage3-e2e.ps1` 均为 0 个解析错误 |
 | 本地部署环境 | `deploy/.env` 不存在且被 Git 忽略；当前主机未发现 Docker 或 Nginx CLI |
 
 当前主机的 Docker/Nginx/浏览器运行门禁未完成，因此这部分不代表真实用户试用、性能测试、Redis 或 Kafka 已完成。部署主机上的执行顺序与证据要求见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。

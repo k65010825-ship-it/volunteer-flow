@@ -52,12 +52,14 @@ git check-ignore deploy/.env
 
 自由文本、密码和密钥应保留模板中的单引号。这样 `$` 等特殊字符不会再次被 Compose 插值。不要把真实值写入 README、命令历史、截图、工单或 Git；也不要执行会把完整渲染结果打印到终端的 `docker compose config`。
 
+环境文件解析器只支持整行注释，不支持行尾内联注释；需要包含空格、`#`、`$` 等字符的值必须使用单引号。后续所有 Compose 操作都必须通过 `run-stage3-stack.ps1`：即使调用者进程已经设置同名变量，该脚本也会临时使用同一份 `deploy/.env` 覆盖受管变量，并在命令结束或失败后恢复调用者环境。这样 Compose 与 Maven fixture 使用同一份 `deploy/.env`，避免 shell 环境变量优先级导致二者连接不同数据库。
+
 ## 4. 安全预检
 
 只做静默配置校验，不输出渲染后的环境变量：
 
 ```powershell
-docker compose --file deploy/docker-compose.yml --env-file deploy/.env config --quiet
+.\deploy\run-stage3-stack.ps1 -Action Config -ComposeEnvFile "deploy/.env"
 ```
 
 如需先确认数据库连通性，应使用部署环境已有的安全客户端，并只报告成功/失败；不要在命令行直接拼接密码。Compose 文件只声明 `backend` 和 `frontend-nginx`，没有 MySQL 服务、MySQL 数据卷或数据库端口映射。
@@ -65,8 +67,8 @@ docker compose --file deploy/docker-compose.yml --env-file deploy/.env config --
 ## 5. 构建并启动应用栈
 
 ```powershell
-docker compose --file deploy/docker-compose.yml --env-file deploy/.env up --build --detach
-docker compose --file deploy/docker-compose.yml --env-file deploy/.env ps
+.\deploy\run-stage3-stack.ps1 -Action Up -ComposeEnvFile "deploy/.env"
+.\deploy\run-stage3-stack.ps1 -Action Ps -ComposeEnvFile "deploy/.env"
 ```
 
 预期只看到两个应用服务：
@@ -77,8 +79,8 @@ docker compose --file deploy/docker-compose.yml --env-file deploy/.env ps
 查看运行状态时限制日志范围，避免无关历史输出：
 
 ```powershell
-docker compose --file deploy/docker-compose.yml --env-file deploy/.env logs --tail 200 backend
-docker compose --file deploy/docker-compose.yml --env-file deploy/.env logs --tail 200 frontend-nginx
+.\deploy\run-stage3-stack.ps1 -Action Logs -Service backend -ComposeEnvFile "deploy/.env"
+.\deploy\run-stage3-stack.ps1 -Action Logs -Service frontend-nginx -ComposeEnvFile "deploy/.env"
 ```
 
 日志中不得出现数据库密码、JWT、Cookie、Authorization 头或一次性签到码。若后端不健康，优先检查数据库网络、账号权限、目标库结构以及后端日志中的完整异常链，不要通过删除迁移历史来绕过错误。
@@ -113,7 +115,7 @@ Playwright 运行前还需要：
 ## 7. 停止应用栈
 
 ```powershell
-docker compose --file deploy/docker-compose.yml --env-file deploy/.env down
+.\deploy\run-stage3-stack.ps1 -Action Down -ComposeEnvFile "deploy/.env"
 ```
 
 `down` 只停止并删除本 Compose 项目的 `backend`、`frontend-nginx` 容器和应用网络；它不会停止、删除、重启或管理外部 MySQL，也不会删除 MySQL 数据卷。当前 Compose 没有声明数据库服务和命名卷。
@@ -125,7 +127,7 @@ docker compose --file deploy/docker-compose.yml --env-file deploy/.env down
 ```powershell
 git rev-parse HEAD
 git switch --detach <known-good-application-commit>
-docker compose --file deploy/docker-compose.yml --env-file deploy/.env up --build --detach backend frontend-nginx
+.\deploy\run-stage3-stack.ps1 -Action Up -ComposeEnvFile "deploy/.env"
 .\deploy\smoke-test.ps1 -BaseUrl "http://localhost:8088"
 ```
 
