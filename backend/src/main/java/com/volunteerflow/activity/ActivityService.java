@@ -38,6 +38,7 @@ public class ActivityService {
   private final AuditService audit;
   private final RegistrationCycleMapper registrationCycles;
   private final NotificationWriter notifications;
+  private final ActivityDetailCache detailCache;
   private final Clock clock;
 
   public ActivityService(
@@ -49,6 +50,7 @@ public class ActivityService {
       AuditService audit,
       RegistrationCycleMapper registrationCycles,
       NotificationWriter notifications,
+      ActivityDetailCache detailCache,
       Clock clock) {
     this.activities = activities;
     this.positions = positions;
@@ -58,6 +60,7 @@ public class ActivityService {
     this.audit = audit;
     this.registrationCycles = registrationCycles;
     this.notifications = notifications;
+    this.detailCache = detailCache;
     this.clock = clock;
   }
 
@@ -232,12 +235,27 @@ public class ActivityService {
   }
 
   public ActivityDetail detail(Long userId, Long id) {
+    var cached = detailCache.get(id);
+    if (cached.isPresent()) {
+      ActivityDetail detail = cached.orElseThrow();
+      authorizeDetail(userId, detail.activity());
+      return detail;
+    }
     Activity activity = required(id);
-    authorization.requireMembership(userId, activity.getOrganizationId());
-    if (!"PUBLISHED".equals(activity.getStatus()))
-      authorization.requirePermission(userId, activity.getOrganizationId(), "activity:read");
-    return new ActivityDetail(
+    authorizeDetail(userId, activity);
+    ActivityDetail detail = new ActivityDetail(
         activity, positions.selectActiveByActivity(activity.getOrganizationId(), id));
+    if ("PUBLISHED".equals(activity.getStatus())) {
+      detailCache.put(detail);
+    }
+    return detail;
+  }
+
+  private void authorizeDetail(Long userId, Activity activity) {
+    authorization.requireMembership(userId, activity.getOrganizationId());
+    if (!"PUBLISHED".equals(activity.getStatus())) {
+      authorization.requirePermission(userId, activity.getOrganizationId(), "activity:read");
+    }
   }
 
   /**

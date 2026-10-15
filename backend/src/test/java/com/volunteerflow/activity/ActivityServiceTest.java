@@ -16,6 +16,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.OptimisticLockingFailureException;
@@ -31,6 +32,7 @@ class ActivityServiceTest {
   private final AuditService auditService = mock(AuditService.class);
   private final RegistrationCycleMapper cycleMapper = mock(RegistrationCycleMapper.class);
   private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
+  private final ActivityDetailCache detailCache = mock(ActivityDetailCache.class);
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T00:00:00Z"), ZoneOffset.UTC);
   private final ActivityService service =
       new ActivityService(
@@ -42,6 +44,7 @@ class ActivityServiceTest {
           auditService,
           cycleMapper,
           notifications,
+          detailCache,
           clock);
 
   @BeforeEach
@@ -161,6 +164,7 @@ class ActivityServiceTest {
     assertThat(detail.positions().get(1).questions()).containsExactly(question);
     assertThat(detail.commonQuestionCount()).isEqualTo(3);
     verify(authorization).requirePermission(7L, 100L, "activity:change");
+    verifyNoInteractions(detailCache);
   }
 
   @Test
@@ -192,6 +196,53 @@ class ActivityServiceTest {
 
     assertThat(detail.positions()).containsExactly(active);
     verify(positionMapper, never()).selectManageableByActivity(anyLong(), anyLong());
+    verify(detailCache).put(detail);
+  }
+
+  @Test
+  void publishedDetailCacheHitStillRequiresMembershipAndSkipsDatabaseReads() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    ActivityService.ActivityDetail cached =
+        new ActivityService.ActivityDetail(published, List.of(activePosition()));
+    when(detailCache.get(1L)).thenReturn(Optional.of(cached));
+
+    ActivityService.ActivityDetail result = service.detail(7L, 1L);
+
+    assertThat(result).isSameAs(cached);
+    verify(authorization).requireMembership(7L, 100L);
+    verifyNoInteractions(activityMapper, positionMapper);
+    verify(detailCache, never()).put(any());
+  }
+
+  @Test
+  void cacheMissFallsBackToDatabaseAndPopulatesPublishedDetail() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    ActivityPosition active = activePosition();
+    when(detailCache.get(1L)).thenReturn(Optional.empty());
+    when(activityMapper.selectById(1L)).thenReturn(published);
+    when(positionMapper.selectActiveByActivity(100L, 1L)).thenReturn(List.of(active));
+
+    ActivityService.ActivityDetail result = service.detail(7L, 1L);
+
+    assertThat(result.activity()).isSameAs(published);
+    assertThat(result.positions()).containsExactly(active);
+    verify(detailCache).put(result);
+  }
+
+  @Test
+  void draftDetailUsesDatabaseAndIsNotCached() {
+    Activity draft = validDraft();
+    when(detailCache.get(1L)).thenReturn(Optional.empty());
+    when(activityMapper.selectById(1L)).thenReturn(draft);
+    when(positionMapper.selectActiveByActivity(100L, 1L)).thenReturn(List.of());
+
+    ActivityService.ActivityDetail result = service.detail(7L, 1L);
+
+    assertThat(result.activity()).isSameAs(draft);
+    verify(authorization).requirePermission(7L, 100L, "activity:read");
+    verify(detailCache, never()).put(any());
   }
 
   @Test
