@@ -184,6 +184,20 @@ class Stage3E2eFixtureContractTest {
   }
 
   @Test
+  void fixtureLetsTheWrapperControlFlywayWithoutDroppingTestOnlyOverrides() throws IOException {
+    String fixture =
+        Files.readString(
+            REPOSITORY_ROOT.resolve(
+                "backend/src/test/java/com/volunteerflow/Stage3E2eFixtureIT.java"));
+
+    assertThat(fixture)
+        .contains("\"volunteerflow.bootstrap-admin.username=\"")
+        .contains("@MockitoBean private ActivityFinalizationJob automaticActivityFinalizer;")
+        .contains("@MockitoBean private PromotionExpiryJob automaticPromotionExpiry;")
+        .doesNotContain("spring.flyway.enabled");
+  }
+
+  @Test
   void browserSpecUsesPublicNginxWithoutMocksOrSecretArtifacts() throws IOException {
     String config = Files.readString(REPOSITORY_ROOT.resolve("frontend/playwright.config.ts"));
     String spec = Files.readString(REPOSITORY_ROOT.resolve("frontend/e2e/stage3.spec.ts"));

@@ -34,11 +34,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
  * {@code s3e2e-<uuid>} prefix and exact derived usernames, so cleanup remains possible after the
  * seed JVM exits or after a partially failed browser run.
  */
-@SpringBootTest(
-    properties = {
-      "volunteerflow.bootstrap-admin.username=",
-      "spring.flyway.enabled=false"
-    })
+@SpringBootTest(properties = "volunteerflow.bootstrap-admin.username=")
 class Stage3E2eFixtureIT {
 
   private static final List<String> ORGANIZATION_TABLES_CHILD_FIRST =

@@ -312,7 +312,7 @@ $env:SPRING_FLYWAY_ENABLED = 'false'
 
 | 本地检查 | 2026-10-15 实测结果 |
 |---|---|
-| 后端 `clean verify` | 606 个测试通过，0 失败、0 错误、0 跳过，JAR 重新打包成功 |
+| 后端 `clean verify` | 607 个测试通过，0 失败、0 错误、0 跳过，JAR 重新打包成功 |
 | 前端 Vitest | 16 个测试文件、142 个测试通过（`--maxWorkers=2`） |
 | 前端 TypeScript / Vite | 类型检查通过；生产构建转换 118 个模块并成功生成 `dist` |
 | Playwright `--list` | Chromium 项目发现 1 个测试文件中的 2 个场景；只完成发现/编译，未执行浏览器流程 |
