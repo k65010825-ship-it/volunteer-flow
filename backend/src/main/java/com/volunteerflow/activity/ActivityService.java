@@ -39,6 +39,7 @@ public class ActivityService {
   private final RegistrationCycleMapper registrationCycles;
   private final NotificationWriter notifications;
   private final ActivityDetailCache detailCache;
+  private final ActivityDetailCacheInvalidator cacheInvalidator;
   private final Clock clock;
 
   public ActivityService(
@@ -51,6 +52,7 @@ public class ActivityService {
       RegistrationCycleMapper registrationCycles,
       NotificationWriter notifications,
       ActivityDetailCache detailCache,
+      ActivityDetailCacheInvalidator cacheInvalidator,
       Clock clock) {
     this.activities = activities;
     this.positions = positions;
@@ -61,6 +63,7 @@ public class ActivityService {
     this.registrationCycles = registrationCycles;
     this.notifications = notifications;
     this.detailCache = detailCache;
+    this.cacheInvalidator = cacheInvalidator;
     this.clock = clock;
   }
 
@@ -181,6 +184,7 @@ public class ActivityService {
     activity.setPublishedAt(now());
     activities.updateById(activity);
     audit.record(activity.getOrganizationId(), userId, "activity.published", "activity", id, null);
+    cacheInvalidator.evictAfterCommit(id);
     return activity;
   }
 
@@ -221,6 +225,7 @@ public class ActivityService {
             "ACTIVITY",
             id,
             "activity:" + id + ":canceled"));
+    cacheInvalidator.evictAfterCommit(id);
     return activity;
   }
 

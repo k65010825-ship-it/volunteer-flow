@@ -43,6 +43,7 @@ public class ActivityChangeService {
   private final AuditService audit;
   private final NotificationWriter notifications;
   private final PromotionService promotions;
+  private final ActivityDetailCacheInvalidator cacheInvalidator;
   private final Clock clock;
 
   public ActivityChangeService(
@@ -55,6 +56,7 @@ public class ActivityChangeService {
       AuditService audit,
       NotificationWriter notifications,
       PromotionService promotions,
+      ActivityDetailCacheInvalidator cacheInvalidator,
       Clock clock) {
     this.activities = activities;
     this.positions = positions;
@@ -65,6 +67,7 @@ public class ActivityChangeService {
     this.audit = audit;
     this.notifications = notifications;
     this.promotions = promotions;
+    this.cacheInvalidator = cacheInvalidator;
     this.clock = clock;
   }
 
@@ -186,6 +189,7 @@ public class ActivityChangeService {
                 "ACTIVITY",
                 activityId,
                 "activity-change:" + activityId + ":" + auditId));
+    cacheInvalidator.evictAfterCommit(activityId);
     return new ActivityChangeResult(activity, auditId, notifiedRecipients);
   }
 
@@ -281,6 +285,7 @@ public class ActivityChangeService {
     if (request.capacity() > oldCapacity) {
       promotions.fillAvailableFirstComeSeats(position, actorId, reason);
     }
+    cacheInvalidator.evictAfterCommit(activity.getId());
     return new PositionChangeResult(position, auditId, notifiedRecipients);
   }
 
@@ -326,6 +331,7 @@ public class ActivityChangeService {
             null);
     int notifiedRecipients =
         writePositionChangeNotifications(activity, position, auditId, null, "新增岗位发布");
+    cacheInvalidator.evictAfterCommit(activity.getId());
     return new PositionPublicationResult(position, auditId, notifiedRecipients);
   }
 

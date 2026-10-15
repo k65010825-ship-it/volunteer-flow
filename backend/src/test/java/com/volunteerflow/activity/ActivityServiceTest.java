@@ -33,6 +33,8 @@ class ActivityServiceTest {
   private final RegistrationCycleMapper cycleMapper = mock(RegistrationCycleMapper.class);
   private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
   private final ActivityDetailCache detailCache = mock(ActivityDetailCache.class);
+  private final ActivityDetailCacheInvalidator cacheInvalidator =
+      mock(ActivityDetailCacheInvalidator.class);
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T00:00:00Z"), ZoneOffset.UTC);
   private final ActivityService service =
       new ActivityService(
@@ -45,6 +47,7 @@ class ActivityServiceTest {
           cycleMapper,
           notifications,
           detailCache,
+          cacheInvalidator,
           clock);
 
   @BeforeEach
@@ -283,6 +286,7 @@ class ActivityServiceTest {
     order.verify(activityQuestionMapper).selectIdsByActivityForUpdate(1L);
     order.verify(positionQuestionMapper).selectPositionIdsByActivityForUpdate(1L);
     order.verify(activityMapper).updateById(activity);
+    verify(cacheInvalidator).evictAfterCommit(1L);
   }
 
   @Test
@@ -364,6 +368,7 @@ class ActivityServiceTest {
     order.verify(cycleMapper).selectAffectedUserIdsForActivityCancellation(100L, 1L);
     order.verify(activityMapper).cancelCurrent(1L, 100L, LocalDateTime.now(clock));
     verify(activityMapper, never()).updateById(any(Activity.class));
+    verify(cacheInvalidator).evictAfterCommit(1L);
   }
 
   @Test

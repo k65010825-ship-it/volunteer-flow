@@ -58,6 +58,8 @@ class ActivityChangeServiceTest {
       mock(OrganizationAuthorizationService.class);
   private final AuditService audit = mock(AuditService.class);
   private final PromotionService promotions = mock(PromotionService.class);
+  private final ActivityDetailCacheInvalidator cacheInvalidator =
+      mock(ActivityDetailCacheInvalidator.class);
   private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
   private final Clock clock =
       Clock.fixed(Instant.parse("2026-09-20T10:00:00Z"), ZoneOffset.UTC);
@@ -72,6 +74,7 @@ class ActivityChangeServiceTest {
           audit,
           notifications,
           promotions,
+          cacheInvalidator,
           clock);
 
   @BeforeEach
@@ -142,6 +145,7 @@ class ActivityChangeServiceTest {
     order.verify(activities).selectByIdForUpdate(1L);
     order.verify(positions).selectActiveByActivityForUpdate(100L, 1L);
     order.verify(activities).updatePublishedFields(eq(1L), eq(100L), anyMap());
+    verify(cacheInvalidator).evictAfterCommit(1L);
   }
 
   @Test
@@ -237,6 +241,7 @@ class ActivityChangeServiceTest {
             eq("增加一个名额"));
     order.verify(registrationCycles).selectAffectedUserIds(1L, NOW);
     order.verify(promotions).fillAvailableFirstComeSeats(position, 7L, "增加一个名额");
+    verify(cacheInvalidator).evictAfterCommit(1L);
   }
 
   @Test
@@ -295,6 +300,7 @@ class ActivityChangeServiceTest {
     order.verify(activityQuestions).selectIdsByActivityForUpdate(1L);
     order.verify(positionQuestions).selectPositionIdsByActivityForUpdate(1L);
     order.verify(positions).activateDraft(2L, 100L, 1L);
+    verify(cacheInvalidator).evictAfterCommit(1L);
   }
 
   @Test

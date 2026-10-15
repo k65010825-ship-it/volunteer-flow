@@ -277,7 +277,13 @@ class ActivityConfirmationFinalizationTest {
       when(audits.insert(any(AuditLog.class))).thenAnswer(call -> {
         AuditLog log = call.getArgument(0); auditRows.add(log); transactions.tx().audits.add(log); return 1;
       });
-      finalizer = proxy(new ActivityFinalizationService(activities, cycles, audit));
+      finalizer =
+          proxy(
+              new ActivityFinalizationService(
+                  activities,
+                  cycles,
+                  audit,
+                  mock(com.volunteerflow.activity.ActivityDetailCacheInvalidator.class)));
       review = proxy(new RegistrationReviewService(registrations, cycles, positions, policies, members, offers, authorization, audit, writer, clock));
       promotion = proxy(new PromotionService(policies, members, registrations, cycles, offers, authorization, audit, writer));
       submission = proxy(new RegistrationSubmissionService(policies, members, registrations, cycles, mock(RegistrationAnswerMapper.class),

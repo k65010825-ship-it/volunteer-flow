@@ -1,6 +1,7 @@
 package com.volunteerflow.checkin;
 
 import com.volunteerflow.activity.Activity;
+import com.volunteerflow.activity.ActivityDetailCacheInvalidator;
 import com.volunteerflow.activity.ActivityMapper;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.registration.RegistrationCycleMapper;
@@ -19,9 +20,17 @@ public class ActivityFinalizationService {
   private final ActivityMapper activities;
   private final RegistrationCycleMapper cycles;
   private final AuditService audit;
+  private final ActivityDetailCacheInvalidator cacheInvalidator;
 
-  public ActivityFinalizationService(ActivityMapper activities, RegistrationCycleMapper cycles, AuditService audit) {
-    this.activities = activities; this.cycles = cycles; this.audit = audit;
+  public ActivityFinalizationService(
+      ActivityMapper activities,
+      RegistrationCycleMapper cycles,
+      AuditService audit,
+      ActivityDetailCacheInvalidator cacheInvalidator) {
+    this.activities = activities;
+    this.cycles = cycles;
+    this.audit = audit;
+    this.cacheInvalidator = cacheInvalidator;
   }
 
   /** The conditional claim holds the parent row lock until attendance and audit commit together. */
@@ -42,6 +51,7 @@ public class ActivityFinalizationService {
     // recordChange, unlike record, requires exactly one audit insert; any failure rolls back the FINISHED claim.
     audit.recordChange(activity.getOrganizationId(), null, "activity.finished", "activity", activityId,
         Map.of("status", "PUBLISHED"), Map.of("status", "FINISHED", "confirmedCount", expected), null);
+    cacheInvalidator.evictAfterCommit(activityId);
     return true;
   }
 }

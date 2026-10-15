@@ -6,6 +6,7 @@ import static org.mockito.Mockito.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.volunteerflow.activity.Activity;
+import com.volunteerflow.activity.ActivityDetailCacheInvalidator;
 import com.volunteerflow.activity.ActivityMapper;
 import com.volunteerflow.activity.ActivityMapper.DueActivityId;
 import com.volunteerflow.audit.AuditLog;
@@ -28,6 +29,8 @@ import org.springframework.transaction.support.*;
 class ActivityFinalizationServiceTest {
   private final ActivityMapper activities = mock(ActivityMapper.class);
   private final RegistrationCycleMapper cycles = mock(RegistrationCycleMapper.class);
+  private final ActivityDetailCacheInvalidator cacheInvalidator =
+      mock(ActivityDetailCacheInvalidator.class);
   private final AuditLogMapper logs = mock(AuditLogMapper.class);
   private final List<AuditLog> storedAudits = new ArrayList<>();
   private final LocalDateTime now = LocalDateTime.of(2026, 10, 10, 12, 0);
@@ -38,7 +41,9 @@ class ActivityFinalizationServiceTest {
   @BeforeEach void setup() {
     activity.setId(11L); activity.setOrganizationId(7L); activity.setStatus("PUBLISHED");
     activity.setActivityEndAt(now);
-    service = new ActivityFinalizationService(activities, cycles, new AuditService(logs, new ObjectMapper()));
+    service =
+        new ActivityFinalizationService(
+            activities, cycles, new AuditService(logs, new ObjectMapper()), cacheInvalidator);
   }
 
   @Test void losingClaimPerformsNoReadAttendanceOrAuditWork() {
@@ -75,6 +80,7 @@ class ActivityFinalizationServiceTest {
     order.verify(cycles).countCurrentConfirmedForActivity(7L, 11L);
     order.verify(cycles).finalizeCurrentConfirmedAttendance(7L, 11L);
     order.verify(logs).insert(any(AuditLog.class));
+    verify(cacheInvalidator).evictAfterCommit(11L);
   }
 
   @ParameterizedTest @ValueSource(booleans = {false, true})
