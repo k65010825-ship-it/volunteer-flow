@@ -1,11 +1,12 @@
 package com.volunteerflow.infrastructure.redis;
 
+import com.volunteerflow.activity.ActivityDetailCacheProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration(proxyBeanMethods = false)
-@EnableConfigurationProperties(RedisKeyProperties.class)
+@EnableConfigurationProperties({RedisKeyProperties.class, ActivityDetailCacheProperties.class})
 public class RedisInfrastructureConfig {
 
   @Bean
