@@ -7,11 +7,13 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 /** Best-effort Cache Aside gateway for published activity details. */
 @Component
@@ -19,6 +21,7 @@ public class ActivityDetailCache {
 
   private static final Logger log = LoggerFactory.getLogger(ActivityDetailCache.class);
   private static final int SCHEMA_VERSION = 1;
+  private static final Set<String> REGISTRATION_MODES = Set.of("FIRST_COME", "REVIEW");
 
   private final StringRedisTemplate redis;
   private final ObjectMapper objectMapper;
@@ -107,19 +110,53 @@ public class ActivityDetailCache {
   private void validate(CacheDocument document, Long expectedActivityId) {
     if (document == null
         || document.schemaVersion() != SCHEMA_VERSION
-        || document.activity() == null
-        || !expectedActivityId.equals(document.activity().id())
-        || !"PUBLISHED".equals(document.activity().status())
+        || !validActivity(document.activity(), expectedActivityId)
         || document.positions() == null
         || document.positions().stream()
-            .anyMatch(
-                position ->
-                    position == null
-                        || !expectedActivityId.equals(position.activityId())
-                        || !document.activity().organizationId().equals(position.organizationId())
-                        || !"ACTIVE".equals(position.status()))) {
+            .anyMatch(position -> !validPosition(position, document.activity()))) {
       throw new IllegalArgumentException("Activity detail cache document is invalid");
     }
+  }
+
+  private boolean validActivity(CachedActivity activity, Long expectedActivityId) {
+    return activity != null
+        && expectedActivityId.equals(activity.id())
+        && activity.organizationId() != null
+        && StringUtils.hasText(activity.title())
+        && StringUtils.hasText(activity.description())
+        && StringUtils.hasText(activity.location())
+        && activity.registrationStartAt() != null
+        && activity.registrationEndAt() != null
+        && activity.activityStartAt() != null
+        && activity.activityEndAt() != null
+        && "PUBLISHED".equals(activity.status())
+        && activity.createdBy() != null
+        && activity.publishedAt() != null
+        && activity.version() != null;
+  }
+
+  private boolean validPosition(CachedPosition position, CachedActivity activity) {
+    if (position == null
+        || position.id() == null
+        || !activity.id().equals(position.activityId())
+        || !activity.organizationId().equals(position.organizationId())
+        || !StringUtils.hasText(position.name())
+        || !StringUtils.hasText(position.description())
+        || position.capacity() == null
+        || position.capacity() < 1
+        || !REGISTRATION_MODES.contains(position.registrationMode())
+        || position.promotionTimeoutMinutes() == null
+        || position.promotionTimeoutMinutes() < 30
+        || position.promotionTimeoutMinutes() > 720
+        || position.nextWaitlistSequence() == null
+        || position.nextWaitlistSequence() < 1
+        || !"ACTIVE".equals(position.status())
+        || position.version() == null) {
+      return false;
+    }
+    return (position.serviceStartAt() == null) == (position.serviceEndAt() == null)
+        && (position.serviceStartAt() == null
+            || position.serviceStartAt().isBefore(position.serviceEndAt()));
   }
 
   private record CacheDocument(

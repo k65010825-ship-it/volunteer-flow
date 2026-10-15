@@ -9,6 +9,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.volunteerflow.infrastructure.redis.RedisKeyFactory;
 import com.volunteerflow.infrastructure.redis.RedisKeyProperties;
@@ -100,6 +101,32 @@ class ActivityDetailCacheTest {
   void unsupportedSchemaIsTreatedAsMissAndRemoved() {
     when(values.get("volunteerflow:test:activity-detail:10:v1"))
         .thenReturn("{\"schemaVersion\":2}");
+
+    assertThat(cache.get(10L)).isEmpty();
+
+    verify(redis).delete("volunteerflow:test:activity-detail:10:v1");
+  }
+
+  @Test
+  void incompletePublishedActivityIsTreatedAsMissInsteadOfBreakingAuthorization() {
+    when(values.get("volunteerflow:test:activity-detail:10:v1"))
+        .thenReturn(
+            "{\"schemaVersion\":1,\"activity\":{\"id\":10,\"status\":\"PUBLISHED\"},\"positions\":[]}");
+
+    assertThat(cache.get(10L)).isEmpty();
+
+    verify(redis).delete("volunteerflow:test:activity-detail:10:v1");
+  }
+
+  @Test
+  void incompleteActivePositionIsTreatedAsMiss() throws Exception {
+    ArgumentCaptor<String> json = ArgumentCaptor.forClass(String.class);
+    cache.put(publishedDetail());
+    verify(values).set(anyString(), json.capture(), any(Duration.class));
+    ObjectNode document = (ObjectNode) objectMapper.readTree(json.getValue());
+    ((ObjectNode) document.withArray("positions").get(0)).putNull("name");
+    when(values.get("volunteerflow:test:activity-detail:10:v1"))
+        .thenReturn(objectMapper.writeValueAsString(document));
 
     assertThat(cache.get(10L)).isEmpty();
 
