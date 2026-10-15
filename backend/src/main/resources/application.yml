@@ -30,6 +30,10 @@ volunteerflow:
       scan-delay: ${ACTIVITY_FINALIZATION_SCAN_DELAY:30s}
       batch-size: ${ACTIVITY_FINALIZATION_BATCH_SIZE:100}
       max-batches-per-run: ${ACTIVITY_FINALIZATION_MAX_BATCHES_PER_RUN:10}
+    dynamic-code:
+      window: ${DYNAMIC_CHECKIN_WINDOW:30s}
+      ttl: ${DYNAMIC_CHECKIN_TTL:45s}
+      token-bytes: ${DYNAMIC_CHECKIN_TOKEN_BYTES:24}
   registration:
     promotion-expiry:
       scan-delay: ${PROMOTION_EXPIRY_SCAN_DELAY:30s}
