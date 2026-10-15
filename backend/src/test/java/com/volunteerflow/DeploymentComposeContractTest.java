@@ -47,6 +47,7 @@ class DeploymentComposeContractTest {
         .containsEntry("DB_USERNAME", "${DB_USERNAME:?set DB_USERNAME}")
         .containsEntry("DB_PASSWORD", "${DB_PASSWORD:?set DB_PASSWORD}")
         .containsEntry("JWT_SECRET", "${JWT_SECRET:?set JWT_SECRET}")
+        .containsEntry("SPRING_FLYWAY_ENABLED", "${SPRING_FLYWAY_ENABLED:?set SPRING_FLYWAY_ENABLED}")
         .containsEntry("BOOTSTRAP_ADMIN_USERNAME", "${BOOTSTRAP_ADMIN_USERNAME:-}")
         .containsEntry("BOOTSTRAP_ADMIN_PASSWORD", "${BOOTSTRAP_ADMIN_PASSWORD:-}")
         .containsEntry("BOOTSTRAP_ADMIN_REAL_NAME", "${BOOTSTRAP_ADMIN_REAL_NAME:-}")
@@ -61,6 +62,7 @@ class DeploymentComposeContractTest {
                 "DB_USERNAME",
                 "DB_PASSWORD",
                 "JWT_SECRET",
+                "SPRING_FLYWAY_ENABLED",
                 "BOOTSTRAP_ADMIN_USERNAME",
                 "BOOTSTRAP_ADMIN_PASSWORD",
                 "BOOTSTRAP_ADMIN_REAL_NAME",
@@ -99,6 +101,7 @@ class DeploymentComposeContractTest {
         .contains("DB_USERNAME='replace-with-database-user'")
         .contains("DB_PASSWORD='replace-with-database-password'")
         .contains("JWT_SECRET='replace-with-standard-base64-of-at-least-32-random-bytes'")
+        .contains("SPRING_FLYWAY_ENABLED=false")
         .contains("standard Base64 encoding of at least 32 random bytes")
         .contains("BOOTSTRAP_ADMIN_USERNAME=''")
         .contains("BOOTSTRAP_ADMIN_PASSWORD=''")
@@ -122,9 +125,21 @@ class DeploymentComposeContractTest {
         .contains("/notifications")
         .contains("SPA fallback failed")
         .contains("-TimeoutSec")
+        .contains("-UseBasicParsing")
         .doesNotContain("Authorization")
         .doesNotContain("$env:")
         .doesNotContain("Format-List");
+    assertThat(countOccurrences(smoke, "-UseBasicParsing")).isEqualTo(2);
+  }
+
+  private static int countOccurrences(String value, String token) {
+    int count = 0;
+    int offset = 0;
+    while ((offset = value.indexOf(token, offset)) >= 0) {
+      count++;
+      offset += token.length();
+    }
+    return count;
   }
 
   @SuppressWarnings("unchecked")

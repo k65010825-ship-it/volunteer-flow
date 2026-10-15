@@ -82,6 +82,7 @@ class Stage3E2eFixtureContractTest {
             + "JWT_SECRET='"
             + jwtSecret
             + "'\n"
+            + "SPRING_FLYWAY_ENABLED=false\n"
             + "BOOTSTRAP_ADMIN_USERNAME='fixture-bootstrap'\n"
             + "BOOTSTRAP_ADMIN_PASSWORD='Fixture$#Bootstrap1'\n"
             + "BOOTSTRAP_ADMIN_REAL_NAME='Fixture $Admin #1'\n"
@@ -101,10 +102,12 @@ class Stage3E2eFixtureContractTest {
         mavenStub,
         "param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Remaining)\n"
             + "$required = @('DB_HOST','DB_PORT','DB_NAME','DB_USERNAME','DB_PASSWORD','JWT_SECRET',"
+            + "'SPRING_FLYWAY_ENABLED',"
             + "'BOOTSTRAP_ADMIN_USERNAME','BOOTSTRAP_ADMIN_PASSWORD','BOOTSTRAP_ADMIN_REAL_NAME',"
             + "'BOOTSTRAP_ADMIN_STUDENT_NUMBER','BOOTSTRAP_ADMIN_CONTACT')\n"
             + "foreach ($name in $required) { if ($null -eq [Environment]::GetEnvironmentVariable($name)) { exit 91 } }\n"
             + "if ($env:DB_PASSWORD -cne 'fixture$#password') { exit 92 }\n"
+            + "if ($env:SPRING_FLYWAY_ENABLED -cne 'false') { exit 96 }\n"
             + "if ($env:BOOTSTRAP_ADMIN_PASSWORD -cne 'Fixture$#Bootstrap1') { exit 95 }\n"
             + "if ($env:BOOTSTRAP_ADMIN_REAL_NAME -cne 'Fixture $Admin #1') { exit 93 }\n"
             + "if ($env:BOOTSTRAP_ADMIN_CONTACT -cne 'ops$#@example.invalid') { exit 94 }\n"
@@ -135,6 +138,7 @@ class Stage3E2eFixtureContractTest {
             "DB_USERNAME",
             "DB_PASSWORD",
             "JWT_SECRET",
+            "SPRING_FLYWAY_ENABLED",
             "BOOTSTRAP_ADMIN_USERNAME",
             "BOOTSTRAP_ADMIN_PASSWORD",
             "BOOTSTRAP_ADMIN_REAL_NAME",

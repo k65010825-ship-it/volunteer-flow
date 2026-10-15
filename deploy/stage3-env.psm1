@@ -8,6 +8,7 @@ function Get-Stage3ManagedEnvironmentNames {
     'DB_USERNAME',
     'DB_PASSWORD',
     'JWT_SECRET',
+    'SPRING_FLYWAY_ENABLED',
     'BOOTSTRAP_ADMIN_USERNAME',
     'BOOTSTRAP_ADMIN_PASSWORD',
     'BOOTSTRAP_ADMIN_REAL_NAME',
@@ -91,6 +92,11 @@ function Read-Stage3EnvironmentFile {
   }
   if ($jwtBytes.Length -lt 32) {
     throw 'JWT_SECRET must decode to at least 32 bytes'
+  }
+
+  $flywayEnabled = [string]$values['SPRING_FLYWAY_ENABLED']
+  if ($flywayEnabled -cnotmatch '^(true|false)$') {
+    throw 'SPRING_FLYWAY_ENABLED must be true or false'
   }
 
   $managedValues = @{}

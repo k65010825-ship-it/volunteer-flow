@@ -4,7 +4,7 @@
 
 ## 1. 当前验证边界
 
-截至 2026-10-13，仓库已经具备 Java 17 后端镜像、Vue/Nginx 前端镜像、两服务 Compose、公开入口冒烟脚本和 Playwright 场景的源代码。当前开发主机没有 Docker CLI，也没有可直接使用的 Nginx/Compose 运行环境，因此以下项目仍待在可用 Docker 主机执行：
+截至 2026-10-15，仓库已经具备 Java 17 后端镜像、Vue/Nginx 前端镜像、两服务 Compose、公开入口冒烟脚本和 Playwright 场景的源代码。当前开发主机没有 Docker CLI，也没有可直接使用的 Nginx/Compose 运行环境，因此以下项目仍待在可用 Docker 主机执行：
 
 - 后端、前端镜像的真实构建；
 - 容器内 Java 17 与 Nginx 配置检查；
@@ -20,7 +20,7 @@
 
 - Windows PowerShell 5.1 或 PowerShell 7；当前 E2E wrapper 调用 `mvnw.cmd`，不支持直接从 Linux shell 运行；
 - Java 17，供 Maven fixture 的 seed/cleanup 测试进程使用；
-- Node.js 22 与 npm，并已在 `frontend` 执行 `npm ci`；
+- Node.js 22.13.0 或更高版本与 npm，并已在 `frontend` 执行 `npm ci`；
 - Chromium；首次验收前在 `frontend` 执行 `npx playwright install chromium`；
 - Docker Engine 或 Docker Desktop，以及 Docker Compose v2；
 - 能拉取 Eclipse Temurin 17、Node 22 和 Nginx 1.27 基础镜像；
@@ -47,12 +47,15 @@ git check-ignore deploy/.env
 - `DB_PORT`：外部 MySQL 对部署主机/容器开放的真实端口；
 - `DB_NAME`、`DB_USERNAME`、`DB_PASSWORD`：目标库连接信息；
 - `JWT_SECRET`：至少 32 个随机字节的标准 Base64 编码；32 字节通常编码为 44 个字符；
+- `SPRING_FLYWAY_ENABLED`：本模板针对已经完成 V1 至 V9 迁移的恢复库，预检通过后保持 `false`；
 - `APP_PORT`：Nginx 对外端口，默认 `8088`；
 - `BOOTSTRAP_ADMIN_*`：仅在确实需要初始化管理员时填写，否则保持为空。
 
 自由文本、密码和密钥应保留模板中的单引号。这样 `$` 等特殊字符不会再次被 Compose 插值。不要把真实值写入 README、命令历史、截图、工单或 Git；也不要执行会把完整渲染结果打印到终端的 `docker compose config`。
 
 环境文件解析器只支持整行注释，不支持行尾内联注释；需要包含空格、`#`、`$` 等字符的值必须使用单引号。后续所有 Compose 操作都必须通过 `run-stage3-stack.ps1`：即使调用者进程已经设置同名变量，该脚本也会临时使用同一份 `deploy/.env` 覆盖受管变量，并在命令结束或失败后恢复调用者环境。这样 Compose 与 Maven fixture 使用同一份 `deploy/.env`，避免 shell 环境变量优先级导致二者连接不同数据库。
+
+本模板中的 `SPRING_FLYWAY_ENABLED=false` 只适用于已经完成 V1 至 V9 迁移的恢复库。启动前必须核对目标库结构、备份状态与 `flyway_schema_history`，确认现有结构确实与当前应用兼容；不得删除、修改或伪造 Flyway 历史。全新数据库应按其独立建库与迁移策略决定是否启用 Flyway，不能照抄恢复库的 `false`。
 
 ## 4. 安全预检
 
@@ -102,6 +105,7 @@ Playwright 运行前还需要：
 - Chromium 已通过 `npx playwright install chromium` 安装；
 - `deploy/.env` 存在且所有必填占位符已经替换；wrapper 会安全解析单引号值，并拒绝缺失项、占位符、无效端口或不能解码到至少 32 字节的 JWT Base64；
 - Compose 与 Maven fixture 使用同一份 `deploy/.env`。wrapper 把其中的数据库、JWT 和 bootstrap 值仅注入 seed/cleanup 子进程，并在 `finally` 中恢复调用者原有环境；它不会打印这些值。
+- Compose 后端与 Maven fixture 还会接收同一个 `SPRING_FLYWAY_ENABLED`；恢复库示例必须为 `false`，避免一个进程迁移而另一个进程跳过迁移。
 
 执行完整场景：
 

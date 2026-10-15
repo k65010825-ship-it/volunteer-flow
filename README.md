@@ -241,7 +241,7 @@ VolunteerFlow/
 
 回归命令：后端执行 `.\mvnw.cmd clean verify`；前端依次执行 `npm test`、`npm run typecheck` 和 `npm run build`。
 
-演示部署使用仓库根目录的 `deploy/`，不会创建或管理 MySQL。复制 `deploy/.env.example` 为被 Git 忽略的 `deploy/.env`，填写容器可达的外部 MySQL 地址、真实端口及标准 Base64 JWT 密钥后再执行。所有 Compose 操作统一通过 `deploy/run-stage3-stack.ps1`，脚本会隔离调用者已有的同名环境变量；E2E wrapper 当前要求 Windows PowerShell、Java 17、Node.js/npm 和 Chromium，并保证 Compose 与 Maven fixture 使用同一份环境文件。完整命令、安全边界、停止和回滚步骤见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。
+演示部署使用仓库根目录的 `deploy/`，不会创建或管理 MySQL。复制 `deploy/.env.example` 为被 Git 忽略的 `deploy/.env`，填写容器可达的外部 MySQL 地址、真实端口、标准 Base64 JWT 密钥及明确的 Flyway 策略后再执行。恢复库示例使用 `SPRING_FLYWAY_ENABLED=false`，但必须先核对库结构与 `flyway_schema_history`；全新数据库不能直接沿用该值。所有 Compose 操作统一通过 `deploy/run-stage3-stack.ps1`，脚本会隔离调用者已有的同名环境变量；E2E wrapper 当前要求 Windows PowerShell、Java 17、Node.js 22.13.0 或更高版本、npm 和 Chromium，并保证 Compose 与 Maven fixture 使用同一份环境文件。完整命令、安全边界、停止和回滚步骤见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。
 
 ## 阶段 2 已验证的能力
 
@@ -308,11 +308,11 @@ $env:SPRING_FLYWAY_ENABLED = 'false'
 
 ## 阶段 3C 部署源码验证
 
-2026-10-13 在当前 Windows 开发主机完成了部署源码的静态契约、后端/前端回归、类型检查、生产构建、Playwright 测试发现和 PowerShell 解析检查。Docker 镜像构建、Nginx 配置实测、Compose 启动、公开入口冒烟和浏览器 E2E 仍待在可用 Docker 主机执行；这些待办没有被写成成功结果。
+2026-10-15 在当前 Windows 开发主机完成了部署源码的静态契约、后端/前端回归、类型检查、生产构建、Playwright 测试发现和 PowerShell 解析检查。Docker 镜像构建、Nginx 配置实测、Compose 启动、公开入口冒烟和浏览器 E2E 仍待在可用 Docker 主机执行；这些待办没有被写成成功结果。
 
-| 本地检查 | 2026-10-13 实测结果 |
+| 本地检查 | 2026-10-15 实测结果 |
 |---|---|
-| 后端 `clean verify` | 604 个测试通过，0 失败、0 错误、0 跳过，JAR 重新打包成功 |
+| 后端 `clean verify` | 606 个测试通过，0 失败、0 错误、0 跳过，JAR 重新打包成功 |
 | 前端 Vitest | 16 个测试文件、142 个测试通过（`--maxWorkers=2`） |
 | 前端 TypeScript / Vite | 类型检查通过；生产构建转换 118 个模块并成功生成 `dist` |
 | Playwright `--list` | Chromium 项目发现 1 个测试文件中的 2 个场景；只完成发现/编译，未执行浏览器流程 |

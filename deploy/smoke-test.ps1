@@ -33,6 +33,7 @@ try {
   $root = Invoke-WebRequest `
     -Method Get `
     -Uri "$normalizedBaseUrl/" `
+    -UseBasicParsing `
     -TimeoutSec 15 `
     -ErrorAction Stop
 } catch {
@@ -47,6 +48,7 @@ try {
   $deep = Invoke-WebRequest `
     -Method Get `
     -Uri "$normalizedBaseUrl/notifications" `
+    -UseBasicParsing `
     -TimeoutSec 15 `
     -ErrorAction Stop
 } catch {

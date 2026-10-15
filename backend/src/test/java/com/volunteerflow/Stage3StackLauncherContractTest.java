@@ -132,6 +132,18 @@ class Stage3StackLauncherContractTest {
     assertThat(inlineOutput)
         .contains("Unquoted environment value for APP_PORT contains unsupported characters")
         .doesNotContain("file$#password", jwtSecret());
+
+    Path invalidFlyway = writeEnvironment(deploy.resolve("invalid-flyway.env"));
+    Files.writeString(
+        invalidFlyway,
+        Files.readString(invalidFlyway)
+            .replace("SPRING_FLYWAY_ENABLED=false", "SPRING_FLYWAY_ENABLED=yes"));
+    Process flywayProcess = parserProcess(powershell, driver, module, invalidFlyway);
+    String flywayOutput = waitFor(flywayProcess);
+    assertThat(flywayProcess.exitValue()).as(flywayOutput).isNotZero();
+    assertThat(flywayOutput)
+        .contains("SPRING_FLYWAY_ENABLED must be true or false")
+        .doesNotContain("file$#password", jwtSecret());
   }
 
   @Test
@@ -152,6 +164,7 @@ class Stage3StackLauncherContractTest {
         "param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Remaining)\n"
             + "if ($env:DB_PASSWORD -cne 'file$#password') { exit 91 }\n"
             + "if ($env:APP_PORT -cne '18088') { exit 92 }\n"
+            + "if ($env:SPRING_FLYWAY_ENABLED -cne 'false') { exit 93 }\n"
             + "Add-Content -LiteralPath $env:S3_STACK_CAPTURE -Value ($Remaining -join ' ')\n"
             + "exit [int]$env:S3_DOCKER_EXIT\n");
     Path commands = Files.createDirectories(temporaryDirectory.resolve("commands"));
@@ -304,6 +317,7 @@ class Stage3StackLauncherContractTest {
             + "DB_USERNAME='file-user'\n"
             + "DB_PASSWORD='file$#password'\n"
             + "JWT_SECRET='" + jwtSecret() + "'\n"
+            + "SPRING_FLYWAY_ENABLED=false\n"
             + "BOOTSTRAP_ADMIN_USERNAME='file-bootstrap'\n"
             + "BOOTSTRAP_ADMIN_PASSWORD='File$#Bootstrap1'\n"
             + "BOOTSTRAP_ADMIN_REAL_NAME='File $Admin #1'\n"
@@ -316,6 +330,7 @@ class Stage3StackLauncherContractTest {
   private static List<String> managedNames() {
     return List.of(
         "DB_HOST", "DB_PORT", "DB_NAME", "DB_USERNAME", "DB_PASSWORD", "JWT_SECRET",
+        "SPRING_FLYWAY_ENABLED",
         "BOOTSTRAP_ADMIN_USERNAME", "BOOTSTRAP_ADMIN_PASSWORD", "BOOTSTRAP_ADMIN_REAL_NAME",
         "BOOTSTRAP_ADMIN_STUDENT_NUMBER", "BOOTSTRAP_ADMIN_CONTACT", "APP_PORT");
   }
