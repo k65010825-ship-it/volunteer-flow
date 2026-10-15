@@ -39,8 +39,22 @@ switch ($Action) {
 
 $composeExitCode = 0
 Invoke-WithStage3Environment -Environment $composeEnvironment -Operation {
-  & docker @composeArguments
-  $script:composeExitCode = $LASTEXITCODE
+  $nativeErrorPreference = Get-Variable `
+    -Name PSNativeCommandUseErrorActionPreference `
+    -ErrorAction SilentlyContinue
+  if ($null -ne $nativeErrorPreference) {
+    $previousNativeErrorPreference = $nativeErrorPreference.Value
+    Set-Variable -Name PSNativeCommandUseErrorActionPreference -Value $false
+  }
+
+  try {
+    & docker @composeArguments
+    $script:composeExitCode = $LASTEXITCODE
+  } finally {
+    if ($null -ne $nativeErrorPreference) {
+      Set-Variable -Name PSNativeCommandUseErrorActionPreference -Value $previousNativeErrorPreference
+    }
+  }
 }
 
 exit $composeExitCode

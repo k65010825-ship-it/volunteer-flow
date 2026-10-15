@@ -171,6 +171,71 @@ class Stage3StackLauncherContractTest {
     assertThat(failureOutput).doesNotContain("file$#password", jwtSecret());
   }
 
+  @Test
+  void stackLauncherPropagatesDockerExitCodeAndRestoresPwshNativeErrorPreference()
+      throws Exception {
+    Path powershell = requirePowerShell7();
+    Path root = Files.createDirectories(temporaryDirectory.resolve("pwsh7-stack-test"));
+    Path deploy = Files.createDirectories(root.resolve("deploy"));
+    Files.copy(
+        REPOSITORY_ROOT.resolve("deploy/stage3-env.psm1"), deploy.resolve("stage3-env.psm1"));
+    Files.copy(
+        REPOSITORY_ROOT.resolve("deploy/run-stage3-stack.ps1"),
+        deploy.resolve("run-stage3-stack.ps1"));
+    Files.writeString(deploy.resolve("docker-compose.yml"), "services: {}\n");
+    Path envFile = writeEnvironment(deploy.resolve(".env"));
+    Path capture = temporaryDirectory.resolve("pwsh7-docker-capture.txt");
+    Path dockerStub = temporaryDirectory.resolve("pwsh7-docker-stub.ps1");
+    Files.writeString(
+        dockerStub,
+        "param([Parameter(ValueFromRemainingArguments=$true)][string[]]$Remaining)\n"
+            + "Add-Content -LiteralPath $env:S3_STACK_CAPTURE -Value ($Remaining -join ' ')\n"
+            + "exit 23\n");
+    Path commands = Files.createDirectories(temporaryDirectory.resolve("pwsh7-commands"));
+    Files.writeString(
+        commands.resolve("docker.cmd"),
+        "@echo off\r\n"
+            + "pwsh.exe -NoLogo -NoProfile -File \"%S3_DOCKER_STUB%\" %*\r\n"
+            + "exit /b %errorlevel%\r\n");
+    Path driver = temporaryDirectory.resolve("pwsh7-stack-driver.ps1");
+    Files.writeString(
+        driver,
+        "param([string]$Stack,[string]$EnvFile)\n"
+            + "$PSNativeCommandUseErrorActionPreference = $true\n"
+            + "& $Stack -Action Config -ComposeEnvFile $EnvFile\n"
+            + "$stackExitCode = $LASTEXITCODE\n"
+            + "if ($PSNativeCommandUseErrorActionPreference -ne $true) { exit 97 }\n"
+            + "exit $stackExitCode\n");
+
+    ProcessBuilder builder =
+        new ProcessBuilder(
+                powershell.toString(),
+                "-NoLogo",
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                driver.toString(),
+                "-Stack",
+                deploy.resolve("run-stage3-stack.ps1").toString(),
+                "-EnvFile",
+                envFile.toString())
+            .redirectErrorStream(true);
+    Map<String, String> environment = builder.environment();
+    environment.put("PATH", commands + ";" + environment.get("PATH"));
+    environment.put("S3_DOCKER_STUB", dockerStub.toString());
+    environment.put("S3_STACK_CAPTURE", capture.toString());
+
+    Process process = builder.start();
+    String output = waitFor(process);
+
+    assertThat(process.exitValue()).as(output).isEqualTo(23);
+    assertThat(Files.readAllLines(capture))
+        .singleElement()
+        .asString()
+        .contains("compose", "config", "--quiet");
+    assertThat(output).doesNotContain("file$#password", jwtSecret());
+  }
+
   private Process stackProcess(
       Path powershell,
       Path deploy,
@@ -269,6 +334,29 @@ class Stage3StackLauncherContractTest {
         .filter(Files::isRegularFile)
         .findFirst()
         .orElseThrow();
+  }
+
+  private static Path requirePowerShell7() {
+    Assumptions.assumeTrue(System.getProperty("os.name").toLowerCase().contains("windows"));
+    return List.of(
+            Path.of("C:\\Program Files\\PowerShell\\7\\pwsh.exe"),
+            Path.of(
+                System.getProperty("user.home"),
+                ".cache",
+                "codex-runtimes",
+                "codex-primary-runtime",
+                "dependencies",
+                "native",
+                "powershell",
+                "pwsh.exe"))
+        .stream()
+        .filter(Files::isRegularFile)
+        .findFirst()
+        .orElseGet(
+            () -> {
+              Assumptions.assumeTrue(false, "PowerShell 7 is required");
+              throw new IllegalStateException("unreachable");
+            });
   }
 
   private static Path locateRepositoryRoot() {
