@@ -9,10 +9,12 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Objects;
+import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 @Service
+@Profile("!test")
 public class DynamicCheckinCodeService {
   private final CheckinSessionMapper sessions;
   private final ActivityMapper activities;
