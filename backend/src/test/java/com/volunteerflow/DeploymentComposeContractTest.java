@@ -48,6 +48,15 @@ class DeploymentComposeContractTest {
         .containsEntry("DB_PASSWORD", "${DB_PASSWORD:?set DB_PASSWORD}")
         .containsEntry("JWT_SECRET", "${JWT_SECRET:?set JWT_SECRET}")
         .containsEntry("SPRING_FLYWAY_ENABLED", "${SPRING_FLYWAY_ENABLED:?set SPRING_FLYWAY_ENABLED}")
+        .containsEntry("REDIS_HOST", "${REDIS_HOST:?set REDIS_HOST}")
+        .containsEntry("REDIS_PORT", "${REDIS_PORT:?set REDIS_PORT}")
+        .containsEntry("REDIS_PASSWORD", "${REDIS_PASSWORD:-}")
+        .containsEntry("REDIS_DATABASE", "${REDIS_DATABASE:-2}")
+        .containsEntry("REDIS_CONNECT_TIMEOUT", "${REDIS_CONNECT_TIMEOUT:-1s}")
+        .containsEntry("REDIS_COMMAND_TIMEOUT", "${REDIS_COMMAND_TIMEOUT:-2s}")
+        .containsEntry("DYNAMIC_CHECKIN_WINDOW", "${DYNAMIC_CHECKIN_WINDOW:-30s}")
+        .containsEntry("DYNAMIC_CHECKIN_TTL", "${DYNAMIC_CHECKIN_TTL:-45s}")
+        .containsEntry("DYNAMIC_CHECKIN_TOKEN_BYTES", "${DYNAMIC_CHECKIN_TOKEN_BYTES:-24}")
         .containsEntry("BOOTSTRAP_ADMIN_USERNAME", "${BOOTSTRAP_ADMIN_USERNAME:-}")
         .containsEntry("BOOTSTRAP_ADMIN_PASSWORD", "${BOOTSTRAP_ADMIN_PASSWORD:-}")
         .containsEntry("BOOTSTRAP_ADMIN_REAL_NAME", "${BOOTSTRAP_ADMIN_REAL_NAME:-}")
@@ -63,6 +72,15 @@ class DeploymentComposeContractTest {
                 "DB_PASSWORD",
                 "JWT_SECRET",
                 "SPRING_FLYWAY_ENABLED",
+                "REDIS_HOST",
+                "REDIS_PORT",
+                "REDIS_PASSWORD",
+                "REDIS_DATABASE",
+                "REDIS_CONNECT_TIMEOUT",
+                "REDIS_COMMAND_TIMEOUT",
+                "DYNAMIC_CHECKIN_WINDOW",
+                "DYNAMIC_CHECKIN_TTL",
+                "DYNAMIC_CHECKIN_TOKEN_BYTES",
                 "BOOTSTRAP_ADMIN_USERNAME",
                 "BOOTSTRAP_ADMIN_PASSWORD",
                 "BOOTSTRAP_ADMIN_REAL_NAME",
@@ -102,6 +120,11 @@ class DeploymentComposeContractTest {
         .contains("DB_PASSWORD='replace-with-database-password'")
         .contains("JWT_SECRET='replace-with-standard-base64-of-at-least-32-random-bytes'")
         .contains("SPRING_FLYWAY_ENABLED=false")
+        .contains("REDIS_HOST='replace-with-vm-host-or-reachable-redis-dns'")
+        .contains("REDIS_PORT='replace-with-redis-host-port'")
+        .contains("DYNAMIC_CHECKIN_WINDOW=30s")
+        .contains("DYNAMIC_CHECKIN_TTL=45s")
+        .contains("DYNAMIC_CHECKIN_TOKEN_BYTES=24")
         .contains("standard Base64 encoding of at least 32 random bytes")
         .contains("BOOTSTRAP_ADMIN_USERNAME=''")
         .contains("BOOTSTRAP_ADMIN_PASSWORD=''")

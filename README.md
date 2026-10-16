@@ -2,7 +2,7 @@
 
 面向班级、学生社团和校园志愿组织的活动报名、岗位招募、候补递补、通知与签到协同平台。
 
-> 当前状态：阶段 1、阶段 2，以及阶段 3 的站内通知、正式活动变更、签到和出勤核心功能已实现，并通过配置的 MySQL 实库验收；Nginx/Docker 部署与 Playwright 源码已经准备，但真实镜像、公开入口和浏览器端到端验收仍待在可用 Docker 主机执行。下文“第一版功能范围”同时包含已经实现的能力和后续建设目标。
+> 当前状态：阶段 1、阶段 2，以及阶段 3 的站内通知、正式活动变更、签到和出勤核心功能已实现，并通过配置的 MySQL 实库验收；阶段 4B 动态签到二维码的后端、前端和自动化测试源码已完成。Nginx/Docker 公开入口、真实手机扫描和虚拟机 Redis 故障恢复仍待在可用部署主机执行，不能把源码测试写成现场验收结果。下文“第一版功能范围”同时包含已经实现的能力和后续建设目标。
 
 ## 为什么做这个项目
 
@@ -193,7 +193,7 @@ VolunteerFlow/
 
 ## 当前状态
 
-截至 2026-10-13：
+截至 2026-10-16：
 
 - [x] 明确真实问题、目标用户和第一版范围。
 - [x] 完成活动岗位、报名、候补、RBAC、签到和通知设计。
@@ -209,8 +209,10 @@ VolunteerFlow/
 - [x] 阶段 2：成员报名状态页、管理员审核页及 MySQL 并发验收。
 - [x] 阶段 3：站内通知、正式活动变更、普通签到码、人工补签、活动结束归档与出勤统计。
 - [x] 阶段 3：Java 17 后端镜像、Vue/Nginx 镜像、外部 MySQL Compose、冒烟与 Playwright 验收源码。
+- [x] 阶段 4B：Redis 轮换凭证、动态二维码、事务外校验、提交后清理及成员确认流程源码与自动化测试。
 - [ ] 阶段 3：Docker 镜像构建、Nginx 配置实测、Compose 启动、公开入口冒烟和浏览器 E2E 仍待在可用 Docker 主机执行。
-- [ ] 阶段 4–6：Redis/Kafka 工程增强、监控及真实用户试用。
+- [ ] 阶段 4B：真实手机、Nginx 和现有虚拟机 Redis 联调与故障恢复证据。
+- [ ] 阶段 4–6：其余限流/压测、Kafka、监控及真实用户试用。
 
 正式规格见：[VolunteerFlow 修订版设计文档](docs/specs/2026-09-14-volunteerflow-revised-design.md)。
 
@@ -304,7 +306,7 @@ $env:SPRING_FLYWAY_ENABLED = 'false'
 
 测试会先只读确认目标数据库、`attendance_status` 字段和结束扫描索引，再生成隔离数据。全局活动结束任务和递补过期任务在测试中被替换为空操作；测试只对本轮生成的活动和邀请 ID 调用真实服务。清理不使用 `TRUNCATE`、全表删除或前缀模糊删除。
 
-本次结果属于服务层与真实 MySQL 验收，不是浏览器端到端、真实用户试用或性能测试；未验证 Redis 动态签到码、限流和 Kafka 投递，这些仍分别属于阶段 4 和阶段 5。
+本次结果属于服务层与真实 MySQL 验收，不是浏览器端到端、真实用户试用或性能测试；动态签到二维码后来已完成源码与自动化测试，但真实 Redis/手机联调、限流和 Kafka 投递仍未验证。
 
 ## 阶段 3C 部署源码验证
 
@@ -320,6 +322,24 @@ $env:SPRING_FLYWAY_ENABLED = 'false'
 | 本地部署环境 | `deploy/.env` 不存在且被 Git 忽略；当前主机未发现 Docker 或 Nginx CLI |
 
 当前主机的 Docker/Nginx/浏览器运行门禁未完成，因此这部分不代表真实用户试用、性能测试、Redis 或 Kafka 已完成。部署主机上的执行顺序与证据要求见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。
+
+## 阶段 4B 动态签到二维码
+
+动态会话使用 Redis 保存 30 秒轮换、45 秒绝对有效的随机凭证。管理员页面按服务端
+`expiresAt` 临近时间获取下一张二维码；二维码中的 `window` 和 `token` 只放在 URL
+Fragment 中，成员页面读取后先清除浏览器历史，再等待本人确认。Redis 校验发生在 MySQL
+事务外，数据库锁取得后再次检查 proof 过期时间；重复签到仍由 MySQL 唯一约束处理。
+
+源码级验证覆盖 Redis 故障返回 `503 DYNAMIC_CHECKIN_UNAVAILABLE`、无效凭证统一 422、
+会话关闭后提交成功才清理键、回滚不清理，以及人工补签不依赖 Redis。部署参数、接口、
+故障回退和真实验证步骤见[阶段 4B Redis 动态签到操作手册](docs/operations/stage-4-redis.md)。
+当前结果不代表真实手机扫码、现有虚拟机 Redis、Nginx 请求日志或现场多用户流程已经验收。
+
+| 2026-10-16 本地门禁 | 结果 |
+|---|---|
+| Java 17 后端 `mvn test` | 660 个测试通过，0 失败、0 错误、0 跳过 |
+| Vue/Vitest | 17 个测试文件、152 个测试通过 |
+| TypeScript/Vite | 类型检查通过，生产构建转换 169 个模块并生成 `dist` |
 
 ## 测试与验收目标
 
@@ -346,6 +366,7 @@ $env:SPRING_FLYWAY_ENABLED = 'false'
 ## 文档
 
 - [阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)
+- [阶段 4B Redis 动态签到操作手册](docs/operations/stage-4-redis.md)
 - [修订版完整设计规格](docs/specs/2026-09-14-volunteerflow-revised-design.md)
 - [早期设计规格](docs/specs/2026-08-06-campus-volunteer-platform-design.md)
 - [项目交接说明](PROJECT_CONTEXT.md)
