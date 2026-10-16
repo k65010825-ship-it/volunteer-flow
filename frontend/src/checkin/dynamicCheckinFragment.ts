@@ -38,6 +38,10 @@ export function consumeDynamicCheckinFragment(
   const parameters = new URLSearchParams(fragment);
   const rawWindow = parameters.get("window");
   const token = parameters.get("token");
+  // Credential-shaped fragments are removed even when malformed so secrets never linger in history.
+  if (parameters.has("window") || parameters.has("token")) {
+    history.replaceState(null, "", `${location.pathname}${location.search}`);
+  }
   if (!rawWindow || !/^\d+$/.test(rawWindow) || !token || !/^[A-Za-z0-9_-]+$/.test(token)) {
     return null;
   }
@@ -47,6 +51,5 @@ export function consumeDynamicCheckinFragment(
     return null;
   }
 
-  history.replaceState(null, "", `${location.pathname}${location.search}`);
   return { windowEpochSecond, token };
 }

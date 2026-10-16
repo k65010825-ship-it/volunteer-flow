@@ -128,6 +128,16 @@ class CheckinServiceTest {
     unchanged();
   }
 
+  @Test
+  void dynamicSessionCannotUseStaticCodeEndpoint() {
+    session.setSessionType("DYNAMIC_QR");
+    session.setStaticCodeHash(null);
+
+    rejects(() -> service.selfCheckin(21L, 101L, request), "INVALID_CHECKIN_CODE");
+
+    unchanged();
+  }
+
   @Test void exactExpiryBoundaryIsRejected() {
     session.setClosesAt(now);
     rejects(() -> service.selfCheckin(21L, 101L, request), "CHECKIN_SESSION_NOT_OPEN"); unchanged();

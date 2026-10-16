@@ -25,14 +25,15 @@ describe("dynamic check-in fragment", () => {
     expect(url.hash).toBe("#window=1792137600&token=Ab_c-DeF");
   });
 
-  it("returns null for malformed fragments", () => {
+  it("returns null but still removes malformed credentials from history", () => {
     const history = { replaceState: vi.fn() };
     expect(consumeDynamicCheckinFragment({
       hash: "#window=not-a-number&token=bad token",
       pathname: "/activities/10/check-in",
       search: "?sessionId=70",
     }, history)).toBeNull();
-    expect(history.replaceState).not.toHaveBeenCalled();
+    expect(history.replaceState).toHaveBeenCalledWith(
+      null, "", "/activities/10/check-in?sessionId=70");
   });
 
   it("removes the secret from browser history before returning it", () => {

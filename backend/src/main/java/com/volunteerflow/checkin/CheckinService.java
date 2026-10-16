@@ -79,6 +79,11 @@ public class CheckinService {
     if (!"PENDING".equals(cycle.getAttendanceStatus())) {
       throw error(HttpStatus.CONFLICT, "ATTENDANCE_NOT_PENDING", "Attendance is not pending");
     }
+    // A dynamic session has no static digest; reject the wrong endpoint as a normal bad code.
+    if (!"STATIC_CODE".equals(session.getSessionType())) {
+      throw error(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_CHECKIN_CODE",
+          "Check-in code is invalid");
+    }
     byte[] expected;
     try {
       expected = HexFormat.of().parseHex(session.getStaticCodeHash());
