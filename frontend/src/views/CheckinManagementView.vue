@@ -1,12 +1,14 @@
 <script setup lang="ts">
 import { isAxiosError } from "axios";
+import QRCode from "qrcode";
 import { computed, inject, onBeforeUnmount, ref, watch } from "vue";
 import { routerKey } from "vue-router";
 import {
   attendanceLabel, checkinErrorMessage, checkinTime, closeCheckinSession, getAttendanceSummary,
-  getCurrentCheckin, listCheckinMembers, manualCheckin, openCheckinSession,
+  getCurrentCheckin, getDynamicCheckinCode, listCheckinMembers, manualCheckin, openCheckinSession,
   type AttendanceSummary, type CheckinMember, type CheckinSession,
 } from "../api/checkins";
+import { buildDynamicCheckinUrl } from "../checkin/dynamicCheckinFragment";
 const props = defineProps<{ id: string }>();
 const router = inject(routerKey, null);
 const summary = ref<AttendanceSummary | null>(null);
@@ -14,6 +16,10 @@ const session = ref<CheckinSession | null>(null);
 // Only the open response populates this ref. Never persist it or attach it to safe session projections.
 const plaintextCode = ref("");
 const copied = ref("");
+const qrDataUrl = ref("");
+const qrExpiresAt = ref("");
+const qrLoading = ref(false);
+const qrError = ref("");
 const duration = ref<number | string>(15);
 const members = ref<CheckinMember[]>([]);
 const search = ref("");
@@ -27,16 +33,62 @@ const success = ref("");
 const now = ref(Date.now());
 let generation = 0;
 let routeEpoch = 0;
+let qrGeneration = 0;
+let qrRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 const timer = setInterval(() => { now.value = Date.now(); }, 1000);
 const effective = computed(() => session.value?.status === "OPEN" && checkinTime(session.value.closesAt) > now.value);
 const finalActivity = computed(() => summary.value?.activityStatus === "FINISHED" || summary.value?.activityStatus === "CANCELED");
+const qrRemaining = computed(() => qrExpiresAt.value
+  ? Math.max(0, Math.ceil((Date.parse(qrExpiresAt.value) - now.value) / 1000))
+  : 0);
 const visibleMembers = computed(() => {
   const term = search.value.trim().toLocaleLowerCase();
   return members.value.filter(m => `${m.realName} ${m.studentNumber} ${m.registrationId}`.toLocaleLowerCase().includes(term));
 });
 const percent = (rate: number) => `${(rate * 100).toFixed(2)}%`;
 function clearCode() { plaintextCode.value = ""; copied.value = ""; }
-watch(effective, active => { if (!active) clearCode(); });
+function clearQr() {
+  qrGeneration++;
+  if (qrRefreshTimer !== undefined) clearTimeout(qrRefreshTimer);
+  qrRefreshTimer = undefined;
+  qrDataUrl.value = "";
+  qrExpiresAt.value = "";
+  qrLoading.value = false;
+  qrError.value = "";
+}
+watch(effective, active => {
+  if (!active) {
+    clearCode();
+    clearQr();
+  }
+});
+async function refreshDynamicCode() {
+  const active = session.value;
+  if (!active || active.sessionType !== "DYNAMIC_QR" || !effective.value) return;
+  const request = ++qrGeneration;
+  if (qrRefreshTimer !== undefined) clearTimeout(qrRefreshTimer);
+  qrRefreshTimer = undefined;
+  qrLoading.value = true;
+  qrError.value = "";
+  try {
+    const credential = await getDynamicCheckinCode(active.sessionId);
+    const target = buildDynamicCheckinUrl(window.location.origin, active.activityId, credential);
+    const image = await QRCode.toDataURL(target, { errorCorrectionLevel: "M", margin: 2, width: 320 });
+    if (request !== qrGeneration || session.value?.sessionId !== active.sessionId) return;
+    qrDataUrl.value = image;
+    qrExpiresAt.value = credential.expiresAt;
+    const refreshDelay = Math.max(1_000, Date.parse(credential.expiresAt) - Date.now() - 1_000);
+    qrRefreshTimer = setTimeout(() => { void refreshDynamicCode(); }, refreshDelay);
+  } catch (cause) {
+    if (request === qrGeneration) {
+      qrDataUrl.value = "";
+      qrExpiresAt.value = "";
+      qrError.value = checkinErrorMessage(cause);
+    }
+  } finally {
+    if (request === qrGeneration) qrLoading.value = false;
+  }
+}
 async function loadMembers(request: number, positions: AttendanceSummary["positions"]) {
   membersLoading.value = true; memberError.value = "";
   const result: CheckinMember[] = [];
@@ -71,7 +123,10 @@ async function load() {
     summary.value = result;
     void loadMembers(request, result.positions);
     const current = await getCurrentCheckin(id);
-    if (request === generation) session.value = current.session;
+    if (request === generation) {
+      session.value = current.session;
+      if (current.session?.sessionType === "DYNAMIC_QR") void refreshDynamicCode();
+    }
   } catch (cause) {
     if (request === generation) { error.value = checkinErrorMessage(cause); summary.value = null; members.value = []; clearCode(); }
   } finally { if (request === generation) loading.value = false; }
@@ -88,6 +143,7 @@ async function openSession() {
     if (request !== generation) return;
     session.value = { sessionId: result.sessionId, activityId: result.activityId, sessionType: result.sessionType, status: "OPEN", opensAt: result.opensAt, closesAt: result.closesAt };
     plaintextCode.value = result.code ?? "";
+    if (result.sessionType === "DYNAMIC_QR") void refreshDynamicCode();
     // The open result provides only a safe routing reference for immediate manual corrections.
     summary.value.correctionSession = session.value;
     success.value = "签到已开启。";
@@ -96,7 +152,7 @@ async function openSession() {
 }
 async function closeSession() {
   if (busy.value || loading.value || !session.value || !effective.value) return;
-  clearCode();
+  clearCode(); clearQr();
   const request = generation;
   const epoch = routeEpoch;
   busy.value = true; error.value = ""; success.value = "";
@@ -138,11 +194,11 @@ async function correct(member: CheckinMember) {
 watch(() => [props.id, router?.currentRoute.value.fullPath], () => {
   ++routeEpoch;
   membersLoading.value = false;
-  clearCode(); summary.value = null; session.value = null; members.value = []; reasons.value = {};
+  clearCode(); clearQr(); summary.value = null; session.value = null; members.value = []; reasons.value = {};
   search.value = ""; duration.value = 15; busy.value = false; success.value = ""; memberError.value = "";
   void load();
 }, { immediate: true, flush: "sync" });
-onBeforeUnmount(() => { ++routeEpoch; ++generation; clearInterval(timer); clearCode(); });
+onBeforeUnmount(() => { ++routeEpoch; ++generation; clearInterval(timer); clearCode(); clearQr(); });
 </script>
 <template>
   <section class="page checkin-page">
@@ -167,6 +223,18 @@ onBeforeUnmount(() => { ++routeEpoch; ++generation; clearInterval(timer); clearC
           <strong class="checkin-code" data-test="plaintext-code">{{ plaintextCode }}</strong>
           <button class="secondary" data-test="copy-code" :disabled="busy" @click="copyCode">复制签到码</button>
           <p v-if="copied" role="status">{{ copied }}</p>
+        </div>
+        <div v-if="effective && session?.sessionType === 'DYNAMIC_QR'" class="confirmation-panel">
+          <p v-if="qrLoading" role="status">正在生成动态签到二维码…</p>
+          <template v-else-if="qrError">
+            <p role="alert">{{ qrError }}</p>
+            <button class="secondary" data-test="retry-qr" :disabled="busy" @click="refreshDynamicCode">重试二维码</button>
+          </template>
+          <template v-else-if="qrDataUrl">
+            <img data-test="dynamic-qr" :src="qrDataUrl" alt="动态签到二维码" width="320" height="320" />
+            <p data-test="qr-countdown">本二维码将在 {{ qrRemaining }} 秒后更新</p>
+            <p class="muted">请成员使用手机相机扫描；二维码会自动轮换，请勿截图转发。</p>
+          </template>
         </div>
       </section>
       <section aria-labelledby="attendance-heading">
@@ -197,7 +265,7 @@ onBeforeUnmount(() => { ++routeEpoch; ++generation; clearInterval(timer); clearC
         </template>
       </section>
     </template>
-    <button class="secondary" :disabled="loading || busy || membersLoading" @click="clearCode(); load()">刷新管理数据</button>
+    <button class="secondary" :disabled="loading || busy || membersLoading" @click="clearCode(); clearQr(); load()">刷新管理数据</button>
     <p class="phase-note">页面入口只是操作提示，所有权限和签到资格均由服务端校验。</p>
   </section>
 </template>

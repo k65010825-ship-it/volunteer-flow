@@ -97,6 +97,8 @@ export function checkinErrorMessage(error: unknown): string {
   const code = isAxiosError<{ code?: string }>(error) ? error.response?.data?.code : undefined;
   const messages: Record<string, string> = {
     INVALID_CHECKIN_CODE: "签到码无效，请向现场管理员核对。",
+    INVALID_DYNAMIC_CHECKIN_CODE: "二维码已失效，请重新扫描现场最新二维码。",
+    DYNAMIC_CHECKIN_UNAVAILABLE: "二维码服务暂时不可用，请稍后重试或联系管理员补签。",
     CHECKIN_SESSION_NOT_OPEN: "签到已关闭，请刷新或联系管理员补签。",
     REGISTRATION_NOT_CONFIRMED: "你尚未录取，不能参加本次签到。",
     ALREADY_CHECKED_IN: "已签到，请勿重复提交。",

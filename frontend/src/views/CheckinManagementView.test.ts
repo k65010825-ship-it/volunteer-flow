@@ -5,11 +5,15 @@ import { apiClient } from "../api/http";
 import { attendance, member, session, summary } from "../test/checkinFixtures";
 import CheckinManagementView from "./CheckinManagementView.vue";
 
+const toDataURL = vi.hoisted(() =>
+  vi.fn<(text: string) => Promise<string>>(async () => "data:image/png;base64,qr"));
+vi.mock("qrcode", () => ({ default: { toDataURL } }));
+
 const mock = new MockAdapter(apiClient);
 const wrappers: ReturnType<typeof mount>[] = [];
 const opened = { sessionId: "71", activityId: "10", opensAt: session.opensAt, closesAt: "2026-10-11T02:15:00", code: "ONE-TIME" };
 beforeEach(() => {
-  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] }); vi.setSystemTime(new Date("2026-10-11T02:00:00Z"));
+  vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval", "setTimeout", "clearTimeout"] }); vi.setSystemTime(new Date("2026-10-11T02:00:00Z"));
   mock.onGet("/api/v1/activities/10/attendance-summary").reply(200, { data: summary });
   mock.onGet("/api/v1/activities/10/check-in-sessions/current").reply(200, { data: { session: null, attendance: null } });
   mock.onGet("/api/v1/positions/20/registrations").reply(200, { data: { items: [member], total: "1", page: "1", size: "100" } });
@@ -21,6 +25,51 @@ async function open() {
   wrappers.push(w); await flushPromises(); return w;
 }
 describe("CheckinManagementView", () => {
+  it("requests a dynamic credential immediately and refreshes only near expiry", async () => {
+    mock.resetHandlers();
+    const dynamicSession = { ...session, sessionType: "DYNAMIC_QR" };
+    mock.onGet("/api/v1/activities/10/attendance-summary").reply(200, { data: summary });
+    mock.onGet("/api/v1/activities/10/check-in-sessions/current")
+      .reply(200, { data: { session: dynamicSession, attendance: null } });
+    mock.onGet("/api/v1/positions/20/registrations")
+      .reply(200, { data: { items: [member], total: "1", page: "1", size: "100" } });
+    mock.onGet("/api/v1/check-in-sessions/70/dynamic-code").reply(() => [200, { data: {
+      sessionId: "70",
+      activityId: "10",
+      windowEpochSecond: 1_791_684_000,
+      expiresAt: "2026-10-11T02:00:45Z",
+      token: "Ab_c-DeF",
+    } }]);
+
+    const w = await open();
+
+    expect(mock.history.get.filter(request => request.url?.endsWith("/dynamic-code"))).toHaveLength(1);
+    expect(w.get('[data-test="dynamic-qr"]').attributes("src")).toContain("data:image/png");
+    const target = new URL(toDataURL.mock.calls[0]![0] as string);
+    expect(target.searchParams.has("token")).toBe(false);
+    expect(target.hash).toContain("token=Ab_c-DeF");
+    await vi.advanceTimersByTimeAsync(43_000);
+    expect(mock.history.get.filter(request => request.url?.endsWith("/dynamic-code"))).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await flushPromises();
+    expect(mock.history.get.filter(request => request.url?.endsWith("/dynamic-code"))).toHaveLength(2);
+  });
+
+  it("shows a retryable Redis-unavailable QR state", async () => {
+    mock.resetHandlers();
+    mock.onGet("/api/v1/activities/10/attendance-summary").reply(200, { data: summary });
+    mock.onGet("/api/v1/activities/10/check-in-sessions/current")
+      .reply(200, { data: { session: { ...session, sessionType: "DYNAMIC_QR" }, attendance: null } });
+    mock.onGet("/api/v1/positions/20/registrations")
+      .reply(200, { data: { items: [], total: "0" } });
+    mock.onGet("/api/v1/check-in-sessions/70/dynamic-code")
+      .reply(503, { code: "DYNAMIC_CHECKIN_UNAVAILABLE" });
+
+    const w = await open();
+
+    expect(w.text()).toContain("二维码服务暂时不可用");
+    expect(w.find('[data-test="retry-qr"]').exists()).toBe(true);
+  });
   it("defaults duration to 15 and rejects outside integer bounds before any request", async () => {
     const w = await open(); expect((w.get('[data-test="duration"]').element as HTMLInputElement).value).toBe("15");
     for (const value of ["4", "121", "5.5", ""]) {

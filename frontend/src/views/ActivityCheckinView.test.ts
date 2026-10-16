@@ -14,12 +14,70 @@ beforeEach(() => {
 });
 afterEach(() => {
   wrappers.splice(0).forEach(w => w.unmount()); mock.reset(); vi.useRealTimers();
+  window.history.replaceState(null, "", "/");
 });
 async function open() {
   const w = mount(ActivityCheckinView, { props: { id: "10" }, global: { stubs: { RouterLink: true } } });
   wrappers.push(w); await flushPromises(); return w;
 }
 describe("ActivityCheckinView", () => {
+  it("clears a dynamic fragment before confirmation and cancel sends no request", async () => {
+    mock.resetHandlers();
+    mock.onGet("/api/v1/activities/10/check-in-sessions/current").reply(200, { data: {
+      session: { ...session, sessionType: "DYNAMIC_QR" }, attendance,
+    } });
+    window.history.replaceState(null, "",
+      "/activities/10/check-in?sessionId=70#window=1791684000&token=Ab_c-DeF");
+
+    const w = await open();
+
+    expect(window.location.hash).toBe("");
+    expect(window.location.href).not.toContain("Ab_c-DeF");
+    expect(w.text()).toContain("确认签到");
+    await w.get('[data-test="cancel-dynamic-checkin"]').trigger("click");
+    expect(mock.history.post).toHaveLength(0);
+  });
+
+  it("submits the consumed dynamic credential once after confirmation", async () => {
+    mock.resetHandlers();
+    mock.onGet("/api/v1/activities/10/check-in-sessions/current").reply(200, { data: {
+      session: { ...session, sessionType: "DYNAMIC_QR" }, attendance,
+    } });
+    mock.onPost("/api/v1/check-in-sessions/70/dynamic-check-ins").reply(201, { data: {} });
+    window.history.replaceState(null, "",
+      "/activities/10/check-in?sessionId=70#window=1791684000&token=Ab_c-DeF");
+
+    const w = await open();
+    await w.get('[data-test="confirm-dynamic-checkin"]').trigger("click");
+    await flushPromises();
+
+    expect(mock.history.post).toHaveLength(1);
+    expect(JSON.parse(mock.history.post[0]!.data)).toEqual({
+      windowEpochSecond: 1_791_684_000,
+      token: "Ab_c-DeF",
+    });
+  });
+
+  it.each([
+    ["INVALID_DYNAMIC_CHECKIN_CODE", "二维码已失效"],
+    ["DYNAMIC_CHECKIN_UNAVAILABLE", "二维码服务暂时不可用"],
+  ])("renders distinct dynamic %s errors without token text", async (code, message) => {
+    mock.resetHandlers();
+    mock.onGet("/api/v1/activities/10/check-in-sessions/current").reply(200, { data: {
+      session: { ...session, sessionType: "DYNAMIC_QR" }, attendance,
+    } });
+    mock.onPost("/api/v1/check-in-sessions/70/dynamic-check-ins")
+      .reply(code === "DYNAMIC_CHECKIN_UNAVAILABLE" ? 503 : 422, { code, detail: "Ab_c-DeF" });
+    window.history.replaceState(null, "",
+      "/activities/10/check-in?sessionId=70#window=1791684000&token=Ab_c-DeF");
+
+    const w = await open();
+    await w.get('[data-test="confirm-dynamic-checkin"]').trigger("click");
+    await flushPromises();
+
+    expect(w.get('[role="alert"]').text()).toContain(message);
+    expect(w.get('[role="alert"]').text()).not.toContain("Ab_c-DeF");
+  });
   it("derives remaining time from the server UTC closesAt and disables at exact expiry", async () => {
     const w = await open();
     await w.get('[data-test="code"]').setValue("abc");
