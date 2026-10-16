@@ -1,7 +1,7 @@
 # Stage 4C Redis Rate Limits Design
 
 **Date:** 2026-10-16  
-**Status:** Draft for written-spec review  
+**Status:** Approved for implementation
 **Scope:** Login, activity registration, promotion-offer response, and self check-in rate limits
 
 ## 1. Goal
@@ -116,7 +116,7 @@ configuration supplies a non-production test value.
 
 ### 4.2 `RateLimitSubjectHasher`
 
-The hasher produces lowercase Base64URL HMAC-SHA-256 values using a purpose-prefixed input such as:
+The hasher produces unpadded Base64URL HMAC-SHA-256 values using a purpose-prefixed input such as:
 
 ```text
 volunteerflow-rate-limit-v1\0login-username\0alice
