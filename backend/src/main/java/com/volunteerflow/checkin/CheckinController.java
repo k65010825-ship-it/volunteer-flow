@@ -24,9 +24,18 @@ public class CheckinController {
   private final CheckinSessionService sessions;
   private final CheckinService checkins;
   private final AttendanceQueryService queries;
+  private final DynamicCheckinCodeService dynamicCodes;
 
-  public CheckinController(CheckinSessionService sessions, CheckinService checkins, AttendanceQueryService queries) {
+  public CheckinController(CheckinSessionService sessions, CheckinService checkins,
+      AttendanceQueryService queries, DynamicCheckinCodeService dynamicCodes) {
     this.sessions = sessions; this.checkins = checkins; this.queries = queries;
+    this.dynamicCodes = dynamicCodes;
+  }
+
+  @GetMapping("/check-in-sessions/{sessionId}/dynamic-code")
+  public ApiResponse<DynamicCheckinCodeService.DynamicCodeView> dynamicCode(
+      @AuthenticationPrincipal CurrentUser user, @PathVariable Long sessionId) {
+    return ApiResponse.of(dynamicCodes.currentCode(user.id(), sessionId));
   }
 
   @PostMapping("/activities/{activityId}/check-in-sessions")

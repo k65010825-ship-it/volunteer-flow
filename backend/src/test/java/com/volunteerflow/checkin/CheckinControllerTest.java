@@ -46,6 +46,7 @@ class CheckinControllerTest {
   @MockitoBean CheckinSessionService sessions;
   @MockitoBean CheckinService checkins;
   @MockitoBean AttendanceQueryService queries;
+  @MockitoBean DynamicCheckinCodeService dynamicCodes;
   private final LocalDateTime now = LocalDateTime.of(2026, 10, 10, 8, 0);
   private UsernamePasswordAuthenticationToken principal;
 
@@ -87,6 +88,22 @@ class CheckinControllerTest {
         .andExpect(jsonPath("$.data.sessionType").value("DYNAMIC_QR"))
         .andExpect(jsonPath("$.data.code").doesNotExist())
         .andExpect(jsonPath("$.data.token").doesNotExist());
+  }
+
+  @Test
+  void managerCanRequestDynamicCode() throws Exception {
+    var view = new DynamicCheckinCodeService.DynamicCodeView(
+        101L, 11L, 1792137600L, java.time.Instant.parse("2026-10-16T04:00:45Z"), "secret-token");
+    when(dynamicCodes.currentCode(21L, 101L)).thenReturn(view);
+
+    var result = perform(get("/api/v1/check-in-sessions/101/dynamic-code"), null)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.sessionId").value("101"))
+        .andExpect(jsonPath("$.data.windowEpochSecond").value(1792137600L))
+        .andExpect(jsonPath("$.data.token").value("secret-token"))
+        .andReturn();
+    verify(dynamicCodes).currentCode(21L, 101L);
+    assertThat(result.getResponse().getContentAsString()).doesNotContain("staticCodeHash");
   }
 
   @Test
