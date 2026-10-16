@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.volunteerflow.activity.Activity;
 import com.volunteerflow.activity.ActivityMapper;
 import com.volunteerflow.audit.AuditService;
+import com.volunteerflow.checkin.DynamicCheckinTokenStore.VerifiedCredential;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
@@ -14,6 +15,7 @@ import jakarta.validation.constraints.NotBlank;
 import java.security.MessageDigest;
 import java.sql.SQLException;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.HexFormat;
@@ -86,6 +88,52 @@ public class CheckinService {
     if (expected.length != 32) throw new IllegalStateException("Check-in digest storage is invalid");
     if (!MessageDigest.isEqual(expected, codes.digest(codes.normalize(request.code())))) {
       throw error(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_CHECKIN_CODE", "Check-in code is invalid");
+    }
+    return create(activity, session, cycle, userId, "SELF_SERVICE", null, now);
+  }
+
+  /**
+   * Commits a Redis-admitted dynamic check-in. The proof has no token and its absolute expiry is
+   * rechecked only after every potentially blocking database lock has been acquired.
+   */
+  @Transactional(isolation = Isolation.READ_COMMITTED)
+  public CheckinResult dynamicSelfCheckin(Long userId, Long sessionId, Long activityId,
+      VerifiedCredential proof) {
+    if (proof == null || proof.expiresAt() == null
+        || !Objects.equals(proof.sessionId(), sessionId)) {
+      throw invalidDynamicCode();
+    }
+    CheckinSession routing = sessions.selectById(sessionId);
+    if (routing == null || !Objects.equals(routing.getActivityId(), activityId)) {
+      throw sessionNotFound();
+    }
+    Activity activity = lockActivity(activityId);
+    CheckinSession session = lockSession(sessionId, activity);
+    requireMember(userId, activity.getOrganizationId());
+    RegistrationCycle cycle = requiredCycle(activity, userId);
+    requireNoRecord(activity, cycle);
+
+    // Resample after lock waits so a credential cannot outlive its Redis admission proof.
+    Instant checkedAt = clock.instant();
+    LocalDateTime now = LocalDateTime.ofInstant(checkedAt, ZoneOffset.UTC);
+    if ("FINISHED".equals(activity.getStatus()) || "CANCELED".equals(activity.getStatus())
+        || !activity.getActivityEndAt().isAfter(now)) {
+      throw error(HttpStatus.CONFLICT, "ACTIVITY_FINAL", "Activity is already final");
+    }
+    if (!"PUBLISHED".equals(activity.getStatus())) {
+      throw error(HttpStatus.CONFLICT, "ACTIVITY_CHECKIN_NOT_ALLOWED",
+          "Activity is not published");
+    }
+    if (!"DYNAMIC_QR".equals(session.getSessionType()) || !"OPEN".equals(session.getStatus())
+        || session.getOpensAt().isAfter(now) || !session.getClosesAt().isAfter(now)) {
+      throw error(HttpStatus.CONFLICT, "CHECKIN_SESSION_NOT_OPEN",
+          "Check-in session is not effective");
+    }
+    if (!"PENDING".equals(cycle.getAttendanceStatus())) {
+      throw error(HttpStatus.CONFLICT, "ATTENDANCE_NOT_PENDING", "Attendance is not pending");
+    }
+    if (!checkedAt.isBefore(proof.expiresAt())) {
+      throw invalidDynamicCode();
     }
     return create(activity, session, cycle, userId, "SELF_SERVICE", null, now);
   }
@@ -198,6 +246,10 @@ public class CheckinService {
   private LocalDateTime now() { return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC); }
   private BusinessException sessionNotFound() { return error(HttpStatus.NOT_FOUND, "CHECKIN_SESSION_NOT_FOUND", "Check-in session was not found"); }
   private BusinessException alreadyCheckedIn() { return error(HttpStatus.CONFLICT, "ALREADY_CHECKED_IN", "Already checked in"); }
+  private BusinessException invalidDynamicCode() {
+    return error(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_DYNAMIC_CHECKIN_CODE",
+        "Dynamic check-in code is invalid");
+  }
   private BusinessException error(HttpStatus status, String code, String message) { return new BusinessException(status, code, message); }
 
   public record CheckinRequest(@NotNull Long activityId, @NotBlank String code) {

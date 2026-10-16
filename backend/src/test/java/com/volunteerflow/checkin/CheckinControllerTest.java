@@ -47,6 +47,7 @@ class CheckinControllerTest {
   @MockitoBean CheckinService checkins;
   @MockitoBean AttendanceQueryService queries;
   @MockitoBean DynamicCheckinCodeService dynamicCodes;
+  @MockitoBean DynamicCheckinService dynamicCheckins;
   private final LocalDateTime now = LocalDateTime.of(2026, 10, 10, 8, 0);
   private UsernamePasswordAuthenticationToken principal;
 
@@ -104,6 +105,33 @@ class CheckinControllerTest {
         .andReturn();
     verify(dynamicCodes).currentCode(21L, 101L);
     assertThat(result.getResponse().getContentAsString()).doesNotContain("staticCodeHash");
+  }
+
+  @Test
+  void memberCanSubmitDynamicCredentialWithoutTokenInResponse() throws Exception {
+    var result = new CheckinResult(401L, 11L, 21L, "SELF_SERVICE", now);
+    when(dynamicCheckins.selfCheckin(eq(21L), eq(101L), any())).thenReturn(result);
+
+    var response = perform(post("/api/v1/check-in-sessions/101/dynamic-check-ins"),
+        "{\"windowEpochSecond\":1792137600,\"token\":\"secret-token\"}")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.data.recordId").value("401"))
+        .andReturn();
+
+    verify(dynamicCheckins).selfCheckin(21L, 101L,
+        new DynamicCheckinService.DynamicCheckinRequest(1792137600L, "secret-token"));
+    assertThat(response.getResponse().getContentAsString()).doesNotContain("secret-token");
+  }
+
+  @Test
+  void malformedDynamicCredentialUsesUniformBusiness422() throws Exception {
+    when(dynamicCheckins.selfCheckin(eq(21L), eq(101L), any()))
+        .thenThrow(error(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_DYNAMIC_CHECKIN_CODE"));
+
+    perform(post("/api/v1/check-in-sessions/101/dynamic-check-ins"),
+        "{\"windowEpochSecond\":0,\"token\":\"\"}")
+        .andExpect(status().isUnprocessableEntity())
+        .andExpect(jsonPath("$.code").value("INVALID_DYNAMIC_CHECKIN_CODE"));
   }
 
   @Test

@@ -63,6 +63,13 @@ public class AttendanceQueryService {
     return new CheckinRequest(activity.getId(), code);
   }
 
+  /** Resolves tenant-scoped routing without allowing the credential into a MySQL DTO. */
+  public DynamicCheckinTarget dynamicSelfRequest(Long userId, Long sessionId) {
+    Activity activity = sessionActivity(sessionId);
+    authorization.requireMembership(userId, activity.getOrganizationId());
+    return new DynamicCheckinTarget(activity.getId());
+  }
+
   public ManualCheckinRequest manualRequest(Long actorId, Long sessionId, Long registrationId, String reason) {
     Activity activity = sessionActivity(sessionId);
     authorization.requirePermission(actorId, activity.getOrganizationId(), "checkin:manage");
@@ -94,4 +101,6 @@ public class AttendanceQueryService {
     return confirmed == 0 ? BigDecimal.ZERO
         : BigDecimal.valueOf(checkedIn).divide(BigDecimal.valueOf(confirmed), 4, RoundingMode.HALF_UP);
   }
+
+  public record DynamicCheckinTarget(Long activityId) {}
 }

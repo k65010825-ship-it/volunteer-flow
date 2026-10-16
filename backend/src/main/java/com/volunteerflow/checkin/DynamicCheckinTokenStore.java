@@ -52,7 +52,7 @@ public class DynamicCheckinTokenStore {
     try {
       String expected = redis.opsForValue().get(key(sessionId, windowEpochSecond));
       if (expected == null || !constantTimeEquals(expected, token)) throw new InvalidCredentialException();
-      return new VerifiedCredential(windowEpochSecond, expiresAt);
+      return new VerifiedCredential(sessionId, windowEpochSecond, expiresAt);
     } catch (InvalidCredentialException exception) {
       throw exception;
     } catch (RuntimeException exception) {
@@ -91,7 +91,8 @@ public class DynamicCheckinTokenStore {
       return "IssuedCredential[windowEpochSecond=" + windowEpochSecond + ", expiresAt=" + expiresAt + ", token=[REDACTED]]";
     }
   }
-  public record VerifiedCredential(long windowEpochSecond, Instant expiresAt) {}
+  /** Token-free proof bound to the session that Redis verified. */
+  public record VerifiedCredential(long sessionId, long windowEpochSecond, Instant expiresAt) {}
   public static final class InvalidCredentialException extends RuntimeException {}
   public static final class StoreUnavailableException extends RuntimeException {
     public StoreUnavailableException(String message) { super(message); }

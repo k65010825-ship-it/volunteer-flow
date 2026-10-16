@@ -153,6 +153,17 @@ class AttendanceQueryServiceTest {
   }
 
   @Test
+  void dynamicSelfRequestRequiresMembershipWithoutCarryingToken() {
+    when(projections.selectSessionReference(101L)).thenReturn(new SessionReference(11L, 10L));
+
+    var target = service.dynamicSelfRequest(21L, 101L);
+
+    assertThat(target).isEqualTo(new AttendanceQueryService.DynamicCheckinTarget(11L));
+    assertThat(target.toString()).doesNotContain("token");
+    verify(authorization).requireMembership(21L, 10L);
+  }
+
+  @Test
   void missingOrInconsistentSessionRoutingIsHidden() {
     rejects(() -> service.selfRequest(21L, 101L, "ABCD2345"), HttpStatus.NOT_FOUND, "CHECKIN_SESSION_NOT_FOUND");
     when(projections.selectSessionReference(101L)).thenReturn(new SessionReference(11L, 99L));

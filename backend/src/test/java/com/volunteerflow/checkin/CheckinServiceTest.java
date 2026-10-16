@@ -13,6 +13,7 @@ import com.volunteerflow.audit.AuditLogMapper;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.checkin.CheckinService.CheckinRequest;
 import com.volunteerflow.checkin.CheckinService.ManualCheckinRequest;
+import com.volunteerflow.checkin.DynamicCheckinTokenStore.VerifiedCredential;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
@@ -201,6 +202,51 @@ class CheckinServiceTest {
     when(records.insert(any(CheckinRecord.class))).thenThrow(new DuplicateKeyException("insert failed",
         new SQLException("Duplicate entry '11-21' for key 'checkin_record.uk_checkin_record_activity_user'", "23000", 1062)));
     rejects(() -> service.selfCheckin(21L, 101L, request), "ALREADY_CHECKED_IN"); unchanged();
+  }
+
+  @Test
+  void expiredProofAfterLockWaitCreatesNoRecord() {
+    session.setSessionType("DYNAMIC_QR");
+    Instant expiry = now.toInstant(ZoneOffset.UTC);
+    var expired = new VerifiedCredential(101L,
+        now.minusSeconds(60).toEpochSecond(ZoneOffset.UTC), expiry);
+    Clock lockWaitClock = mock(Clock.class);
+    when(lockWaitClock.instant()).thenReturn(expiry);
+    CheckinService delayed = new CheckinService(activities, sessions, members, cycles, records,
+        authorization, new AuditService(auditLogs, new ObjectMapper()), codes, lockWaitClock);
+
+    rejects(() -> delayed.dynamicSelfCheckin(21L, 101L, 11L, expired),
+        "INVALID_DYNAMIC_CHECKIN_CODE");
+
+    unchanged();
+    var order = inOrder(records, lockWaitClock);
+    order.verify(records).selectByActivityAndUserForUpdate(11L, 21L);
+    order.verify(lockWaitClock).instant();
+  }
+
+  @Test
+  void proofForAnotherSessionIsRejected() {
+    session.setSessionType("DYNAMIC_QR");
+    var otherSession = new VerifiedCredential(102L, now.toEpochSecond(ZoneOffset.UTC),
+        now.plusMinutes(1).toInstant(ZoneOffset.UTC));
+
+    rejects(() -> service.dynamicSelfCheckin(21L, 101L, 11L, otherSession),
+        "INVALID_DYNAMIC_CHECKIN_CODE");
+
+    unchanged();
+  }
+
+  @Test
+  void duplicateDynamicCheckinMapsToAlreadyCheckedIn() {
+    session.setSessionType("DYNAMIC_QR");
+    var proof = new VerifiedCredential(101L, now.toEpochSecond(ZoneOffset.UTC),
+        now.plusMinutes(1).toInstant(ZoneOffset.UTC));
+    when(records.insert(any(CheckinRecord.class))).thenThrow(new DuplicateKeyException("insert failed",
+        new SQLException("Duplicate entry '11-21' for key 'uk_checkin_record_activity_user'", "23000", 1062)));
+
+    rejects(() -> service.dynamicSelfCheckin(21L, 101L, 11L, proof), "ALREADY_CHECKED_IN");
+
+    unchanged();
   }
 
   @Test void unrelatedDuplicateIsNotMasked() {

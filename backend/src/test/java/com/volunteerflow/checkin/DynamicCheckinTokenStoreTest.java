@@ -62,8 +62,9 @@ class DynamicCheckinTokenStoreTest {
 
   @Test void previousWindowWorksOnlyUntilAbsoluteExpiry() {
     when(values.get("volunteerflow:test:dynamic-checkin:101:1792070100:v1")).thenReturn("dG9rZW4");
-    assertThat(store.verify(101L, 1_792_070_100L, "dG9rZW4", Instant.ofEpochSecond(1_792_070_144L)).expiresAt())
-        .isEqualTo(Instant.ofEpochSecond(1_792_070_145L));
+    var proof = store.verify(101L, 1_792_070_100L, "dG9rZW4", Instant.ofEpochSecond(1_792_070_144L));
+    assertThat(proof.sessionId()).isEqualTo(101L);
+    assertThat(proof.expiresAt()).isEqualTo(Instant.ofEpochSecond(1_792_070_145L));
     assertThatThrownBy(() -> store.verify(101L, 1_792_070_100L, "dG9rZW4", Instant.ofEpochSecond(1_792_070_145L)))
         .isInstanceOf(DynamicCheckinTokenStore.InvalidCredentialException.class);
   }
