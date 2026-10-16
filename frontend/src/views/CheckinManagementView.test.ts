@@ -32,7 +32,10 @@ describe("CheckinManagementView", () => {
   it.each([5, 120])("accepts duration boundary %s", async duration => {
     const w = await open(); await w.get('[data-test="duration"]').setValue(String(duration));
     await w.get('[data-test="open-session"]').trigger("click"); await flushPromises();
-    expect(JSON.parse(mock.history.post[0]!.data)).toEqual({ durationMinutes: duration });
+    expect(JSON.parse(mock.history.post[0]!.data)).toEqual({
+      durationMinutes: duration,
+      sessionType: "DYNAMIC_QR",
+    });
     expect(w.get('[data-test="plaintext-code"]').text()).toBe("ONE-TIME");
   });
   it("warns once, copies on explicit action, clears the code immediately on early closure", async () => {

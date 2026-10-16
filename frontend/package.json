@@ -12,12 +12,14 @@
   "dependencies": {
     "axios": "^1.20.0",
     "pinia": "^4.0.3",
+    "qrcode": "^1.5.4",
     "vue": "^3.5.42",
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.64.0",
     "@types/node": "^26.5.1",
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^6.0.9",
     "@vue/test-utils": "^2.5.0",
     "axios-mock-adapter": "^2.1.0",

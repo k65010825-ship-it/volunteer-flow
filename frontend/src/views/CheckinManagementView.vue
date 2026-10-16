@@ -86,8 +86,8 @@ async function openSession() {
   try {
     const result = await openCheckinSession(props.id, minutes);
     if (request !== generation) return;
-    session.value = { sessionId: result.sessionId, activityId: result.activityId, sessionType: "STATIC_CODE", status: "OPEN", opensAt: result.opensAt, closesAt: result.closesAt };
-    plaintextCode.value = result.code;
+    session.value = { sessionId: result.sessionId, activityId: result.activityId, sessionType: result.sessionType, status: "OPEN", opensAt: result.opensAt, closesAt: result.closesAt };
+    plaintextCode.value = result.code ?? "";
     // The open result provides only a safe routing reference for immediate manual corrections.
     summary.value.correctionSession = session.value;
     success.value = "签到已开启。";

@@ -13,7 +13,23 @@ export interface CheckinSession {
   closesAt: string;
 }
 export interface OpenedSession {
-  sessionId: EntityId; activityId: EntityId; opensAt: string; closesAt: string; code: string;
+  sessionId: EntityId;
+  activityId: EntityId;
+  opensAt: string;
+  closesAt: string;
+  sessionType: "STATIC_CODE" | "DYNAMIC_QR";
+  code?: string | null;
+}
+export interface DynamicCheckinCode {
+  sessionId: EntityId;
+  activityId: EntityId;
+  windowEpochSecond: number;
+  expiresAt: string;
+  token: string;
+}
+export interface DynamicCheckinInput {
+  windowEpochSecond: number;
+  token: string;
 }
 export interface OwnAttendance {
   registrationId: EntityId; registrationCycleId: EntityId; positionId: EntityId; positionName: string;
@@ -39,7 +55,24 @@ export async function getAttendanceSummary(id: EntityId): Promise<AttendanceSumm
   return (await apiClient.get<{ data: AttendanceSummary }>(`/api/v1/activities/${id}/attendance-summary`)).data.data;
 }
 export async function openCheckinSession(id: EntityId, durationMinutes: number): Promise<OpenedSession> {
-  return (await apiClient.post<{ data: OpenedSession }>(`/api/v1/activities/${id}/check-in-sessions`, { durationMinutes })).data.data;
+  return (await apiClient.post<{ data: OpenedSession }>(
+    `/api/v1/activities/${id}/check-in-sessions`,
+    { durationMinutes, sessionType: "DYNAMIC_QR" },
+  )).data.data;
+}
+export async function getDynamicCheckinCode(id: EntityId): Promise<DynamicCheckinCode> {
+  return (await apiClient.get<{ data: DynamicCheckinCode }>(
+    `/api/v1/check-in-sessions/${id}/dynamic-code`,
+  )).data.data;
+}
+export async function submitDynamicCheckin(
+  id: EntityId,
+  input: DynamicCheckinInput,
+): Promise<CheckinResult> {
+  return (await apiClient.post<{ data: CheckinResult }>(
+    `/api/v1/check-in-sessions/${id}/dynamic-check-ins`,
+    input,
+  )).data.data;
 }
 export async function closeCheckinSession(id: EntityId): Promise<CheckinSession> {
   return (await apiClient.post<{ data: CheckinSession }>(`/api/v1/check-in-sessions/${id}/closure`)).data.data;
