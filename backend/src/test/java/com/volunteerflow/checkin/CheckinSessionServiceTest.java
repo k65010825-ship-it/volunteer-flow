@@ -48,10 +48,12 @@ class CheckinSessionServiceTest {
   private final AuditService audit = mock(AuditService.class);
   private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
   private final CheckinCodeGenerator codes = new SecureCheckinCodeGenerator(new SecureRandom());
+  private final DynamicCheckinTokenInvalidator dynamicTokens =
+      mock(DynamicCheckinTokenInvalidator.class);
   private final Clock clock = Clock.fixed(Instant.parse("2026-10-08T04:00:00Z"), ZoneOffset.UTC);
   private final LocalDateTime now = LocalDateTime.of(2026, 10, 8, 4, 0);
   private final CheckinSessionService service = new CheckinSessionService(
-      activities, sessions, authorization, audit, notifications, codes, clock);
+      activities, sessions, authorization, audit, notifications, codes, dynamicTokens, clock);
   private final List<CheckinSession> inserted = new ArrayList<>();
   private Activity activity;
 
@@ -299,6 +301,26 @@ class CheckinSessionServiceTest {
     arrangeClose(session(101L, "OPEN", now.minusMinutes(1)));
     assertThat(service.close(7L, 101L).status()).isEqualTo("EXPIRED");
     verify(sessions).closeOpen(101L, 11L, "EXPIRED", now);
+  }
+
+  @Test
+  void dynamicCloseSchedulesCredentialCleanupAtCloseInstant() {
+    CheckinSession row = session(101L, "OPEN", now.plusMinutes(15));
+    row.setSessionType("DYNAMIC_QR");
+    arrangeClose(row);
+
+    service.close(7L, 101L);
+
+    verify(dynamicTokens).afterCommit(101L, clock.instant());
+  }
+
+  @Test
+  void staticCloseDoesNotEvictDynamicKeys() {
+    arrangeClose(session(101L, "OPEN", now.plusMinutes(15)));
+
+    service.close(7L, 101L);
+
+    verifyNoInteractions(dynamicTokens);
   }
 
   @ParameterizedTest

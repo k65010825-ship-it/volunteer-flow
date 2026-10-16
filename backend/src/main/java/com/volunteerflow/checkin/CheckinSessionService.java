@@ -11,6 +11,7 @@ import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Objects;
@@ -29,6 +30,7 @@ public class CheckinSessionService {
   private final AuditService audit;
   private final NotificationWriter notifications;
   private final CheckinCodeGenerator codes;
+  private final DynamicCheckinTokenInvalidator dynamicTokens;
   private final Clock clock;
 
   public CheckinSessionService(
@@ -38,6 +40,7 @@ public class CheckinSessionService {
       AuditService audit,
       NotificationWriter notifications,
       CheckinCodeGenerator codes,
+      DynamicCheckinTokenInvalidator dynamicTokens,
       Clock clock) {
     this.activities = activities;
     this.sessions = sessions;
@@ -45,6 +48,7 @@ public class CheckinSessionService {
     this.audit = audit;
     this.notifications = notifications;
     this.codes = codes;
+    this.dynamicTokens = dynamicTokens;
     this.clock = clock;
   }
 
@@ -118,7 +122,8 @@ public class CheckinSessionService {
       throw sessionNotFound();
     }
     if (!"OPEN".equals(session.getStatus())) return SessionView.from(session);
-    LocalDateTime now = now();
+    Instant closeInstant = clock.instant();
+    LocalDateTime now = LocalDateTime.ofInstant(closeInstant, ZoneOffset.UTC);
     String status = session.getClosesAt().isAfter(now) ? "CLOSED" : "EXPIRED";
     if (sessions.closeOpen(sessionId, activity.getId(), status, now) != 1) {
       throw new OptimisticLockingFailureException("Check-in session closure affected no row");
@@ -127,6 +132,9 @@ public class CheckinSessionService {
     if ("CLOSED".equals(status)) session.setClosesAt(now);
     session.setVersion(session.getVersion() + 1);
     audit.record(activity.getOrganizationId(), actorId, "checkin.session.closed", "checkin_session", sessionId, null);
+    if ("DYNAMIC_QR".equals(session.getSessionType())) {
+      dynamicTokens.afterCommit(sessionId, closeInstant);
+    }
     return SessionView.from(session);
   }
 
