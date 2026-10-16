@@ -76,6 +76,20 @@ class CheckinControllerTest {
   }
 
   @Test
+  void dynamicOpenReturnsTypeWithoutStaticCodeOrToken() throws Exception {
+    var request = new OpenSessionRequest(15, "DYNAMIC_QR");
+    when(sessions.open(21L, 11L, request))
+        .thenReturn(new OpenedSession(2030987654321098765L, 11L, now, now.plusMinutes(15), "DYNAMIC_QR", null));
+
+    perform(post("/api/v1/activities/11/check-in-sessions"),
+        "{\"durationMinutes\":15,\"sessionType\":\"DYNAMIC_QR\"}")
+        .andExpect(status().isCreated())
+        .andExpect(jsonPath("$.data.sessionType").value("DYNAMIC_QR"))
+        .andExpect(jsonPath("$.data.code").doesNotExist())
+        .andExpect(jsonPath("$.data.token").doesNotExist());
+  }
+
+  @Test
   void closureUsesPrincipalAndNeverReturnsAnyCode() throws Exception {
     when(sessions.close(21L, 101L)).thenReturn(session("CLOSED"));
     var result = perform(post("/api/v1/check-in-sessions/101/closure"), "{\"actorId\":999}")

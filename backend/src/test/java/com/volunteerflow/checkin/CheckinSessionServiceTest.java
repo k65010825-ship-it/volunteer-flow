@@ -72,6 +72,10 @@ class CheckinSessionServiceTest {
           inserted.add(row);
           return 1;
         });
+    when(sessions.insert(any(CheckinSession.class))).thenAnswer(invocation -> {
+      inserted.add(invocation.getArgument(0));
+      return 1;
+    });
     when(sessions.selectConfirmedUserIds(10L, 11L)).thenReturn(List.of(21L, 22L, 21L));
     when(sessions.closeOpen(anyLong(), anyLong(), anyString(), any())).thenReturn(1);
   }
@@ -103,6 +107,35 @@ class CheckinSessionServiceTest {
       assertThat(command.content()).doesNotContain(opened.code(), persisted.getStaticCodeHash());
     });
     assertThat(notifications.commands()).extracting(command -> command.userId()).containsExactly(21L, 22L);
+  }
+
+  @Test
+  void omittedSessionTypeStillCreatesStaticSession() {
+    var opened = service.open(7L, 11L, new OpenSessionRequest(15, null));
+
+    assertThat(opened.sessionType()).isEqualTo("STATIC_CODE");
+    assertThat(opened.code()).isNotBlank();
+    verify(sessions).insertWithDigest(any(CheckinSession.class), any(byte[].class));
+  }
+
+  @Test
+  void dynamicSessionStoresNoStaticDigestOrPlaintextCode() {
+    var opened = service.open(7L, 11L, new OpenSessionRequest(15, "DYNAMIC_QR"));
+
+    assertThat(opened.sessionType()).isEqualTo("DYNAMIC_QR");
+    assertThat(opened.code()).isNull();
+    assertThat(inserted).singleElement().satisfies(row -> {
+      assertThat(row.getSessionType()).isEqualTo("DYNAMIC_QR");
+      assertThat(row.getStaticCodeHash()).isNull();
+    });
+    verify(sessions).insert(any(CheckinSession.class));
+    verify(sessions, never()).insertWithDigest(any(), any());
+  }
+
+  @Test
+  void rejectsUnknownSessionType() {
+    rejects(() -> service.open(7L, 11L, new OpenSessionRequest(15, "QR")), "INVALID_CHECKIN_SESSION_TYPE");
+    assertThat(inserted).isEmpty();
   }
 
   @ParameterizedTest

@@ -76,15 +76,18 @@ public class CheckinSessionService {
     session.setId(IdWorker.getId());
     session.setOrganizationId(activity.getOrganizationId());
     session.setActivityId(activityId);
-    session.setSessionType("STATIC_CODE");
+    String sessionType = normalizeSessionType(request == null ? null : request.sessionType());
+    session.setSessionType(sessionType);
     session.setStatus("OPEN");
     session.setOpensAt(now);
     session.setClosesAt(now.plusMinutes(minutes));
     session.setCreatedBy(actorId);
     session.setVersion(0);
     // Plaintext never enters an entity, audit argument, notification, or subsequent query DTO.
-    String code = codes.generate();
-    if (sessions.insertWithDigest(session, codes.digest(codes.normalize(code))) != 1) {
+    String code = "STATIC_CODE".equals(sessionType) ? codes.generate() : null;
+    int inserted = code == null ? sessions.insert(session)
+        : sessions.insertWithDigest(session, codes.digest(codes.normalize(code)));
+    if (inserted != 1) {
       throw new OptimisticLockingFailureException("Check-in session insert affected no row");
     }
     audit.record(activity.getOrganizationId(), actorId, "checkin.session.opened", "checkin_session", session.getId(), null);
@@ -94,11 +97,13 @@ public class CheckinSessionService {
             activity.getOrganizationId(),
             "CHECKIN_OPENED",
             "活动签到已开启",
-            activity.getTitle() + "签到已开启，请向现场管理员获取签到码；有效期至 " + session.getClosesAt(),
+            activity.getTitle() + ("DYNAMIC_QR".equals(sessionType)
+                ? "签到已开启，请扫描现场二维码；有效期至 "
+                : "签到已开启，请向现场管理员获取签到码；有效期至 ") + session.getClosesAt(),
             "ACTIVITY",
             activityId,
             "checkin-session:" + session.getId() + ":opened"));
-    return new OpenedSession(session.getId(), activityId, session.getOpensAt(), session.getClosesAt(), code);
+    return new OpenedSession(session.getId(), activityId, session.getOpensAt(), session.getClosesAt(), sessionType, code);
   }
 
   @Transactional
@@ -157,16 +162,32 @@ public class CheckinSessionService {
     return new BusinessException(HttpStatus.NOT_FOUND, "CHECKIN_SESSION_NOT_FOUND", "Check-in session was not found");
   }
 
+  private String normalizeSessionType(String value) {
+    if (value == null) return "STATIC_CODE";
+    if ("STATIC_CODE".equals(value) || "DYNAMIC_QR".equals(value)) return value;
+    throw new BusinessException(HttpStatus.UNPROCESSABLE_ENTITY,
+        "INVALID_CHECKIN_SESSION_TYPE", "Unsupported check-in session type");
+  }
+
   private LocalDateTime now() {
     return LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
   }
 
-  public record OpenSessionRequest(@Min(5) @Max(120) Integer durationMinutes) {}
+  public record OpenSessionRequest(@Min(5) @Max(120) Integer durationMinutes, String sessionType) {
+    public OpenSessionRequest(Integer durationMinutes) { this(durationMinutes, null); }
+  }
 
-  public record OpenedSession(Long sessionId, Long activityId, LocalDateTime opensAt, LocalDateTime closesAt, String code) {
+  public record OpenedSession(Long sessionId, Long activityId, LocalDateTime opensAt,
+      LocalDateTime closesAt, String sessionType, String code) {
+    public OpenedSession(Long sessionId, Long activityId, LocalDateTime opensAt,
+        LocalDateTime closesAt, String code) {
+      this(sessionId, activityId, opensAt, closesAt, "STATIC_CODE", code);
+    }
     @Override
     public String toString() {
-      return "OpenedSession[sessionId=" + sessionId + ", activityId=" + activityId + ", opensAt=" + opensAt + ", closesAt=" + closesAt + ", code=[REDACTED]]";
+      return "OpenedSession[sessionId=" + sessionId + ", activityId=" + activityId
+          + ", opensAt=" + opensAt + ", closesAt=" + closesAt + ", sessionType="
+          + sessionType + ", code=[REDACTED]]";
     }
   }
 
