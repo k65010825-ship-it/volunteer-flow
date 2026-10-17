@@ -11,10 +11,18 @@
 - Linux 虚拟机安装 Docker Engine、Docker Compose v2、Bash、curl、timeout，并至少保留 5 GiB 可用空间。
 - 虚拟机上的既有 MySQL 与 Redis 正常运行，且它们的地址和宿主机映射端口可从 Stage 4D 后端容器访问。
 - 公开端口（默认 8088）未被其他服务占用。
-- 从 `deploy/stage4d/.env.example` 复制出被 Git 忽略的 `deploy/stage4d/.env`，逐项替换占位值。
+- 从 `deploy/stage4d/.env.example` 复制出被 Git 忽略的 `deploy/stage4d/.env`，逐项替换占位值；若已有后端 `application-local.yml`，可用下方命令静默转换。
 - 恢复后的演示数据库已经迁移到 V9，因此本次必须保持 `SPRING_FLYWAY_ENABLED=false`。这不是新数据库的通用配置。
 
 不要停止、重启或重建现有 MySQL/Redis 容器。正常场景复用既有 Redis；故障场景只把本轮两个 Stage 4D 后端重建为连接不可达的 `127.0.0.1:6379`，不会停止 Redis，也不会改变 Redis 容器。
+
+已有本地 YAML 时，执行器不会输出其中的值：
+
+```powershell
+.\deploy\stage4d\prepare-stage4d-env.ps1 `
+  -ApplicationLocalFile 'D:\javaweb\VolunteerFlow\backend\config\application-local.yml' `
+  -OutputFile '.\deploy\stage4d\.env'
+```
 
 ## 1. 准备一次性 SSH 密钥
 
