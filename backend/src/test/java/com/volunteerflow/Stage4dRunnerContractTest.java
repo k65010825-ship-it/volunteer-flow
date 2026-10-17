@@ -72,6 +72,8 @@ class Stage4dRunnerContractTest {
         .contains("registration.js")
         .contains("rate-limit.js")
         .contains("recovery.js")
+        .contains("local script=\"$1\" dataset=\"$2\"")
+        .contains("local scenario=\"${script%.js}\"")
         .contains("fixture_action verify")
         .contains("restore_redis")
         .contains("cleanup_fixtures")

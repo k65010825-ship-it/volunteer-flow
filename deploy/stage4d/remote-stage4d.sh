@@ -82,7 +82,8 @@ fixture_action() {
 }
 
 run_k6() {
-  local script="$1" dataset="$2" scenario="${script%.js}"
+  local script="$1" dataset="$2"
+  local scenario="${script%.js}"
   export STAGE4D_DATASET="$dataset"
   compose --profile tools run --rm k6 run \
     --out "json=/output/k6-raw-${scenario}-${dataset}.json" \
