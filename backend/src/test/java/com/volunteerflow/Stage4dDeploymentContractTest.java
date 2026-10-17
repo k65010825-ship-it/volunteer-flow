@@ -105,7 +105,7 @@ class Stage4dDeploymentContractTest {
     assertThat(k6).containsEntry("image", "grafana/k6:0.54.0");
     assertThat(list(k6.get("volumes")))
         .containsExactly(
-            "../../load-tests/stage4d:/scripts:ro",
+            "../../loadtest/stage4d:/scripts:ro",
             "${STAGE4D_OUTPUT_DIR:?set STAGE4D_OUTPUT_DIR}:/output");
   }
 

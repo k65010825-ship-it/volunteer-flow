@@ -95,6 +95,14 @@ services:
     profiles: ["tools"]
     image: grafana/k6:0.54.0
     working_dir: /scripts
+    environment:
+      BASE_URL: "${STAGE4D_BASE_URL:-http://frontend-nginx}"
+      RUN_ID: "${STAGE4D_RUN_ID:?set STAGE4D_RUN_ID}"
+      DATASET: "${STAGE4D_DATASET:?set STAGE4D_DATASET}"
+      MANIFEST_PATH: "/output/manifest-${STAGE4D_DATASET:?set STAGE4D_DATASET}.json"
+      TOKENS_PATH: "/output/tokens-${STAGE4D_DATASET:?set STAGE4D_DATASET}.json"
+      EXPECTED_RATE_LIMIT_ALLOWED: "${EXPECTED_RATE_LIMIT_ALLOWED:-3}"
+      EXPECTED_RATE_LIMIT_REJECTED: "${EXPECTED_RATE_LIMIT_REJECTED:-1}"
     volumes:
-      - ../../load-tests/stage4d:/scripts:ro
+      - ../../loadtest/stage4d:/scripts:ro
       - "${STAGE4D_OUTPUT_DIR:?set STAGE4D_OUTPUT_DIR}:/output"

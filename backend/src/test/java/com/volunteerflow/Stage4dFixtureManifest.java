@@ -1,6 +1,8 @@
 package com.volunteerflow;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.annotation.JsonSerialize;
+import com.fasterxml.jackson.databind.ser.std.ToStringSerializer;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -13,9 +15,9 @@ import java.util.Set;
 record Stage4dFixtureManifest(
     String runId,
     String dataset,
-    long organizationId,
-    long activityId,
-    long positionId,
+    @JsonSerialize(using = ToStringSerializer.class) long organizationId,
+    @JsonSerialize(using = ToStringSerializer.class) long activityId,
+    @JsonSerialize(using = ToStringSerializer.class) long positionId,
     List<Member> members) {
 
   Stage4dFixtureManifest {
@@ -91,9 +93,13 @@ record Stage4dFixtureManifest(
     }
   }
 
-  record Member(long userId, String username) {}
+  record Member(
+      @JsonSerialize(using = ToStringSerializer.class) long userId, String username) {}
 
-  record Token(long userId, String accessToken, Instant expiresAt) {}
+  record Token(
+      @JsonSerialize(using = ToStringSerializer.class) long userId,
+      String accessToken,
+      Instant expiresAt) {}
 
   record Verification(
       long confirmed,

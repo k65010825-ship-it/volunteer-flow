@@ -87,8 +87,13 @@ class Stage4dLoadFixtureContractTest {
         new ObjectMapper()
             .readTree(Files.readString(temporaryDirectory.resolve("tokens-normal.json")));
     assertThat(manifestJson.path("members").size()).isEqualTo(100);
+    assertThat(manifestJson.path("organizationId").isTextual()).isTrue();
+    assertThat(manifestJson.path("activityId").isTextual()).isTrue();
+    assertThat(manifestJson.path("positionId").isTextual()).isTrue();
+    assertThat(manifestJson.path("members").get(0).path("userId").isTextual()).isTrue();
     assertThat(manifestJson.toString()).doesNotContain("accessToken").doesNotContain("jwt-token-");
     assertThat(tokenJson.size()).isEqualTo(100);
+    assertThat(tokenJson.get(0).path("userId").isTextual()).isTrue();
     assertThat(tokenJson.findValuesAsText("accessToken")).hasSize(100).doesNotHaveDuplicates();
     assertThat(tokenJson.toString()).doesNotContain("password");
   }
