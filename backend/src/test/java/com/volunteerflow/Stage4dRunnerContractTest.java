@@ -42,8 +42,11 @@ class Stage4dRunnerContractTest {
         .contains("primaryStatus")
         .contains("recoveryStatus")
         .contains("cleanupStatus")
+        .contains("remoteRunDirectoryStatus")
         .contains("keyRemovalStatus")
         .contains("evidenceDownloadStatus")
+        .contains("Refusing to remove unexpected remote run directory")
+        .contains("rm -rf -- '$remoteRoot'")
         .doesNotContain("Write-Host $composeEnvironment")
         .doesNotContain("Write-Output $composeEnvironment");
   }

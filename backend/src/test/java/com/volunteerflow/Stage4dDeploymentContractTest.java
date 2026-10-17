@@ -25,6 +25,7 @@ class Stage4dDeploymentContractTest {
           "DB_NAME",
           "DB_USERNAME",
           "DB_PASSWORD",
+          "JAVA_TOOL_OPTIONS",
           "JWT_SECRET",
           "SPRING_FLYWAY_ENABLED",
           "REDIS_HOST",

@@ -137,6 +137,7 @@ $primaryStatus = 'not-started'
 $recoveryStatus = 'not-reported'
 $cleanupStatus = 'not-reported'
 $evidenceDownloadStatus = 'not-attempted'
+$remoteRunDirectoryStatus = 'not-attempted'
 $keyRemovalStatus = 'not-attempted'
 $keyRemovalErrorType = $null
 
@@ -175,6 +176,22 @@ try {
       }
     }
 
+    if ($primaryStatus -eq 'success' -and $recoveryStatus -eq 'success' -and
+        $cleanupStatus -eq 'success' -and $evidenceDownloadStatus -eq 'success') {
+      try {
+        $expectedRemoteRoot = "/opt/volunteerflow-stage4d/$RunId"
+        if ($remoteRoot -ne $expectedRemoteRoot) {
+          throw 'Refusing to remove unexpected remote run directory'
+        }
+        $remoteCleanupCommand = "test '$remoteRoot' = '$expectedRemoteRoot' && rm -rf -- '$remoteRoot'"
+        Invoke-Native $ssh ($sshArguments + @($target, $remoteCleanupCommand)) `
+          'Remote run directory cleanup failed'
+        $remoteRunDirectoryStatus = 'success'
+      } catch {
+        $remoteRunDirectoryStatus = 'failed'
+      }
+    }
+
     try {
       & (Join-Path $PSScriptRoot 'remove-temporary-ssh.ps1') `
         -VmHost $VmHost `
@@ -196,6 +213,7 @@ try {
     recoveryStatus = $recoveryStatus
     cleanupStatus = $cleanupStatus
     evidenceDownloadStatus = $evidenceDownloadStatus
+    remoteRunDirectoryStatus = $remoteRunDirectoryStatus
     keyRemovalStatus = $keyRemovalStatus
     keyRemovalErrorType = $keyRemovalErrorType
   }
@@ -207,6 +225,7 @@ try {
 
 if ($primaryStatus -ne 'success' -or $recoveryStatus -ne 'success' -or
     $cleanupStatus -ne 'success' -or $evidenceDownloadStatus -ne 'success' -or
+    $remoteRunDirectoryStatus -ne 'success' -or
     $keyRemovalStatus -ne 'success') {
   throw "Stage 4D acceptance failed; inspect $outputDirectory"
 }
