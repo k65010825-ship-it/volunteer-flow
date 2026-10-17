@@ -219,7 +219,7 @@ for pattern in \
 done
 rm -f "$output"/tokens-*.json
 
-if ! compose down --remove-orphans > "$evidence/stack-down.log" 2>&1; then
+if ! compose down --remove-orphans --rmi local > "$evidence/stack-down.log" 2>&1; then
   cleanup_status='failed'
 fi
 

@@ -78,6 +78,7 @@ class Stage4dRunnerContractTest {
         .contains("restore_redis")
         .contains("cleanup_fixtures")
         .contains("if ! compose down --remove-orphans")
+        .contains("down --remove-orphans --rmi local")
         .contains("run-status.json")
         .contains("compose logs")
         .contains("upstream_addr=")
