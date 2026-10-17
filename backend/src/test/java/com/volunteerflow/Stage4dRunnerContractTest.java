@@ -40,6 +40,7 @@ class Stage4dRunnerContractTest {
         .contains("-i", "$resolvedIdentity")
         .contains("RandomNumberGenerator")
         .contains("RATE_LIMIT_KEY_SECRET")
+        .contains("[string]::Join(\"`n\", $protectedLines) + \"`n\"")
         .contains("primaryStatus")
         .contains("recoveryStatus")
         .contains("cleanupStatus")
@@ -101,6 +102,7 @@ class Stage4dRunnerContractTest {
         .contains("grep -Fvx --")
         .contains("grep -qxF --")
         .contains("BatchMode=yes")
+        .contains("$scriptBody = $scriptBody.Replace(\"`r`n\", \"`n\")")
         .contains("Remove-Item -LiteralPath $resolvedIdentity")
         .doesNotContain("Remove-Item ~/.ssh/authorized_keys")
         .doesNotContain("rm ~/.ssh/authorized_keys");

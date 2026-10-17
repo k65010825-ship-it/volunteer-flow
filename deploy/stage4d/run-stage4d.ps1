@@ -120,7 +120,8 @@ try {
 $rateLimitSecret = [Convert]::ToBase64String($randomBytes)
 $protectedLines = @($environmentLines | Where-Object { $_ -notmatch '^RATE_LIMIT_KEY_SECRET=' })
 $protectedLines += "RATE_LIMIT_KEY_SECRET=$rateLimitSecret"
-[IO.File]::WriteAllLines($protectedEnvironment, $protectedLines, [Text.UTF8Encoding]::new($false))
+$protectedContent = [string]::Join("`n", $protectedLines) + "`n"
+[IO.File]::WriteAllText($protectedEnvironment, $protectedContent, [Text.UTF8Encoding]::new($false))
 
 Invoke-Native $git @('-C', $RepositoryRoot, 'archive', '--format=tar', '-o', $archive, 'HEAD') 'Git archive creation failed'
 if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {

@@ -32,7 +32,7 @@ if (-not (Test-Path -LiteralPath $publicKeyPath -PathType Leaf)) {
   throw 'The matching public key file is required for exact remote removal'
 }
 if ([string]::IsNullOrWhiteSpace($SshCommand)) {
-  $ssh = (Get-Command ssh -CommandType Application -ErrorAction Stop).Source
+  $ssh = @(Get-Command ssh -CommandType Application -ErrorAction Stop)[0].Source
 } else {
   $ssh = (Resolve-Path -LiteralPath $SshCommand).Path
 }
@@ -59,6 +59,7 @@ if grep -qxF -- "`$key" "`$file"; then
   exit 42
 fi
 "@
+$scriptBody = $scriptBody.Replace("`r`n", "`n")
 [IO.File]::WriteAllText($removalScript, $scriptBody, [Text.UTF8Encoding]::new($false))
 
 try {
