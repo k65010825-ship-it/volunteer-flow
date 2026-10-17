@@ -1,0 +1,100 @@
+x-backend-environment: &backend-environment
+  DB_HOST: "${DB_HOST:?set DB_HOST}"
+  DB_PORT: "${DB_PORT:?set DB_PORT}"
+  DB_NAME: "${DB_NAME:?set DB_NAME}"
+  DB_USERNAME: "${DB_USERNAME:?set DB_USERNAME}"
+  DB_PASSWORD: "${DB_PASSWORD:?set DB_PASSWORD}"
+  JWT_SECRET: "${JWT_SECRET:?set JWT_SECRET}"
+  SPRING_FLYWAY_ENABLED: "${SPRING_FLYWAY_ENABLED:?set SPRING_FLYWAY_ENABLED}"
+  REDIS_HOST: "${REDIS_HOST:?set REDIS_HOST}"
+  REDIS_PORT: "${REDIS_PORT:?set REDIS_PORT}"
+  REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+  REDIS_DATABASE: "${REDIS_DATABASE:-2}"
+  REDIS_CONNECT_TIMEOUT: "${REDIS_CONNECT_TIMEOUT:-1s}"
+  REDIS_COMMAND_TIMEOUT: "${REDIS_COMMAND_TIMEOUT:-2s}"
+  DYNAMIC_CHECKIN_WINDOW: "${DYNAMIC_CHECKIN_WINDOW:-30s}"
+  DYNAMIC_CHECKIN_TTL: "${DYNAMIC_CHECKIN_TTL:-45s}"
+  DYNAMIC_CHECKIN_TOKEN_BYTES: "${DYNAMIC_CHECKIN_TOKEN_BYTES:-24}"
+  RATE_LIMIT_ENABLED: "${RATE_LIMIT_ENABLED:-true}"
+  RATE_LIMIT_KEY_SECRET: "${RATE_LIMIT_KEY_SECRET:-}"
+  RATE_LIMIT_LOGIN_IP_LIMIT: "${RATE_LIMIT_LOGIN_IP_LIMIT:-20}"
+  RATE_LIMIT_LOGIN_IP_WINDOW: "${RATE_LIMIT_LOGIN_IP_WINDOW:-1m}"
+  RATE_LIMIT_LOGIN_USERNAME_LIMIT: "${RATE_LIMIT_LOGIN_USERNAME_LIMIT:-5}"
+  RATE_LIMIT_LOGIN_USERNAME_WINDOW: "${RATE_LIMIT_LOGIN_USERNAME_WINDOW:-5m}"
+  RATE_LIMIT_REGISTRATION_LIMIT: "${RATE_LIMIT_REGISTRATION_LIMIT:-3}"
+  RATE_LIMIT_REGISTRATION_WINDOW: "${RATE_LIMIT_REGISTRATION_WINDOW:-10s}"
+  RATE_LIMIT_PROMOTION_LIMIT: "${RATE_LIMIT_PROMOTION_LIMIT:-5}"
+  RATE_LIMIT_PROMOTION_WINDOW: "${RATE_LIMIT_PROMOTION_WINDOW:-1m}"
+  RATE_LIMIT_STATIC_CHECKIN_LIMIT: "${RATE_LIMIT_STATIC_CHECKIN_LIMIT:-5}"
+  RATE_LIMIT_STATIC_CHECKIN_WINDOW: "${RATE_LIMIT_STATIC_CHECKIN_WINDOW:-1m}"
+  RATE_LIMIT_DYNAMIC_CHECKIN_LIMIT: "${RATE_LIMIT_DYNAMIC_CHECKIN_LIMIT:-10}"
+  RATE_LIMIT_DYNAMIC_CHECKIN_WINDOW: "${RATE_LIMIT_DYNAMIC_CHECKIN_WINDOW:-1m}"
+  RATE_LIMIT_LOCAL_LOGIN_MAX_ENTRIES: "${RATE_LIMIT_LOCAL_LOGIN_MAX_ENTRIES:-10000}"
+  RATE_LIMIT_LOCAL_LOGIN_CLEANUP_INTERVAL: "${RATE_LIMIT_LOCAL_LOGIN_CLEANUP_INTERVAL:-1m}"
+  BOOTSTRAP_ADMIN_USERNAME: "${BOOTSTRAP_ADMIN_USERNAME:-}"
+  BOOTSTRAP_ADMIN_PASSWORD: "${BOOTSTRAP_ADMIN_PASSWORD:-}"
+  BOOTSTRAP_ADMIN_REAL_NAME: "${BOOTSTRAP_ADMIN_REAL_NAME:-}"
+  BOOTSTRAP_ADMIN_STUDENT_NUMBER: "${BOOTSTRAP_ADMIN_STUDENT_NUMBER:-}"
+  BOOTSTRAP_ADMIN_CONTACT: "${BOOTSTRAP_ADMIN_CONTACT:-}"
+
+x-backend-common: &backend-common
+  build:
+    context: ../../backend
+  environment:
+    <<: *backend-environment
+  healthcheck:
+    test: ["CMD", "curl", "--fail", "http://localhost:8080/actuator/health/readiness"]
+    interval: 10s
+    timeout: 5s
+    retries: 12
+    start_period: 30s
+  restart: unless-stopped
+
+services:
+  backend-a:
+    <<: *backend-common
+
+  backend-b:
+    <<: *backend-common
+
+  frontend-nginx:
+    build:
+      context: ../..
+      dockerfile: frontend/Dockerfile
+    depends_on:
+      backend-a:
+        condition: service_healthy
+      backend-b:
+        condition: service_healthy
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${STAGE4D_APP_PORT:-8088}:80"
+    restart: unless-stopped
+
+  fixture:
+    profiles: ["tools"]
+    build:
+      context: ../../backend
+      target: build
+    working_dir: /workspace
+    environment:
+      <<: *backend-environment
+    command:
+      - ./mvnw
+      - -Dtest=Stage4dLoadFixtureIT
+      - -Dstage4d.fixture.action=${STAGE4D_FIXTURE_ACTION:?set STAGE4D_FIXTURE_ACTION}
+      - -Dstage4d.fixture.run-id=${STAGE4D_RUN_ID:?set STAGE4D_RUN_ID}
+      - -Dstage4d.fixture.dataset=${STAGE4D_DATASET:?set STAGE4D_DATASET}
+      - -Dstage4d.fixture.output-dir=/stage4d-output
+      - test
+    volumes:
+      - "${STAGE4D_OUTPUT_DIR:?set STAGE4D_OUTPUT_DIR}:/stage4d-output"
+
+  k6:
+    profiles: ["tools"]
+    image: grafana/k6:0.54.0
+    working_dir: /scripts
+    volumes:
+      - ../../load-tests/stage4d:/scripts:ro
+      - "${STAGE4D_OUTPUT_DIR:?set STAGE4D_OUTPUT_DIR}:/output"

@@ -17,13 +17,21 @@ frontend/node_modules/
 frontend/dist/
 .playwright-cli/
 output/playwright/
+output/stage4d/
 
 # Local configuration and secrets
 .env
 .env.*
 !.env.example
 deploy/.env
+deploy/stage4d/.env
 backend/config/application-local.yml
+
+# Stage 4D run credentials and raw measurements
+tokens-*.json
+k6-raw-*.json
+*.pem
+*.key
 
 # Logs
 *.log
