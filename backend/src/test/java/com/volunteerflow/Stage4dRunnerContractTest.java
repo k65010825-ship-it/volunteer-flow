@@ -30,6 +30,7 @@ class Stage4dRunnerContractTest {
 
     assertThat(runner)
         .contains("[Guid]::TryParseExact($RunId, 'D'")
+        .contains("@(Get-Command $DefaultName -CommandType Application -ErrorAction Stop)[0].Source")
         .contains("ToLowerInvariant()")
         .contains("feat/stage-4d")
         .contains("status", "--porcelain", "--untracked-files=all")

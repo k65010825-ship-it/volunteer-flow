@@ -43,7 +43,7 @@ function Resolve-NativeCommand([string]$Candidate, [string]$DefaultName) {
   if (-not [string]::IsNullOrWhiteSpace($Candidate)) {
     return (Resolve-Path -LiteralPath $Candidate).Path
   }
-  return (Get-Command $DefaultName -CommandType Application -ErrorAction Stop).Source
+  return @(Get-Command $DefaultName -CommandType Application -ErrorAction Stop)[0].Source
 }
 
 function Invoke-Native([string]$Command, [string[]]$Arguments, [string]$FailureMessage) {
