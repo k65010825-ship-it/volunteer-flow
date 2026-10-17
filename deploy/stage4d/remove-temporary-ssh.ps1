@@ -61,16 +61,17 @@ fi
 "@
 $scriptBody = $scriptBody.Replace("`r`n", "`n")
 [IO.File]::WriteAllText($removalScript, $scriptBody, [Text.UTF8Encoding]::new($false))
+$encodedScript = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($scriptBody))
 
 try {
   $target = "$SshUser@$VmHost"
-  Get-Content -LiteralPath $removalScript -Raw | & $ssh `
+  & $ssh `
     -p $SshPort `
     -o BatchMode=yes `
     -o IdentitiesOnly=yes `
     -i $resolvedIdentity `
     $target `
-    'sh -s'
+    "printf '%s' '$encodedScript' | base64 -d | sh"
   if ($LASTEXITCODE -ne 0) {
     throw 'Exact remote public-key removal or verification failed'
   }

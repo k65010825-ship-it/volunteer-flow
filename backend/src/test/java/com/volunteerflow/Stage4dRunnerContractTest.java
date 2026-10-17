@@ -61,6 +61,8 @@ class Stage4dRunnerContractTest {
     assertThat(remote)
         .contains("set -Eeuo pipefail")
         .contains("docker compose version")
+        .contains("export STAGE4D_FIXTURE_ACTION=snapshot")
+        .contains("export STAGE4D_DATASET=normal")
         .contains("df -Pk")
         .contains("/dev/tcp/")
         .contains("config --no-interpolate")
@@ -103,6 +105,8 @@ class Stage4dRunnerContractTest {
         .contains("grep -qxF --")
         .contains("BatchMode=yes")
         .contains("$scriptBody = $scriptBody.Replace(\"`r`n\", \"`n\")")
+        .contains("[Convert]::ToBase64String")
+        .contains("base64 -d | sh")
         .contains("Remove-Item -LiteralPath $resolvedIdentity")
         .doesNotContain("Remove-Item ~/.ssh/authorized_keys")
         .doesNotContain("rm ~/.ssh/authorized_keys");
