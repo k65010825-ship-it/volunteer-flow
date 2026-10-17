@@ -237,9 +237,10 @@ if [[ "$final_success" == true ]]; then
   compose down --remove-orphans > "$evidence/stack-down.log" 2>&1 || final_success=false
 fi
 
-rm -f "$compose_env"
 if [[ "$final_success" == true ]]; then
+  rm -f "$compose_env"
   rm -rf "$repo" "$remote_root/source.tar" "$output"
   exit 0
 fi
+# Keep the chmod-600 environment only on failure so an operator can restore Redis and clean fixtures.
 exit 1

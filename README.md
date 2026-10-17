@@ -2,7 +2,7 @@
 
 面向班级、学生社团和校园志愿组织的活动报名、岗位招募、候补递补、通知与签到协同平台。
 
-> 当前状态：阶段 1、阶段 2，以及阶段 3 的站内通知、正式活动变更、签到和出勤核心功能已实现，并通过配置的 MySQL 实库验收；阶段 4B 动态签到二维码的后端、前端和自动化测试源码已完成。Nginx/Docker 公开入口、真实手机扫描和虚拟机 Redis 故障恢复仍待在可用部署主机执行，不能把源码测试写成现场验收结果。下文“第一版功能范围”同时包含已经实现的能力和后续建设目标。
+> 当前状态：阶段 1、阶段 2，以及阶段 3 的站内通知、正式活动变更、签到和出勤核心功能已实现，并通过配置的 MySQL 实库验收；阶段 4B–4C 的动态签到与限流源码已完成。阶段 4D：双后端、Nginx、隔离夹具、k6 与远程执行源码已准备，但尚未在虚拟机完成真实运行。真实 evidence 产生前不得填写吞吐量或延迟，也不能把源码测试写成现场验收结果。下文“第一版功能范围”同时包含已经实现的能力和后续建设目标。
 
 ## 为什么做这个项目
 
@@ -193,7 +193,7 @@ VolunteerFlow/
 
 ## 当前状态
 
-截至 2026-10-16：
+截至 2026-10-17：
 
 - [x] 明确真实问题、目标用户和第一版范围。
 - [x] 完成活动岗位、报名、候补、RBAC、签到和通知设计。
@@ -211,9 +211,11 @@ VolunteerFlow/
 - [x] 阶段 3：Java 17 后端镜像、Vue/Nginx 镜像、外部 MySQL Compose、冒烟与 Playwright 验收源码。
 - [x] 阶段 4B：Redis 轮换凭证、动态二维码、事务外校验、提交后清理及成员确认流程源码与自动化测试。
 - [x] 阶段 4C：Redis 原子固定窗口限流、登录本机降级、业务命令故障放行、429 契约和可信代理源码与自动化测试。
+- [x] 阶段 4D：双后端 Compose、Nginx upstream 证据、UUID 隔离夹具、k6 场景和一次性 SSH 远程执行源码已准备。
 - [ ] 阶段 3：Docker 镜像构建、Nginx 配置实测、Compose 启动、公开入口冒烟和浏览器 E2E 仍待在可用 Docker 主机执行。
 - [ ] 阶段 4B：真实手机、Nginx 和现有虚拟机 Redis 联调与故障恢复证据。
-- [ ] 阶段 4D–6：真实 Redis/多实例限流与 k6 压测、Kafka、监控及真实用户试用。
+- [ ] 阶段 4D：尚未在虚拟机完成真实运行；双实例路由、Redis 正常/故障、k6 指标、恢复与清理证据仍待执行。
+- [ ] 阶段 5–6：Kafka、监控及真实用户试用。
 
 正式规格见：[VolunteerFlow 修订版设计文档](docs/specs/2026-09-14-volunteerflow-revised-design.md)。
 
@@ -357,6 +359,18 @@ Redis 存储不可用异常时放行，继续依赖 MySQL 事务、行锁和唯�
 本阶段当前只具备源码与自动化测试证据；现有虚拟机 Redis 连通、多后端实例共享限流、真实
 Nginx 客户端地址以及吞吐量/延迟仍待阶段 4D 部署演练与 k6 压测，不能写成已验证结果。
 
+## 阶段 4D 双后端与 k6 验收准备
+
+阶段 4D：双后端、Nginx、隔离夹具、k6 与远程执行源码已准备。Compose 只管理本轮
+`backend-a`、`backend-b` 和前端 Nginx，不创建、停止或重建虚拟机上已有的 MySQL/Redis。
+压测夹具使用 UUID 精确命名、100 个独立访问令牌和清理前后数据库指纹；Redis 故障通过只
+重建本轮后端并指向不可达地址模拟。
+
+当前尚未在虚拟机完成真实运行，因此不得填写吞吐量或延迟，也不得宣称双 upstream、
+Redis 恢复和 20/80 数据库事实已经现场通过。操作顺序、失败恢复和证据门禁见
+[阶段 4D 真实部署与压测操作手册](docs/operations/stage-4d-live-load-test.md)；实测后只从 evidence
+填写[阶段 4D 报告模板](docs/reports/stage-4d-report-template.md)。
+
 ## 测试与验收目标
 
 核心验收场景：
@@ -383,6 +397,8 @@ Nginx 客户端地址以及吞吐量/延迟仍待阶段 4D 部署演练与 k6 �
 
 - [阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)
 - [阶段 4B–4C Redis 动态签到与限流操作手册](docs/operations/stage-4-redis.md)
+- [阶段 4D 真实部署与压测操作手册](docs/operations/stage-4d-live-load-test.md)
+- [阶段 4D 实测报告模板](docs/reports/stage-4d-report-template.md)
 - [修订版完整设计规格](docs/specs/2026-09-14-volunteerflow-revised-design.md)
 - [早期设计规格](docs/specs/2026-08-06-campus-volunteer-platform-design.md)
 - [项目交接说明](PROJECT_CONTEXT.md)
