@@ -219,6 +219,10 @@ for pattern in \
 done
 rm -f "$output"/tokens-*.json
 
+if ! compose down --remove-orphans > "$evidence/stack-down.log" 2>&1; then
+  cleanup_status='failed'
+fi
+
 cat > "$evidence/run-status.json" <<EOF
 {
   "runId": "$run_id",
@@ -234,10 +238,6 @@ EOF
 final_success=true
 if [[ "$primary_status" != success || "$recovery_status" != success || "$cleanup_status" != success ]]; then
   final_success=false
-fi
-
-if [[ "$final_success" == true ]]; then
-  compose down --remove-orphans > "$evidence/stack-down.log" 2>&1 || final_success=false
 fi
 
 if [[ "$final_success" == true ]]; then

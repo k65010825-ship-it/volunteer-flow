@@ -77,6 +77,7 @@ class Stage4dRunnerContractTest {
         .contains("fixture_action verify")
         .contains("restore_redis")
         .contains("cleanup_fixtures")
+        .contains("if ! compose down --remove-orphans")
         .contains("run-status.json")
         .contains("compose logs")
         .contains("upstream_addr=")
@@ -84,6 +85,8 @@ class Stage4dRunnerContractTest {
         .doesNotContain("docker stop redis")
         .doesNotContain("docker compose down -v");
     assertThat(remote.indexOf("restore_redis")).isLessThan(remote.indexOf("cleanup_fixtures"));
+    assertThat(remote.indexOf("if ! cleanup_fixtures"))
+        .isLessThan(remote.indexOf("if ! compose down --remove-orphans"));
     assertThat(attributes).contains("*.sh text eol=lf").contains("backend/mvnw text eol=lf");
   }
 
