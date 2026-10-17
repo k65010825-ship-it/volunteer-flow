@@ -57,6 +57,22 @@ class DeploymentComposeContractTest {
         .containsEntry("DYNAMIC_CHECKIN_WINDOW", "${DYNAMIC_CHECKIN_WINDOW:-30s}")
         .containsEntry("DYNAMIC_CHECKIN_TTL", "${DYNAMIC_CHECKIN_TTL:-45s}")
         .containsEntry("DYNAMIC_CHECKIN_TOKEN_BYTES", "${DYNAMIC_CHECKIN_TOKEN_BYTES:-24}")
+        .containsEntry("RATE_LIMIT_ENABLED", "${RATE_LIMIT_ENABLED:-true}")
+        .containsEntry("RATE_LIMIT_KEY_SECRET", "${RATE_LIMIT_KEY_SECRET:?set RATE_LIMIT_KEY_SECRET}")
+        .containsEntry("RATE_LIMIT_LOGIN_IP_LIMIT", "${RATE_LIMIT_LOGIN_IP_LIMIT:-20}")
+        .containsEntry("RATE_LIMIT_LOGIN_IP_WINDOW", "${RATE_LIMIT_LOGIN_IP_WINDOW:-1m}")
+        .containsEntry("RATE_LIMIT_LOGIN_USERNAME_LIMIT", "${RATE_LIMIT_LOGIN_USERNAME_LIMIT:-5}")
+        .containsEntry("RATE_LIMIT_LOGIN_USERNAME_WINDOW", "${RATE_LIMIT_LOGIN_USERNAME_WINDOW:-5m}")
+        .containsEntry("RATE_LIMIT_REGISTRATION_LIMIT", "${RATE_LIMIT_REGISTRATION_LIMIT:-3}")
+        .containsEntry("RATE_LIMIT_REGISTRATION_WINDOW", "${RATE_LIMIT_REGISTRATION_WINDOW:-10s}")
+        .containsEntry("RATE_LIMIT_PROMOTION_LIMIT", "${RATE_LIMIT_PROMOTION_LIMIT:-5}")
+        .containsEntry("RATE_LIMIT_PROMOTION_WINDOW", "${RATE_LIMIT_PROMOTION_WINDOW:-1m}")
+        .containsEntry("RATE_LIMIT_STATIC_CHECKIN_LIMIT", "${RATE_LIMIT_STATIC_CHECKIN_LIMIT:-5}")
+        .containsEntry("RATE_LIMIT_STATIC_CHECKIN_WINDOW", "${RATE_LIMIT_STATIC_CHECKIN_WINDOW:-1m}")
+        .containsEntry("RATE_LIMIT_DYNAMIC_CHECKIN_LIMIT", "${RATE_LIMIT_DYNAMIC_CHECKIN_LIMIT:-10}")
+        .containsEntry("RATE_LIMIT_DYNAMIC_CHECKIN_WINDOW", "${RATE_LIMIT_DYNAMIC_CHECKIN_WINDOW:-1m}")
+        .containsEntry("RATE_LIMIT_LOCAL_LOGIN_MAX_ENTRIES", "${RATE_LIMIT_LOCAL_LOGIN_MAX_ENTRIES:-10000}")
+        .containsEntry("RATE_LIMIT_LOCAL_LOGIN_CLEANUP_INTERVAL", "${RATE_LIMIT_LOCAL_LOGIN_CLEANUP_INTERVAL:-1m}")
         .containsEntry("BOOTSTRAP_ADMIN_USERNAME", "${BOOTSTRAP_ADMIN_USERNAME:-}")
         .containsEntry("BOOTSTRAP_ADMIN_PASSWORD", "${BOOTSTRAP_ADMIN_PASSWORD:-}")
         .containsEntry("BOOTSTRAP_ADMIN_REAL_NAME", "${BOOTSTRAP_ADMIN_REAL_NAME:-}")
@@ -81,6 +97,22 @@ class DeploymentComposeContractTest {
                 "DYNAMIC_CHECKIN_WINDOW",
                 "DYNAMIC_CHECKIN_TTL",
                 "DYNAMIC_CHECKIN_TOKEN_BYTES",
+                "RATE_LIMIT_ENABLED",
+                "RATE_LIMIT_KEY_SECRET",
+                "RATE_LIMIT_LOGIN_IP_LIMIT",
+                "RATE_LIMIT_LOGIN_IP_WINDOW",
+                "RATE_LIMIT_LOGIN_USERNAME_LIMIT",
+                "RATE_LIMIT_LOGIN_USERNAME_WINDOW",
+                "RATE_LIMIT_REGISTRATION_LIMIT",
+                "RATE_LIMIT_REGISTRATION_WINDOW",
+                "RATE_LIMIT_PROMOTION_LIMIT",
+                "RATE_LIMIT_PROMOTION_WINDOW",
+                "RATE_LIMIT_STATIC_CHECKIN_LIMIT",
+                "RATE_LIMIT_STATIC_CHECKIN_WINDOW",
+                "RATE_LIMIT_DYNAMIC_CHECKIN_LIMIT",
+                "RATE_LIMIT_DYNAMIC_CHECKIN_WINDOW",
+                "RATE_LIMIT_LOCAL_LOGIN_MAX_ENTRIES",
+                "RATE_LIMIT_LOCAL_LOGIN_CLEANUP_INTERVAL",
                 "BOOTSTRAP_ADMIN_USERNAME",
                 "BOOTSTRAP_ADMIN_PASSWORD",
                 "BOOTSTRAP_ADMIN_REAL_NAME",
@@ -110,6 +142,9 @@ class DeploymentComposeContractTest {
   @Test
   void exampleEnvironmentContainsOnlyPlaceholdersAndRealEnvironmentIsIgnored() throws IOException {
     String example = Files.readString(REPOSITORY_ROOT.resolve("deploy/.env.example"));
+    String backendExample = Files.readString(REPOSITORY_ROOT.resolve("backend/.env.example"));
+    String application =
+        Files.readString(REPOSITORY_ROOT.resolve("backend/src/main/resources/application.yml"));
     String gitignore = Files.readString(REPOSITORY_ROOT.resolve(".gitignore"));
 
     assertThat(example)
@@ -125,6 +160,10 @@ class DeploymentComposeContractTest {
         .contains("DYNAMIC_CHECKIN_WINDOW=30s")
         .contains("DYNAMIC_CHECKIN_TTL=45s")
         .contains("DYNAMIC_CHECKIN_TOKEN_BYTES=24")
+        .contains("RATE_LIMIT_ENABLED=true")
+        .contains("RATE_LIMIT_KEY_SECRET='replace-with-at-least-32-random-utf8-bytes'")
+        .contains("RATE_LIMIT_LOGIN_IP_LIMIT=20")
+        .contains("RATE_LIMIT_LOCAL_LOGIN_MAX_ENTRIES=10000")
         .contains("standard Base64 encoding of at least 32 random bytes")
         .contains("BOOTSTRAP_ADMIN_USERNAME=''")
         .contains("BOOTSTRAP_ADMIN_PASSWORD=''")
@@ -133,6 +172,16 @@ class DeploymentComposeContractTest {
         .doesNotContain("DB_PORT=3306")
         .doesNotContain("192.168.")
         .doesNotContain("127.0.0.1");
+    assertThat(backendExample)
+        .contains("RATE_LIMIT_ENABLED=true")
+        .contains("RATE_LIMIT_KEY_SECRET=replace_with_at_least_32_random_utf8_bytes")
+        .contains("RATE_LIMIT_REGISTRATION_WINDOW=10s")
+        .contains("RATE_LIMIT_DYNAMIC_CHECKIN_WINDOW=1m");
+    assertThat(application)
+        .contains("${DB_HOST:192.168.40.144}")
+        .contains("${DB_PORT:3307}")
+        .contains("${REDIS_HOST:192.168.40.144}")
+        .contains("${REDIS_PORT:6379}");
     assertThat(gitignore).contains("deploy/.env");
   }
 

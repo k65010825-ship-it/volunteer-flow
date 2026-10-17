@@ -103,6 +103,7 @@ management:
 
 server:
   shutdown: graceful
+  forward-headers-strategy: native
 
 logging:
   pattern:

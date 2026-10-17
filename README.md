@@ -210,9 +210,10 @@ VolunteerFlow/
 - [x] 阶段 3：站内通知、正式活动变更、普通签到码、人工补签、活动结束归档与出勤统计。
 - [x] 阶段 3：Java 17 后端镜像、Vue/Nginx 镜像、外部 MySQL Compose、冒烟与 Playwright 验收源码。
 - [x] 阶段 4B：Redis 轮换凭证、动态二维码、事务外校验、提交后清理及成员确认流程源码与自动化测试。
+- [x] 阶段 4C：Redis 原子固定窗口限流、登录本机降级、业务命令故障放行、429 契约和可信代理源码与自动化测试。
 - [ ] 阶段 3：Docker 镜像构建、Nginx 配置实测、Compose 启动、公开入口冒烟和浏览器 E2E 仍待在可用 Docker 主机执行。
 - [ ] 阶段 4B：真实手机、Nginx 和现有虚拟机 Redis 联调与故障恢复证据。
-- [ ] 阶段 4–6：其余限流/压测、Kafka、监控及真实用户试用。
+- [ ] 阶段 4D–6：真实 Redis/多实例限流与 k6 压测、Kafka、监控及真实用户试用。
 
 正式规格见：[VolunteerFlow 修订版设计文档](docs/specs/2026-09-14-volunteerflow-revised-design.md)。
 
@@ -341,6 +342,21 @@ Fragment 中，成员页面读取后先清除浏览器历史，再等待本人�
 | Vue/Vitest | 17 个测试文件、152 个测试通过 |
 | TypeScript/Vite | 类型检查通过，生产构建转换 169 个模块并生成 `dist` |
 
+## 阶段 4C Redis 接口限流
+
+登录按客户端 IP 和规范化用户名双重限流；报名、候补响应、普通签到和动态签到按
+“当前用户 + 业务资源”限流。Redis 通过 Lua 原子执行固定窗口计数，键中只保存
+HMAC-SHA-256 摘要，不保存原始 IP、用户名或业务 ID。超过策略时统一返回
+`429 RATE_LIMITED` 和 `Retry-After`。
+
+登录遇到 Redis 不可用时退化到容量受限的单进程本机计数器；其余四类业务限流遇到明确的
+Redis 存储不可用异常时放行，继续依赖 MySQL 事务、行锁和唯一约束保证业务正确性。Nginx
+把 `X-Forwarded-For` 覆盖为直接客户端地址，后端不在 Compose 中暴露端口。密钥、完整
+策略、故障边界和验证方法见[阶段 4B–4C Redis 操作手册](docs/operations/stage-4-redis.md)。
+
+本阶段当前只具备源码与自动化测试证据；现有虚拟机 Redis 连通、多后端实例共享限流、真实
+Nginx 客户端地址以及吞吐量/延迟仍待阶段 4D 部署演练与 k6 压测，不能写成已验证结果。
+
 ## 测试与验收目标
 
 核心验收场景：
@@ -366,7 +382,7 @@ Fragment 中，成员页面读取后先清除浏览器历史，再等待本人�
 ## 文档
 
 - [阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)
-- [阶段 4B Redis 动态签到操作手册](docs/operations/stage-4-redis.md)
+- [阶段 4B–4C Redis 动态签到与限流操作手册](docs/operations/stage-4-redis.md)
 - [修订版完整设计规格](docs/specs/2026-09-14-volunteerflow-revised-design.md)
 - [早期设计规格](docs/specs/2026-08-06-campus-volunteer-platform-design.md)
 - [项目交接说明](PROJECT_CONTEXT.md)

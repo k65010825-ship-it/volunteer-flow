@@ -58,9 +58,8 @@ describe("frontend container contract", () => {
 
     expect(nginx).toContain("proxy_set_header Host $host;");
     expect(nginx).toContain("proxy_set_header X-Real-IP $remote_addr;");
-    expect(nginx).toContain(
-      "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;",
-    );
+    expect(nginx).toContain("proxy_set_header X-Forwarded-For $remote_addr;");
+    expect(nginx).not.toContain("$proxy_add_x_forwarded_for");
     expect(nginx).toContain("proxy_set_header X-Forwarded-Proto $scheme;");
     expect(nginx).toContain("server_tokens off;");
     expect(nginx).toContain("proxy_hide_header X-Powered-By;");

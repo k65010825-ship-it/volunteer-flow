@@ -196,11 +196,6 @@ class JwtSecurityFlowTest {
     }
 
     @Bean
-    RateLimitGuard flowRateLimitGuard() {
-      return mock(RateLimitGuard.class);
-    }
-
-    @Bean
     JwtProperties flowJwtProperties() {
       JwtProperties properties = new JwtProperties();
       properties.setIssuer("volunteerflow");
