@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.springframework.boot.test.system.CapturedOutput;
 import org.springframework.boot.test.system.OutputCaptureExtension;
+import org.springframework.data.redis.RedisConnectionFailureException;
 
 @ExtendWith(OutputCaptureExtension.class)
 class RateLimitGuardTest {
@@ -126,7 +127,9 @@ class RateLimitGuardTest {
   void businessActionsFailOpenOnlyForStoreUnavailable() {
     RateLimitProperties properties = properties(true);
     when(store.evaluate(any(), any(), any()))
-        .thenThrow(new RateLimitStoreUnavailableException());
+        .thenThrow(
+            new RateLimitStoreUnavailableException(
+                new RedisConnectionFailureException("down")));
     assertThatCode(() -> guard(properties).checkRegistration(11, 21)).doesNotThrowAnyException();
 
     org.mockito.Mockito.reset(store);
@@ -153,7 +156,9 @@ class RateLimitGuardTest {
   void warningTextDoesNotContainRawSubjects(CapturedOutput output) {
     RateLimitProperties properties = properties(true);
     when(store.evaluate(any(), any(), any()))
-        .thenThrow(new RateLimitStoreUnavailableException());
+        .thenThrow(
+            new RateLimitStoreUnavailableException(
+                new RedisConnectionFailureException("down")));
     when(local.evaluate(any(), any(), any())).thenReturn(new RateLimitDecision(true, 0));
 
     guard(properties).checkLogin("203.0.113.91", "SensitiveUser");
@@ -161,6 +166,7 @@ class RateLimitGuardTest {
 
     assertThat(output.getOut() + output.getErr())
         .contains("Rate-limit store unavailable")
+        .contains("RedisConnectionFailureException")
         .doesNotContain("203.0.113.91")
         .doesNotContain("SensitiveUser")
         .doesNotContain("981723")

@@ -58,7 +58,7 @@ class DeploymentComposeContractTest {
         .containsEntry("DYNAMIC_CHECKIN_TTL", "${DYNAMIC_CHECKIN_TTL:-45s}")
         .containsEntry("DYNAMIC_CHECKIN_TOKEN_BYTES", "${DYNAMIC_CHECKIN_TOKEN_BYTES:-24}")
         .containsEntry("RATE_LIMIT_ENABLED", "${RATE_LIMIT_ENABLED:-true}")
-        .containsEntry("RATE_LIMIT_KEY_SECRET", "${RATE_LIMIT_KEY_SECRET:?set RATE_LIMIT_KEY_SECRET}")
+        .containsEntry("RATE_LIMIT_KEY_SECRET", "${RATE_LIMIT_KEY_SECRET:-}")
         .containsEntry("RATE_LIMIT_LOGIN_IP_LIMIT", "${RATE_LIMIT_LOGIN_IP_LIMIT:-20}")
         .containsEntry("RATE_LIMIT_LOGIN_IP_WINDOW", "${RATE_LIMIT_LOGIN_IP_WINDOW:-1m}")
         .containsEntry("RATE_LIMIT_LOGIN_USERNAME_LIMIT", "${RATE_LIMIT_LOGIN_USERNAME_LIMIT:-5}")

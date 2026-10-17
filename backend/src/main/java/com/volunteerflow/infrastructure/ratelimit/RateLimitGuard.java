@@ -39,7 +39,9 @@ public final class RateLimitGuard {
       usernameDecision =
           store.evaluate("login-username", usernameHash, properties.login().username());
     } catch (RateLimitStoreUnavailableException exception) {
-      log.warn("Rate-limit store unavailable; using bounded local login fallback");
+      log.warn(
+          "Rate-limit store unavailable; using bounded local login fallback; failureType={}",
+          failureType(exception));
       ipDecision = localLogin.evaluate("login-ip", ipHash, properties.login().ip());
       usernameDecision =
           localLogin.evaluate("login-username", usernameHash, properties.login().username());
@@ -73,8 +75,16 @@ public final class RateLimitGuard {
     try {
       rejectIfNecessary(store.evaluate(action, subjectHash, policy));
     } catch (RateLimitStoreUnavailableException exception) {
-      log.warn("Rate-limit store unavailable; allowing business action: action={}", action);
+      log.warn(
+          "Rate-limit store unavailable; allowing business action: action={}, failureType={}",
+          action,
+          failureType(exception));
     }
+  }
+
+  private static String failureType(RateLimitStoreUnavailableException exception) {
+    Throwable failure = exception.getCause() == null ? exception : exception.getCause();
+    return failure.getClass().getName();
   }
 
   private static void rejectIfNecessary(RateLimitDecision... decisions) {
