@@ -9,3 +9,7 @@ management:
   endpoint:
     health:
       validate-group-membership: false
+
+volunteerflow:
+  rate-limit:
+    key-secret: 0123456789abcdef0123456789abcdef

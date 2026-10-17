@@ -21,6 +21,31 @@ spring:
       timeout: ${REDIS_COMMAND_TIMEOUT:2s}
 
 volunteerflow:
+  rate-limit:
+    enabled: ${RATE_LIMIT_ENABLED:true}
+    key-secret: ${RATE_LIMIT_KEY_SECRET:}
+    login:
+      ip:
+        limit: ${RATE_LIMIT_LOGIN_IP_LIMIT:20}
+        window: ${RATE_LIMIT_LOGIN_IP_WINDOW:1m}
+      username:
+        limit: ${RATE_LIMIT_LOGIN_USERNAME_LIMIT:5}
+        window: ${RATE_LIMIT_LOGIN_USERNAME_WINDOW:5m}
+    registration:
+      limit: ${RATE_LIMIT_REGISTRATION_LIMIT:3}
+      window: ${RATE_LIMIT_REGISTRATION_WINDOW:10s}
+    promotion-response:
+      limit: ${RATE_LIMIT_PROMOTION_LIMIT:5}
+      window: ${RATE_LIMIT_PROMOTION_WINDOW:1m}
+    static-checkin:
+      limit: ${RATE_LIMIT_STATIC_CHECKIN_LIMIT:5}
+      window: ${RATE_LIMIT_STATIC_CHECKIN_WINDOW:1m}
+    dynamic-checkin:
+      limit: ${RATE_LIMIT_DYNAMIC_CHECKIN_LIMIT:10}
+      window: ${RATE_LIMIT_DYNAMIC_CHECKIN_WINDOW:1m}
+    local-login:
+      max-entries: ${RATE_LIMIT_LOCAL_LOGIN_MAX_ENTRIES:10000}
+      cleanup-interval: ${RATE_LIMIT_LOCAL_LOGIN_CLEANUP_INTERVAL:1m}
   cache:
     activity-detail:
       ttl: ${ACTIVITY_DETAIL_CACHE_TTL:5m}
