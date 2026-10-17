@@ -3,6 +3,8 @@ package com.volunteerflow.registration;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -13,6 +15,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.volunteerflow.auth.CurrentUser;
+import com.volunteerflow.infrastructure.ratelimit.RateLimitExceededException;
+import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.infrastructure.web.GlobalExceptionHandler;
 import com.volunteerflow.registration.RegistrationSubmissionService.RegistrationResult;
@@ -41,6 +45,7 @@ class RegistrationControllerTest {
   private RegistrationCancellationService cancellations;
   private RegistrationReviewService reviews;
   private PromotionService promotions;
+  private RateLimitGuard rateLimits;
   private MockMvc mvc;
 
   @BeforeEach
@@ -50,16 +55,63 @@ class RegistrationControllerTest {
     cancellations = mock(RegistrationCancellationService.class);
     reviews = mock(RegistrationReviewService.class);
     promotions = mock(PromotionService.class);
+    rateLimits = mock(RateLimitGuard.class);
     mvc =
         MockMvcBuilders.standaloneSetup(
                 new RegistrationController(
-                    submissions, queries, cancellations, reviews, promotions))
+                    submissions, queries, cancellations, reviews, promotions, rateLimits))
             .setControllerAdvice(new GlobalExceptionHandler())
             .setCustomArgumentResolvers(new AuthenticationPrincipalArgumentResolver())
             .build();
     CurrentUser user = new CurrentUser(21L, "member", "Member", "20260021", "contact", "USER");
     SecurityContextHolder.getContext()
         .setAuthentication(new UsernamePasswordAuthenticationToken(user, null, List.of()));
+  }
+
+  @Test
+  void registrationChecksUserAndActivityBeforeSubmission() throws Exception {
+    when(submissions.submit(eq(21L), eq(10L), any()))
+        .thenReturn(new RegistrationResult(30L, 40L, "CONFIRMED", null, null));
+
+    mvc.perform(
+            post("/api/v1/activities/10/registrations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"positionId\":20,\"answers\":[]}"))
+        .andExpect(status().isCreated());
+
+    var order = inOrder(rateLimits, submissions);
+    order.verify(rateLimits).checkRegistration(21L, 10L);
+    order.verify(submissions).submit(eq(21L), eq(10L), any());
+  }
+
+  @Test
+  void promotionResponseChecksUserAndOfferBeforeService() throws Exception {
+    when(promotions.respond(eq(21L), eq(50L), any())).thenReturn(offer("ACCEPTED"));
+
+    mvc.perform(
+            post("/api/v1/promotion-offers/50/responses")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"decision\":\"ACCEPT\"}"))
+        .andExpect(status().isOk());
+
+    var order = inOrder(rateLimits, promotions);
+    order.verify(rateLimits).checkPromotionResponse(21L, 50L);
+    order.verify(promotions).respond(eq(21L), eq(50L), any());
+  }
+
+  @Test
+  void registrationRejectionSkipsSubmissionService() throws Exception {
+    doThrow(new RateLimitExceededException(4))
+        .when(rateLimits)
+        .checkRegistration(21L, 10L);
+
+    mvc.perform(
+            post("/api/v1/activities/10/registrations")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"positionId\":20,\"answers\":[]}"))
+        .andExpect(status().isTooManyRequests());
+
+    verifyNoInteractions(submissions);
   }
 
   @AfterEach

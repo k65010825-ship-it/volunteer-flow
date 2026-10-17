@@ -1,6 +1,8 @@
 package com.volunteerflow.auth;
 
+import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
 import com.volunteerflow.infrastructure.web.ApiResponse;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.time.Duration;
 import java.time.Instant;
@@ -24,12 +26,15 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/v1/auth")
 public class AuthController {
   private final AuthService authService;
+  private final RateLimitGuard rateLimits;
   private final boolean secureCookie;
 
   public AuthController(
       AuthService authService,
+      RateLimitGuard rateLimits,
       @Value("${volunteerflow.auth.secure-cookie:false}") boolean secureCookie) {
     this.authService = authService;
+    this.rateLimits = rateLimits;
     this.secureCookie = secureCookie;
   }
 
@@ -43,7 +48,9 @@ public class AuthController {
   @PostMapping("/login")
   public ResponseEntity<ApiResponse<AccessTokenResponse>> login(
       @Valid @RequestBody LoginRequest request,
-      @RequestHeader(value = "User-Agent", required = false) String deviceName) {
+      @RequestHeader(value = "User-Agent", required = false) String deviceName,
+      HttpServletRequest servletRequest) {
+    rateLimits.checkLogin(servletRequest.getRemoteAddr(), request.username());
     return response(authService.login(request, deviceName), HttpStatus.OK);
   }
 

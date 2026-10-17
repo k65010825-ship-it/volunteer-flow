@@ -2,6 +2,7 @@ package com.volunteerflow.registration;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.volunteerflow.auth.CurrentUser;
+import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
 import com.volunteerflow.infrastructure.web.ApiResponse;
 import com.volunteerflow.registration.RegistrationSubmissionService.AnswerInput;
 import com.volunteerflow.registration.RegistrationSubmissionService.RegistrationResult;
@@ -38,18 +39,21 @@ public class RegistrationController {
   private final RegistrationCancellationService cancellations;
   private final RegistrationReviewService reviews;
   private final PromotionService promotions;
+  private final RateLimitGuard rateLimits;
 
   public RegistrationController(
       RegistrationSubmissionService submissions,
       RegistrationQueryService queries,
       RegistrationCancellationService cancellations,
       RegistrationReviewService reviews,
-      PromotionService promotions) {
+      PromotionService promotions,
+      RateLimitGuard rateLimits) {
     this.submissions = submissions;
     this.queries = queries;
     this.cancellations = cancellations;
     this.reviews = reviews;
     this.promotions = promotions;
+    this.rateLimits = rateLimits;
   }
 
   @PostMapping("/activities/{activityId}/registrations")
@@ -63,6 +67,7 @@ public class RegistrationController {
                 answer ->
                     new AnswerInput(answer.questionScope(), answer.questionId(), answer.answer()))
             .toList();
+    rateLimits.checkRegistration(currentUser.id(), activityId);
     RegistrationResult result =
         submissions.submit(
             currentUser.id(),
@@ -98,6 +103,7 @@ public class RegistrationController {
       @AuthenticationPrincipal CurrentUser currentUser,
       @PathVariable("offerId") Long offerId,
       @Valid @RequestBody PromotionResponseBody body) {
+    rateLimits.checkPromotionResponse(currentUser.id(), offerId);
     PromotionOffer offer =
         promotions.respond(
             currentUser.id(),

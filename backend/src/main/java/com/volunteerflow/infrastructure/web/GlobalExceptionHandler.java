@@ -1,8 +1,10 @@
 package com.volunteerflow.infrastructure.web;
 
+import com.volunteerflow.infrastructure.ratelimit.RateLimitExceededException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.dao.OptimisticLockingFailureException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
@@ -12,6 +14,21 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+  @ExceptionHandler(RateLimitExceededException.class)
+  public ResponseEntity<ProblemDetail> handleRateLimit(
+      RateLimitExceededException exception, HttpServletRequest request) {
+    long retryAfterSeconds = Math.max(1L, exception.retryAfterSeconds());
+    ProblemDetail body =
+        problemBody(
+            HttpStatus.TOO_MANY_REQUESTS,
+            "RATE_LIMITED",
+            "Too many requests; retry later",
+            request);
+    return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+        .header(HttpHeaders.RETRY_AFTER, Long.toString(retryAfterSeconds))
+        .body(body);
+  }
 
   @ExceptionHandler(BusinessException.class)
   public ResponseEntity<ProblemDetail> handleBusiness(
@@ -48,9 +65,14 @@ public class GlobalExceptionHandler {
 
   private ResponseEntity<ProblemDetail> problem(
       HttpStatus status, String code, String detail, HttpServletRequest request) {
+    return ResponseEntity.status(status).body(problemBody(status, code, detail, request));
+  }
+
+  private ProblemDetail problemBody(
+      HttpStatus status, String code, String detail, HttpServletRequest request) {
     ProblemDetail body = ProblemDetail.forStatusAndDetail(status, detail);
     body.setProperty("code", code);
     body.setProperty("requestId", request.getAttribute("requestId"));
-    return ResponseEntity.status(status).body(body);
+    return body;
   }
 }

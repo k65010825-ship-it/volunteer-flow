@@ -16,6 +16,7 @@ import com.volunteerflow.auth.AppUserMapper;
 import com.volunteerflow.auth.AuthController;
 import com.volunteerflow.auth.AuthService;
 import com.volunteerflow.auth.CurrentUser;
+import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
 import com.volunteerflow.registration.PromotionService;
 import com.volunteerflow.registration.RegistrationCancellationService;
 import com.volunteerflow.registration.RegistrationController;
@@ -163,13 +164,15 @@ class JwtSecurityFlowTest {
   @TestConfiguration(proxyBeanMethods = false)
   static class FlowConfig {
     @Bean
-    RegistrationController flowRegistrationController(RegistrationSubmissionService submissions) {
+    RegistrationController flowRegistrationController(
+        RegistrationSubmissionService submissions, RateLimitGuard rateLimits) {
       return new RegistrationController(
           submissions,
           mock(RegistrationQueryService.class),
           mock(RegistrationCancellationService.class),
           mock(RegistrationReviewService.class),
-          mock(PromotionService.class));
+          mock(PromotionService.class),
+          rateLimits);
     }
 
     @Bean
@@ -188,8 +191,13 @@ class JwtSecurityFlowTest {
     }
 
     @Bean
-    AuthController flowAuthController(AuthService service) {
-      return new AuthController(service, false);
+    AuthController flowAuthController(AuthService service, RateLimitGuard rateLimits) {
+      return new AuthController(service, rateLimits, false);
+    }
+
+    @Bean
+    RateLimitGuard flowRateLimitGuard() {
+      return mock(RateLimitGuard.class);
     }
 
     @Bean

@@ -15,6 +15,8 @@ import com.volunteerflow.checkin.CheckinService.*;
 import com.volunteerflow.checkin.CheckinSessionService.*;
 import com.volunteerflow.checkin.CheckinViews.*;
 import com.volunteerflow.infrastructure.security.SecurityConfig;
+import com.volunteerflow.infrastructure.ratelimit.RateLimitExceededException;
+import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.infrastructure.web.JacksonConfig;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
@@ -48,6 +50,7 @@ class CheckinControllerTest {
   @MockitoBean AttendanceQueryService queries;
   @MockitoBean DynamicCheckinCodeService dynamicCodes;
   @MockitoBean DynamicCheckinService dynamicCheckins;
+  @MockitoBean RateLimitGuard rateLimits;
   private final LocalDateTime now = LocalDateTime.of(2026, 10, 10, 8, 0);
   private UsernamePasswordAuthenticationToken principal;
 
@@ -124,6 +127,21 @@ class CheckinControllerTest {
   }
 
   @Test
+  void dynamicCheckinChecksUserAndSessionBeforeService() throws Exception {
+    when(dynamicCheckins.selfCheckin(eq(21L), eq(101L), any()))
+        .thenReturn(new CheckinResult(401L, 11L, 21L, "SELF_SERVICE", now));
+
+    perform(
+            post("/api/v1/check-in-sessions/101/dynamic-check-ins"),
+            "{\"windowEpochSecond\":1792137600,\"token\":\"secret-token\"}")
+        .andExpect(status().isCreated());
+
+    var order = inOrder(rateLimits, dynamicCheckins);
+    order.verify(rateLimits).checkDynamicCheckin(21L, 101L);
+    order.verify(dynamicCheckins).selfCheckin(eq(21L), eq(101L), any());
+  }
+
+  @Test
   void malformedDynamicCredentialUsesUniformBusiness422() throws Exception {
     when(dynamicCheckins.selfCheckin(eq(21L), eq(101L), any()))
         .thenThrow(error(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_DYNAMIC_CHECKIN_CODE"));
@@ -169,6 +187,37 @@ class CheckinControllerTest {
     noSecrets(response.getResponse().getContentAsString());
     verify(queries).selfRequest(21L, 101L, "ABCD2345");
     verify(checkins).selfCheckin(21L, 101L, request);
+  }
+
+  @Test
+  void staticCheckinChecksUserAndSessionBeforeService() throws Exception {
+    var request = new CheckinRequest(11L, "ABCD2345");
+    when(queries.selfRequest(21L, 101L, "ABCD2345")).thenReturn(request);
+    when(checkins.selfCheckin(21L, 101L, request)).thenReturn(result("SELF_SERVICE"));
+
+    perform(
+            post("/api/v1/check-in-sessions/101/check-ins"),
+            "{\"code\":\"ABCD2345\"}")
+        .andExpect(status().isCreated());
+
+    var order = inOrder(rateLimits, queries, checkins);
+    order.verify(rateLimits).checkStaticCheckin(21L, 101L);
+    order.verify(queries).selfRequest(21L, 101L, "ABCD2345");
+    order.verify(checkins).selfCheckin(21L, 101L, request);
+  }
+
+  @Test
+  void checkinRejectionSkipsDomainServices() throws Exception {
+    doThrow(new RateLimitExceededException(3))
+        .when(rateLimits)
+        .checkStaticCheckin(21L, 101L);
+
+    perform(
+            post("/api/v1/check-in-sessions/101/check-ins"),
+            "{\"code\":\"ABCD2345\"}")
+        .andExpect(status().isTooManyRequests());
+
+    verifyNoInteractions(queries, checkins);
   }
 
   @Test
