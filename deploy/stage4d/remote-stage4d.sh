@@ -39,14 +39,21 @@ export STAGE4D_DATASET=normal
 export EXPECTED_RATE_LIMIT_ALLOWED="${EXPECTED_RATE_LIMIT_ALLOWED:-3}"
 export EXPECTED_RATE_LIMIT_REJECTED="${EXPECTED_RATE_LIMIT_REJECTED:-1}"
 
+source "$repo/deploy/stage4d/lib/dotenv.sh"
+
 read_env() {
   local name="$1" line value count
   count=$(grep -Ec "^${name}=" "$compose_env" || true)
   [[ "$count" == '1' ]] || return 1
   line=$(grep -E "^${name}=" "$compose_env")
   value=${line#*=}
-  if [[ "$value" == \'*\' && "$value" == *\' ]]; then
+  if [[ "$value" == \"* || "$value" == *\" ]]; then
+    return 1
+  fi
+  if [[ "$value" == \'* || "$value" == *\' ]]; then
+    [[ "$value" == \'*\' && "$value" == *\' ]] || return 1
     value=${value:1:${#value}-2}
+    value=$(decode_quoted_env_value "$value") || return 1
   fi
   printf '%s' "$value"
 }
@@ -57,10 +64,15 @@ db_host=$(read_env DB_HOST)
 db_port=$(read_env DB_PORT)
 app_port=$(read_env STAGE4D_APP_PORT 2>/dev/null || printf '%s' "$STAGE4D_APP_PORT")
 minimum_available_kb=$(read_env STAGE4D_MIN_AVAILABLE_KB 2>/dev/null || printf '%s' '5242880')
+mysql_container=$(read_env STAGE4D_MYSQL_CONTAINER 2>/dev/null || printf '%s' 'mysql')
+redis_container=$(read_env STAGE4D_REDIS_CONTAINER 2>/dev/null || printf '%s' 'redis-web')
 [[ "$minimum_available_kb" =~ ^[0-9]+$ && "$minimum_available_kb" -ge 3145728 ]] || {
   printf 'STAGE4D_MIN_AVAILABLE_KB must be an integer of at least 3145728\n' >&2
   exit 2
 }
+container_name_pattern='^[A-Za-z0-9][A-Za-z0-9_.-]*$'
+[[ "$mysql_container" =~ $container_name_pattern ]] || { printf 'Invalid MySQL container name\n' >&2; exit 2; }
+[[ "$redis_container" =~ $container_name_pattern ]] || { printf 'Invalid Redis container name\n' >&2; exit 2; }
 export REDIS_HOST="$real_redis_host"
 export REDIS_PORT="$real_redis_port"
 
@@ -119,11 +131,52 @@ collect_logs() {
   compose logs --no-color frontend-nginx > "$evidence/nginx-access.log" 2>&1 || true
 }
 
+scan_evidence_for_secrets() {
+  local name value
+  for name in DB_PASSWORD JWT_SECRET REDIS_PASSWORD RATE_LIMIT_KEY_SECRET BOOTSTRAP_ADMIN_PASSWORD; do
+    if ! grep -q "^${name}=" "$compose_env"; then
+      continue
+    fi
+    if ! value=$(read_env "$name" 2>/dev/null); then
+      printf 'FAIL\n' > "$evidence/evidence-secret-scan.txt"
+      return 1
+    fi
+    if [[ -n "$value" ]] && grep -R -F -q -- "$value" "$evidence"; then
+      printf 'FAIL\n' > "$evidence/evidence-secret-scan.txt"
+      return 1
+    fi
+  done
+  if grep -R -E -q -- '-----BEGIN (OPENSSH|RSA|EC) PRIVATE KEY-----|Bearer[[:space:]]+eyJ|eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}' "$evidence"; then
+    printf 'FAIL\n' > "$evidence/evidence-secret-scan.txt"
+    return 1
+  fi
+  printf 'PASS\n' > "$evidence/evidence-secret-scan.txt"
+}
+
 preflight() {
   command -v docker >/dev/null
   command -v curl >/dev/null
   command -v timeout >/dev/null
+  command -v lscpu >/dev/null
+  command -v free >/dev/null
   docker compose version > "$evidence/docker-compose-version.txt"
+  cat /etc/os-release > "$evidence/vm-os-release.txt"
+  uname -a > "$evidence/vm-kernel.txt"
+  lscpu > "$evidence/vm-cpu.txt"
+  free -b > "$evidence/vm-memory.txt"
+  df -PT "$remote_root" > "$evidence/vm-disk.txt"
+  docker version > "$evidence/docker-version.txt"
+  : > "$evidence/service-containers.jsonl"
+  docker inspect --format '{"id":"{{.Id}}","name":"{{.Name}}","image":"{{.Config.Image}}","running":{{.State.Running}}}' \
+    "$mysql_container" >> "$evidence/service-containers.jsonl"
+  docker inspect --format '{"id":"{{.Id}}","name":"{{.Name}}","image":"{{.Config.Image}}","running":{{.State.Running}}}' \
+    "$redis_container" >> "$evidence/service-containers.jsonl"
+  docker inspect --format 'image={{.Config.Image}} id={{.Id}} running={{.State.Running}}' \
+    "$mysql_container" > "$evidence/mysql-version.txt"
+  docker exec "$mysql_container" mysqld --version >> "$evidence/mysql-version.txt"
+  docker inspect --format 'image={{.Config.Image}} id={{.Id}} running={{.State.Running}}' \
+    "$redis_container" > "$evidence/redis-version.txt"
+  docker exec "$redis_container" redis-server --version >> "$evidence/redis-version.txt"
   local available_kb
   available_kb=$(df -Pk "$remote_root" | awk 'NR==2 {print $4}')
   [[ "$available_kb" =~ ^[0-9]+$ && "$available_kb" -ge "$minimum_available_kb" ]]
@@ -133,7 +186,7 @@ preflight() {
     printf 'Stage 4D public port is already occupied\n' >&2
     return 1
   fi
-  printf '{"docker":true,"disk":true,"mysql":true,"redis":true,"port":true}\n' > "$evidence/preflight.json"
+  printf '{"docker":true,"disk":true,"mysql":true,"redis":true,"port":true,"metadata":true}\n' > "$evidence/preflight.json"
 }
 
 primary_flow() {
@@ -172,10 +225,15 @@ primary_flow() {
   printf 'outage-registration' > "$evidence/current-step.txt"
   run_k6 registration.js outage
   fixture_action verify outage
+  printf 'outage-login-fallback' > "$evidence/current-step.txt"
+  run_k6 outage-login-fallback.js outage
+  printf 'outage-dynamic-checkin' > "$evidence/current-step.txt"
+  run_k6 outage-dynamic-checkin.js outage
 
   printf 'redis-recovery' > "$evidence/current-step.txt"
   restore_redis
   cp "$evidence/readiness-latest.json" "$evidence/readiness-recovered.json"
+  run_k6 recovered-shared-rate-limit.js outage
   run_k6 recovery.js outage
 
   printf 'nginx-upstream-evidence' > "$evidence/current-step.txt"
@@ -221,6 +279,11 @@ for pattern in \
   find "$output" -maxdepth 1 -type f -name "$pattern" -exec cp {} "$evidence/" \;
 done
 rm -f "$output"/tokens-*.json
+
+if ! scan_evidence_for_secrets; then
+  primary_status='failed'
+  primary_step='evidence-secret-scan'
+fi
 
 if ! compose down --remove-orphans --rmi local > "$evidence/stack-down.log" 2>&1; then
   cleanup_status='failed'

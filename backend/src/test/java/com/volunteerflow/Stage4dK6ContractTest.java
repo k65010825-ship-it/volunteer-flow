@@ -16,6 +16,50 @@ class Stage4dK6ContractTest {
       List.of("registration.js", "rate-limit.js", "recovery.js");
 
   @Test
+  void outageScenariosCoverPerProcessLoginFallbackAndDynamicCheckinUnavailability()
+      throws IOException {
+    String login = read("outage-login-fallback.js");
+    String dynamicCheckin = read("outage-dynamic-checkin.js");
+    String recoveredRateLimit = read("recovered-shared-rate-limit.js");
+
+    assertThat(login)
+        .contains("BACKEND_A_URL")
+        .contains("BACKEND_B_URL")
+        .contains("/api/v1/auth/login")
+        .contains("response.status === 401")
+        .contains("response.status === 429")
+        .contains("Retry-After")
+        .contains("local_login_allowed")
+        .contains("local_login_rejected")
+        .contains("export function handleSummary(data)")
+        .doesNotContain("192.168.");
+    assertThat(dynamicCheckin)
+        .contains("http.batch(requests)")
+        .contains("item.status === \"CONFIRMED\"")
+        .contains("manifest.checkinSessionId")
+        .contains("DYNAMIC_CHECKIN_WINDOW")
+        .contains("Math.floor")
+        .contains("/dynamic-check-ins")
+        .contains("response.status === 503")
+        .contains("DYNAMIC_CHECKIN_UNAVAILABLE")
+        .contains("dynamic_checkin_unavailable")
+        .contains("export function handleSummary(data)")
+        .doesNotContain("windowEpochSecond: 1")
+        .doesNotContain("192.168.");
+    assertThat(recoveredRateLimit)
+        .contains("BACKEND_A_URL")
+        .contains("BACKEND_B_URL")
+        .contains("index % backendUrls.length")
+        .contains("recovered_backend_a_requests")
+        .contains("recovered_backend_b_requests")
+        .contains("rate_limit_allowed")
+        .contains("rate_limit_rejected")
+        .contains("Retry-After")
+        .contains("export function handleSummary(data)")
+        .doesNotContain("192.168.");
+  }
+
+  @Test
   void sharedConfigurationFailsClosedBeforeLoadBegins() throws IOException {
     String config = read("lib/config.js");
 
@@ -30,6 +74,7 @@ class Stage4dK6ContractTest {
         .contains("canonical lowercase UUID")
         .contains("manifest.runId !== RUN_ID")
         .contains("manifest.dataset !== DATASET")
+        .contains("manifest.checkinSessionId")
         .contains("token user IDs must exactly match manifest member IDs")
         .contains("open(MANIFEST_PATH)")
         .contains("open(TOKENS_PATH)")

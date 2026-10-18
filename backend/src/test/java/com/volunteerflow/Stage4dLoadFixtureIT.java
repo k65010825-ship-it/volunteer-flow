@@ -9,6 +9,8 @@ import com.volunteerflow.auth.AccessTokenIssuer;
 import com.volunteerflow.auth.AppUser;
 import com.volunteerflow.auth.AppUserMapper;
 import com.volunteerflow.checkin.ActivityFinalizationJob;
+import com.volunteerflow.checkin.CheckinSessionService;
+import com.volunteerflow.checkin.CheckinSessionService.OpenSessionRequest;
 import com.volunteerflow.organization.CreateInviteRequest;
 import com.volunteerflow.organization.OrganizationService;
 import com.volunteerflow.registration.PromotionExpiryJob;
@@ -72,6 +74,7 @@ class Stage4dLoadFixtureIT {
   private final AppUserMapper users;
   private final OrganizationService organizations;
   private final ActivityService activities;
+  private final CheckinSessionService checkinSessions;
   private final PasswordEncoder passwords;
   private final AccessTokenIssuer tokenIssuer;
   private final JdbcTemplate sql;
@@ -86,6 +89,7 @@ class Stage4dLoadFixtureIT {
       AppUserMapper users,
       OrganizationService organizations,
       ActivityService activities,
+      CheckinSessionService checkinSessions,
       PasswordEncoder passwords,
       AccessTokenIssuer tokenIssuer,
       JdbcTemplate sql,
@@ -94,6 +98,7 @@ class Stage4dLoadFixtureIT {
     this.users = users;
     this.organizations = organizations;
     this.activities = activities;
+    this.checkinSessions = checkinSessions;
     this.passwords = passwords;
     this.tokenIssuer = tokenIssuer;
     this.sql = sql;
@@ -246,6 +251,11 @@ class Stage4dLoadFixtureIT {
                 null,
                 "Stage 4D isolated location"));
     activities.publish(administrator.getId(), activity.getId());
+    var checkinSession =
+        checkinSessions.open(
+            administrator.getId(),
+            activity.getId(),
+            new OpenSessionRequest(120, "DYNAMIC_QR"));
 
     List<Stage4dFixtureManifest.Member> manifestMembers =
         members.stream()
@@ -267,6 +277,7 @@ class Stage4dLoadFixtureIT {
             organization.getId(),
             activity.getId(),
             position.getId(),
+            checkinSession.sessionId(),
             manifestMembers);
     Stage4dFixtureManifest.write(output, identity, manifest, tokens, objectMapper);
   }

@@ -67,17 +67,19 @@ $result
 
 | 顺序 | 动作 | 主要 evidence |
 |---|---|---|
-| 1 | Docker、Compose、磁盘、端口、MySQL、Redis preflight | `preflight.json`、`docker-compose-version.txt` |
+| 1 | Docker、Compose、磁盘、端口、MySQL、Redis preflight，并采集 OS、内核、CPU、内存、磁盘、指定服务容器白名单字段及服务版本 | `preflight.json`、`vm-os-release.txt`、`vm-kernel.txt`、`vm-cpu.txt`、`vm-memory.txt`、`vm-disk.txt`、`docker-version.txt`、`service-containers.jsonl`、`mysql-version.txt`、`redis-version.txt` |
 | 2 | 生成不展开密钥的 Compose 配置并构建镜像 | `compose-config.yml`、`build.log` |
 | 3 | 启动 `backend-a`、`backend-b` 与 Nginx，等待 readiness | `readiness-initial.json` |
 | 4 | 创建 normal 隔离夹具，100 VU 同步报名并验证 20/80 | `k6-registration-normal.log`、`registration-<runId>-normal-summary.json`、`verification-normal.json` |
 | 5 | 等待限流窗口后检查 401、允许次数、429 与 `Retry-After` | `k6-rate-limit-normal.log`、`rate-limit-<runId>-normal-summary.json` |
 | 6 | 创建 outage 夹具，只把本轮后端 Redis 地址改为 `127.0.0.1` | `redis-outage.log` |
 | 7 | Redis 不可达时再次执行 100 VU 报名和数据库事实验证 | `k6-registration-outage.log`、`verification-outage.json` |
-| 8 | 恢复真实 Redis 地址、重建本轮后端并执行恢复读取 | `redis-restore.log`、`k6-recovery-outage.log`、`readiness-recovered.json` |
-| 9 | 证明 Nginx 实际访问两个 upstream | `nginx-upstream.log`、`upstream-addresses.txt` |
-| 10 | 保存容器日志，按 outage→normal 清理夹具并比对基线 | `container.log`、`fixture-cleanup-outage.log`、`fixture-cleanup-normal.log`、`fixture-assert-snapshot-*.log` |
-| 11 | 成功时只移除本轮 Compose 栈 | `stack-down.log` |
+| 8 | Redis 不可达时分别直连两个后端，验证每个进程的登录本机降级允许 5 次并在第 6 次返回带 `Retry-After` 的 429 | `k6-outage-login-fallback-outage.log`、`outage-login-fallback-<runId>-outage-summary.json` |
+| 9 | Redis 不可达时使用正式成员验证动态签到返回 `503 DYNAMIC_CHECKIN_UNAVAILABLE` | `k6-outage-dynamic-checkin-outage.log`、`outage-dynamic-checkin-<runId>-outage-summary.json` |
+| 10 | 恢复真实 Redis 地址并重建本轮后端，用同一用户交替直连两个实例复验共享限流，再执行恢复读取 | `redis-restore.log`、`k6-recovered-shared-rate-limit-outage.log`、`recovered-shared-rate-limit-<runId>-outage-summary.json`、`k6-recovery-outage.log`、`readiness-recovered.json` |
+| 11 | 证明 Nginx 实际访问两个 upstream | `nginx-upstream.log`、`upstream-addresses.txt` |
+| 12 | 保存容器日志，按 outage→normal 清理夹具并比对基线 | `container.log`、`fixture-cleanup-outage.log`、`fixture-cleanup-normal.log`、`fixture-assert-snapshot-*.log` |
+| 13 | 成功时只移除本轮 Compose 栈 | `stack-down.log` |
 
 业务事实必须是 100 个不同成员、20 个 `CONFIRMED`、80 个 `WAITLISTED`、候补序号 1–80、下一候补序号 81。k6 的业务阈值只判断意外状态与业务失败为 0；延迟仅记录，不预设或伪造 SLA。
 
@@ -96,9 +98,13 @@ Get-Content ".\output\stage4d\$run\remote-run-status.json"
 - `primaryStatus`、`recoveryStatus`、`cleanupStatus`、`evidenceDownloadStatus`、`keyRemovalStatus` 都是 `success`。
 - normal 与 outage 的 verification 都是严格的 20/80，且无重复用户或候补序号。
 - k6 summary 中 `business_checks_failed` 和 `unexpected_status` 为 0。
+- 故障期两个后端各自满足登录本机降级的允许次数、拒绝次数和合法 `Retry-After`；动态签到只返回 `503 DYNAMIC_CHECKIN_UNAVAILABLE`。
+- Redis 恢复后的共享限流再次满足 401、允许次数、429 与合法 `Retry-After` 契约。
 - upstream evidence 同时包含 `backend-a` 与 `backend-b` 对应的地址。
+- 环境 evidence 能确定 OS、内核、CPU、内存、磁盘、Docker 以及既有 MySQL/Redis 容器身份和版本。
 - cleanup 的 `assert-snapshot` 成功，既有数据库指纹没有变化。
 - 日志和报告不包含访问令牌、Authorization、Cookie、数据库密码或密钥。
+- `evidence-secret-scan.txt` 为 `PASS`；环境采集只包含指定 MySQL/Redis 容器的 ID、名称、镜像和运行状态，不采集命令、标签或环境变量。
 
 若任一项失败，保留“失败”结论。恢复成功不能覆盖主流程失败，清理成功也不能覆盖恢复失败。
 

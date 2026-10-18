@@ -18,6 +18,7 @@ record Stage4dFixtureManifest(
     @JsonSerialize(using = ToStringSerializer.class) long organizationId,
     @JsonSerialize(using = ToStringSerializer.class) long activityId,
     @JsonSerialize(using = ToStringSerializer.class) long positionId,
+    @JsonSerialize(using = ToStringSerializer.class) long checkinSessionId,
     List<Member> members) {
 
   Stage4dFixtureManifest {

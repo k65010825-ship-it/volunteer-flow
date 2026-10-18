@@ -57,6 +57,7 @@ export function loadManifest(path, runId, dataset) {
   decimalId(manifest.organizationId, "manifest organizationId");
   decimalId(manifest.activityId, "manifest activityId");
   decimalId(manifest.positionId, "manifest positionId");
+  decimalId(manifest.checkinSessionId, "manifest checkinSessionId");
   if (!Array.isArray(manifest.members) || manifest.members.length !== 100) {
     throw new Error("manifest must contain exactly 100 members");
   }

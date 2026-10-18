@@ -53,8 +53,11 @@
 | 场景 | 请求数 | 吞吐量 | p50 | p90 | p95 | p99 | max | HTTP/业务错误 | evidence |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|---|
 | normal 100 VU 报名 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
-| 限流 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
+| normal 共享限流 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
 | outage 100 VU 报名 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
+| outage 双进程登录本机降级 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
+| outage 动态签到 503 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
+| Redis 恢复后共享限流 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
 | Redis 恢复读取 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 | 待填写 |
 
 额外填写：
@@ -70,7 +73,11 @@
 | 项目 | 结果 | evidence / 说明 |
 |---|---|---|
 | Redis 故障注入只影响 Stage 4D 后端 | 待填写 | 待填写 |
+| 故障期 backend-a / backend-b 各自登录本机降级 | 待填写 | `outage-login-fallback-<runId>-outage-summary.json` |
+| 故障期动态签到返回 503 业务语义 | 待填写 | `outage-dynamic-checkin-<runId>-outage-summary.json` |
 | Redis 恢复 | 待填写 | `redis-restore.log`、`readiness-recovered.json` |
+| Redis 恢复后双实例共享限流 | 待填写 | `recovered-shared-rate-limit-<runId>-outage-summary.json` |
+| evidence 敏感信息扫描 | 待填写 | `evidence-secret-scan.txt` |
 | 恢复后活动与报名状态读取 | 待填写 | `recovery-<runId>-outage-summary.json` |
 | 夹具清理 | 待填写 | `fixture-cleanup-*.log` |
 | baseline 指纹恢复 | 待填写 | `fixture-assert-snapshot-*.log` |

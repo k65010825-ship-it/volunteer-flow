@@ -75,7 +75,7 @@ class Stage4dLoadFixtureContractTest {
                         Instant.parse("2026-10-17T12:00:00Z")))
             .toList();
     Stage4dFixtureManifest manifest =
-        new Stage4dFixtureManifest(RUN_ID, "normal", 10L, 20L, 30L, members);
+        new Stage4dFixtureManifest(RUN_ID, "normal", 10L, 20L, 30L, 40L, members);
 
     Stage4dFixtureManifest.write(
         temporaryDirectory, identity, manifest, tokens, new ObjectMapper().findAndRegisterModules());
@@ -90,6 +90,7 @@ class Stage4dLoadFixtureContractTest {
     assertThat(manifestJson.path("organizationId").isTextual()).isTrue();
     assertThat(manifestJson.path("activityId").isTextual()).isTrue();
     assertThat(manifestJson.path("positionId").isTextual()).isTrue();
+    assertThat(manifestJson.path("checkinSessionId").isTextual()).isTrue();
     assertThat(manifestJson.path("members").get(0).path("userId").isTextual()).isTrue();
     assertThat(manifestJson.toString()).doesNotContain("accessToken").doesNotContain("jwt-token-");
     assertThat(tokenJson.size()).isEqualTo(100);
@@ -115,7 +116,7 @@ class Stage4dLoadFixtureContractTest {
                         Instant.parse("2026-10-17T12:00:00Z")))
             .toList();
     Stage4dFixtureManifest manifest =
-        new Stage4dFixtureManifest(RUN_ID, "outage", 10L, 20L, 30L, members);
+        new Stage4dFixtureManifest(RUN_ID, "outage", 10L, 20L, 30L, 40L, members);
 
     assertThatThrownBy(
             () ->

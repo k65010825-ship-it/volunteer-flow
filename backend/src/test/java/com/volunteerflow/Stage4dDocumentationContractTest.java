@@ -37,6 +37,14 @@ class Stage4dDocumentationContractTest {
         .contains("cleanup")
         .contains("assert-snapshot")
         .contains("SPRING_FLYWAY_ENABLED=false")
+        .contains("vm-os-release.txt")
+        .contains("service-containers.jsonl")
+        .contains("mysql-version.txt")
+        .contains("redis-version.txt")
+        .contains("outage-login-fallback-<runId>-outage-summary.json")
+        .contains("outage-dynamic-checkin-<runId>-outage-summary.json")
+        .contains("recovered-shared-rate-limit-<runId>-outage-summary.json")
+        .contains("evidence-secret-scan.txt")
         .contains("不要停止、重启或重建现有 MySQL/Redis 容器")
         .contains("127.0.0.1")
         .contains("不会停止 Redis")
@@ -78,17 +86,35 @@ class Stage4dDocumentationContractTest {
   }
 
   @Test
-  void readmeStatesPreparedNotPassedAndLinksTheRunbook() throws IOException {
+  void readmePublishesTheMeasuredStage4dCandidateAndItsOpenGates() throws IOException {
     String readme = read("README.md");
+    String report = read("docs/reports/2026-10-17-stage-4d-live-load-test.md");
 
     assertThat(readme)
-        .contains("阶段 4D：双后端、Nginx、隔离夹具、k6 与远程执行源码已准备")
-        .contains("尚未在虚拟机完成真实运行")
+        .contains("646f807f-94a9-4a41-94cd-a9480cd12bd9")
+        .contains("正常与 Redis 故障场景均为 20 个正式名额、80 个候补")
+        .contains("同机压测基线")
+        .contains("阶段 4D 仍为部分完成")
         .contains("docs/operations/stage-4d-live-load-test.md")
-        .contains("docs/reports/stage-4d-report-template.md")
-        .contains("不得填写吞吐量或延迟")
-        .doesNotContain("阶段 4D 已通过")
-        .doesNotContain("Stage 4D 已通过");
+        .contains("docs/reports/2026-10-17-stage-4d-live-load-test.md")
+        .doesNotContain("尚未在虚拟机完成真实运行");
+
+    assertThat(report)
+        .contains("19338ad3606bc2abaabec66a427ecd7f4a7272cf")
+        .contains("646f807f-94a9-4a41-94cd-a9480cd12bd9")
+        .contains("normal")
+        .contains("outage")
+        .contains("rate_limit_allowed=3")
+        .contains("Redis 恢复")
+        .contains("夹具清理与指纹恢复")
+        .contains("远程运行目录移除")
+        .contains("一次性 SSH 公私钥移除")
+        .contains("同一台虚拟机")
+        .contains("部分通过")
+        .contains("恢复后共享限流复验")
+        .contains("登录本机降级")
+        .contains("DYNAMIC_CHECKIN_UNAVAILABLE")
+        .contains("不能外推为生产容量");
   }
 
   private static String read(String relativePath) throws IOException {

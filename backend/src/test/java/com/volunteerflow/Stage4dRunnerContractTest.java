@@ -56,6 +56,8 @@ class Stage4dRunnerContractTest {
   @Test
   void remoteRunnerFailsClosedAndRestoresRedisBeforeFixtureCleanup() throws IOException {
     String remote = read("remote-stage4d.sh");
+    String dotenvDecoder = read("lib/dotenv.sh");
+    String dotenvSelfTest = read("test-dotenv.sh");
     String attributes = Files.readString(REPOSITORY_ROOT.resolve(".gitattributes"));
 
     assertThat(remote)
@@ -73,6 +75,9 @@ class Stage4dRunnerContractTest {
         .contains("--force-recreate backend-a backend-b")
         .contains("registration.js")
         .contains("rate-limit.js")
+        .contains("outage-login-fallback.js")
+        .contains("outage-dynamic-checkin.js")
+        .contains("recovered-shared-rate-limit.js")
         .contains("recovery.js")
         .contains("local script=\"$1\" dataset=\"$2\"")
         .contains("local scenario=\"${script%.js}\"")
@@ -84,9 +89,35 @@ class Stage4dRunnerContractTest {
         .contains("run-status.json")
         .contains("compose logs")
         .contains("upstream_addr=")
+        .contains("vm-os-release.txt")
+        .contains("vm-cpu.txt")
+        .contains("vm-memory.txt")
+        .contains("docker-version.txt")
+        .contains("service-containers.jsonl")
+        .contains("evidence-secret-scan.txt")
+        .contains("decode_quoted_env_value")
+        .contains("source \"$repo/deploy/stage4d/lib/dotenv.sh\"")
+        .contains("[[ \"$value\" == \\\"* || \"$value\" == *\\\" ]]")
+        .contains("if ! value=$(read_env")
+        .contains("[[ -n \"$value\" ]]")
+        .contains("mysql-version.txt")
+        .contains("redis-version.txt")
+        .doesNotContain("docker ps --no-trunc --format '{{json .}}'")
+        .doesNotContain("${#value} -ge 8")
+        .doesNotContain("eval ")
+        .doesNotContain("mysql --version")
         .doesNotContain("docker stop mysql")
         .doesNotContain("docker stop redis")
         .doesNotContain("docker compose down -v");
+    assertThat(dotenvDecoder)
+        .contains("[[ \"$char\" != \"\\\\\" ]]")
+        .contains("decode_quoted_env_value")
+        .doesNotContain("eval ");
+    assertThat(dotenvSelfTest)
+        .contains("decode_quoted_env_value 'plain'")
+        .contains("decode_quoted_env_value 'a\\\\b'")
+        .contains("trailing\\\\")
+        .contains("illegal\\x");
     assertThat(remote.indexOf("restore_redis")).isLessThan(remote.indexOf("cleanup_fixtures"));
     assertThat(remote.indexOf("if ! cleanup_fixtures"))
         .isLessThan(remote.indexOf("if ! compose down --remove-orphans"));
