@@ -95,6 +95,7 @@ services:
   k6:
     profiles: ["tools"]
     image: grafana/k6:0.54.0
+    user: "0:0"
     working_dir: /scripts
     environment:
       BASE_URL: "${STAGE4D_BASE_URL:-http://frontend-nginx}"

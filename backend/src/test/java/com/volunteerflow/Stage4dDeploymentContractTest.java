@@ -104,6 +104,7 @@ class Stage4dDeploymentContractTest {
         .containsExactly("${STAGE4D_OUTPUT_DIR:?set STAGE4D_OUTPUT_DIR}:/stage4d-output");
     assertThat(list(k6.get("profiles"))).containsExactly("tools");
     assertThat(k6).containsEntry("image", "grafana/k6:0.54.0");
+    assertThat(k6).containsEntry("user", "0:0");
     assertThat(list(k6.get("volumes")))
         .containsExactly(
             "../../loadtest/stage4d:/scripts:ro",
