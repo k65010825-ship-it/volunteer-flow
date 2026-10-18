@@ -61,6 +61,8 @@ class Stage4dRunnerContractTest {
     assertThat(remote)
         .contains("set -Eeuo pipefail")
         .contains("docker compose version")
+        .contains("minimum_available_kb=$(read_env STAGE4D_MIN_AVAILABLE_KB")
+        .contains("minimum_available_kb\" -ge 3145728")
         .contains("export STAGE4D_FIXTURE_ACTION=snapshot")
         .contains("export STAGE4D_DATASET=normal")
         .contains("df -Pk")

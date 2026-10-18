@@ -56,6 +56,11 @@ real_redis_port=$(read_env REDIS_PORT)
 db_host=$(read_env DB_HOST)
 db_port=$(read_env DB_PORT)
 app_port=$(read_env STAGE4D_APP_PORT 2>/dev/null || printf '%s' "$STAGE4D_APP_PORT")
+minimum_available_kb=$(read_env STAGE4D_MIN_AVAILABLE_KB 2>/dev/null || printf '%s' '5242880')
+[[ "$minimum_available_kb" =~ ^[0-9]+$ && "$minimum_available_kb" -ge 3145728 ]] || {
+  printf 'STAGE4D_MIN_AVAILABLE_KB must be an integer of at least 3145728\n' >&2
+  exit 2
+}
 export REDIS_HOST="$real_redis_host"
 export REDIS_PORT="$real_redis_port"
 
@@ -123,7 +128,7 @@ preflight() {
   docker compose version > "$evidence/docker-compose-version.txt"
   local available_kb
   available_kb=$(df -Pk "$remote_root" | awk 'NR==2 {print $4}')
-  [[ "$available_kb" =~ ^[0-9]+$ && "$available_kb" -ge 5242880 ]]
+  [[ "$available_kb" =~ ^[0-9]+$ && "$available_kb" -ge "$minimum_available_kb" ]]
   timeout 5 bash -c "</dev/tcp/${db_host}/${db_port}"
   timeout 5 bash -c "</dev/tcp/${real_redis_host}/${real_redis_port}"
   if command -v ss >/dev/null && ss -ltn | awk '{print $4}' | grep -Eq "(^|:)${app_port}$"; then

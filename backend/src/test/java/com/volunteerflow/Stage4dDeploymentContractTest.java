@@ -138,6 +138,7 @@ class Stage4dDeploymentContractTest {
 
     assertThat(example)
         .contains("SPRING_FLYWAY_ENABLED=false")
+        .contains("STAGE4D_MIN_AVAILABLE_KB=5242880")
         .contains("DB_HOST=replace-with-mysql-host")
         .contains("REDIS_HOST=replace-with-redis-host")
         .contains("JWT_SECRET=replace-with-standard-base64-secret")
