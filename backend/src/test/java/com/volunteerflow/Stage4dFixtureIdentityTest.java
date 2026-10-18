@@ -63,11 +63,14 @@ class Stage4dFixtureIdentityTest {
   @Test
   void artifactNamesCannotEscapeOutputDirectory() {
     Stage4dFixtureIdentity identity = Stage4dFixtureIdentity.parse(RUN_ID, "outage");
+    Stage4dFixtureIdentity normal = Stage4dFixtureIdentity.parse(RUN_ID, "normal");
 
     assertThat(identity.artifactName("manifest")).isEqualTo("manifest-outage.json");
     assertThat(identity.artifactName("tokens")).isEqualTo("tokens-outage.json");
     assertThat(identity.artifactName("verification")).isEqualTo("verification-outage.json");
-    assertThat(identity.artifactName("baseline")).isEqualTo("baseline.json");
+    assertThat(identity.artifactName("baseline")).isEqualTo("baseline-outage.json");
+    assertThat(normal.artifactName("baseline")).isEqualTo("baseline-normal.json");
+    assertThat(normal.artifactName("baseline")).isNotEqualTo(identity.artifactName("baseline"));
 
     for (String unsafe : new String[] {"../tokens", "folder/file", "folder\\file", "..", "bad\nname", "unknown"}) {
       assertThatThrownBy(() -> identity.artifactName(unsafe))

@@ -61,7 +61,7 @@ record Stage4dFixtureIdentity(String runId, Dataset dataset) {
   String artifactName(String kind) {
     return switch (kind == null ? "" : kind) {
       case "manifest", "tokens", "verification" -> kind + "-" + dataset.value() + ".json";
-      case "baseline" -> "baseline.json";
+      case "baseline" -> "baseline-" + dataset.value() + ".json";
       default ->
           throw new IllegalArgumentException(
               "artifact kind must be manifest, tokens, verification, or baseline");

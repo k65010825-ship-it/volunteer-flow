@@ -69,14 +69,12 @@ compose() {
 }
 
 wait_ready() {
-  local attempt
-  for attempt in $(seq 1 60); do
-    if curl --fail --silent --show-error "http://127.0.0.1:${app_port}/actuator/health/readiness" > "$evidence/readiness-latest.json"; then
-      return 0
-    fi
-    sleep 2
-  done
-  return 1
+  bash "$repo/deploy/stage4d/wait-for-ready.sh" \
+    "$compose_project" \
+    "$compose_file" \
+    "$compose_env" \
+    "$app_port" \
+    "$evidence/readiness-latest.json"
 }
 
 fixture_action() {
