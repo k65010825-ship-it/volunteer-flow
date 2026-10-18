@@ -47,8 +47,12 @@ class Stage4dK6ContractTest {
         .doesNotContain("windowEpochSecond: 1")
         .doesNotContain("192.168.");
     assertThat(recoveredRateLimit)
+        .contains("import { sleep } from \"k6\"")
         .contains("BACKEND_A_URL")
         .contains("BACKEND_B_URL")
+        .contains("RATE_LIMIT_REGISTRATION_WINDOW")
+        .contains("Date.now() % registrationWindowMillis")
+        .contains("windowBoundaryCrossed")
         .contains("index % backendUrls.length")
         .contains("recovered_backend_a_requests")
         .contains("recovered_backend_b_requests")

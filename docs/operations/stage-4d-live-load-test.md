@@ -76,7 +76,7 @@ $result
 | 7 | Redis 不可达时再次执行 100 VU 报名和数据库事实验证 | `k6-registration-outage.log`、`verification-outage.json` |
 | 8 | Redis 不可达时分别直连两个后端，验证每个进程的登录本机降级允许 5 次并在第 6 次返回带 `Retry-After` 的 429 | `k6-outage-login-fallback-outage.log`、`outage-login-fallback-<runId>-outage-summary.json` |
 | 9 | Redis 不可达时使用正式成员验证动态签到返回 `503 DYNAMIC_CHECKIN_UNAVAILABLE` | `k6-outage-dynamic-checkin-outage.log`、`outage-dynamic-checkin-<runId>-outage-summary.json` |
-| 10 | 恢复真实 Redis 地址并重建本轮后端，用同一用户交替直连两个实例复验共享限流，再执行恢复读取 | `redis-restore.log`、`k6-recovered-shared-rate-limit-outage.log`、`recovered-shared-rate-limit-<runId>-outage-summary.json`、`k6-recovery-outage.log`、`readiness-recovered.json` |
+| 10 | 恢复真实 Redis 地址并重建本轮后端，对齐到新的固定窗口后，用同一用户交替直连两个实例复验共享限流，再执行恢复读取 | `redis-restore.log`、`k6-recovered-shared-rate-limit-outage.log`、`recovered-shared-rate-limit-<runId>-outage-summary.json`、`k6-recovery-outage.log`、`readiness-recovered.json` |
 | 11 | 证明 Nginx 实际访问两个 upstream | `nginx-upstream.log`、`upstream-addresses.txt` |
 | 12 | 保存容器日志，按 outage→normal 清理夹具并比对基线 | `container.log`、`fixture-cleanup-outage.log`、`fixture-cleanup-normal.log`、`fixture-assert-snapshot-*.log` |
 | 13 | 成功时只移除本轮 Compose 栈 | `stack-down.log` |
