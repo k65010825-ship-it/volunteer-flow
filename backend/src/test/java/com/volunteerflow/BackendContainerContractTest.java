@@ -65,6 +65,18 @@ class BackendContainerContractTest {
   }
 
   @Test
+  void dependencyWarmupRetriesTransientRepositoryFailuresWithoutLoopingForever()
+      throws IOException {
+    String dockerfile = Files.readString(BACKEND_ROOT.resolve("Dockerfile"));
+
+    assertThat(dockerfile)
+        .contains("for attempt in 1 2 3; do")
+        .contains("./mvnw -q -DskipTests dependency:go-offline && break")
+        .contains("if [ \"$attempt\" -eq 3 ]; then exit 1; fi")
+        .contains("sleep 5");
+  }
+
+  @Test
   void readinessIsDatabaseBackedButDoesNotRequireRedis() throws IOException {
     String application =
         Files.readString(BACKEND_ROOT.resolve("src/main/resources/application.yml"));

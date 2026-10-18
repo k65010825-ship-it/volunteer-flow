@@ -5,7 +5,11 @@ COPY .mvn .mvn
 COPY mvnw pom.xml ./
 RUN sed -i 's/\r$//' mvnw \
     && chmod +x mvnw \
-    && ./mvnw -q -DskipTests dependency:go-offline
+    && for attempt in 1 2 3; do \
+         ./mvnw -q -DskipTests dependency:go-offline && break; \
+         if [ "$attempt" -eq 3 ]; then exit 1; fi; \
+         sleep 5; \
+       done
 COPY src src
 RUN ./mvnw -q -Dtest=Stage4dFixtureIdentityTest test \
     && ./mvnw -q -DskipTests package
