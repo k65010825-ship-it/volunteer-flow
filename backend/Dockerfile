@@ -7,7 +7,8 @@ RUN sed -i 's/\r$//' mvnw \
     && chmod +x mvnw \
     && ./mvnw -q -DskipTests dependency:go-offline
 COPY src src
-RUN ./mvnw -q -DskipTests package
+RUN ./mvnw -q -Dtest=Stage4dFixtureIdentityTest test \
+    && ./mvnw -q -DskipTests package
 
 FROM eclipse-temurin:17-jre-jammy
 

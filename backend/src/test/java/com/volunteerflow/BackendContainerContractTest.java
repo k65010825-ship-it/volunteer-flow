@@ -29,6 +29,18 @@ class BackendContainerContractTest {
   }
 
   @Test
+  void buildStageWarmsTheSurefireProviderBeforeFixtureRuntime() throws IOException {
+    String dockerfile = Files.readString(BACKEND_ROOT.resolve("Dockerfile"));
+
+    int providerWarmup =
+        dockerfile.indexOf("./mvnw -q -Dtest=Stage4dFixtureIdentityTest test");
+    int packageBuild = dockerfile.indexOf("./mvnw -q -DskipTests package");
+
+    assertThat(providerWarmup).isGreaterThanOrEqualTo(0);
+    assertThat(packageBuild).isGreaterThan(providerWarmup);
+  }
+
+  @Test
   void dockerContextExcludesLocalConfigurationBuildOutputAndSecrets() throws IOException {
     String dockerignore = Files.readString(BACKEND_ROOT.resolve(".dockerignore"));
 
