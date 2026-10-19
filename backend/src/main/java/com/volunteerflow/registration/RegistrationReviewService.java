@@ -6,8 +6,10 @@ import com.volunteerflow.activity.ActivityPositionMapper;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.DomainEventPublisher;
+import com.volunteerflow.infrastructure.event.DomainEventTypes;
+import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import jakarta.validation.constraints.NotBlank;
@@ -37,7 +39,7 @@ public class RegistrationReviewService {
   private final PromotionOfferMapper offers;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
-  private final NotificationWriter notifications;
+  private final DomainEventPublisher events;
   private final Clock clock;
 
   public RegistrationReviewService(
@@ -49,7 +51,7 @@ public class RegistrationReviewService {
       PromotionOfferMapper offers,
       OrganizationAuthorizationService authorization,
       AuditService audit,
-      NotificationWriter notifications,
+      DomainEventPublisher events,
       Clock clock) {
     this.registrations = registrations;
     this.cycles = cycles;
@@ -59,7 +61,7 @@ public class RegistrationReviewService {
     this.offers = offers;
     this.authorization = authorization;
     this.audit = audit;
-    this.notifications = notifications;
+    this.events = events;
     this.clock = clock;
   }
 
@@ -127,16 +129,11 @@ public class RegistrationReviewService {
         "registration_cycle",
         cycle.getId(),
         resultingStatus);
-    notifications.write(
-        new NotificationCommand(
-            registration.getOrganizationId(),
-            registration.getUserId(),
-            "REGISTRATION_REVIEW",
-            "报名审核结果",
-            "审核结果：" + resultingStatus,
-            "REGISTRATION",
-            registration.getId(),
-            "registration-review:" + cycle.getId() + ":" + resultingStatus));
+    events.publish(new DomainEventCommand(
+        registration.getOrganizationId(), registration.getActivityId(), "REGISTRATION",
+        registration.getId().toString(), DomainEventTypes.REGISTRATION_REVIEWED,
+        new NotificationIntentPayload(registration.getUserId(), "REGISTRATION_REVIEW",
+            "报名审核结果", "审核结果：" + resultingStatus, "REGISTRATION", registration.getId())));
     return cycle;
   }
 

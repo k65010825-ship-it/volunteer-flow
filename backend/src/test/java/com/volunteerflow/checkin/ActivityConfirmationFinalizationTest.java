@@ -8,7 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.volunteerflow.activity.*;
 import com.volunteerflow.audit.*;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter;
+import com.volunteerflow.infrastructure.event.*;
 import com.volunteerflow.organization.*;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.*;
@@ -41,7 +41,7 @@ class ActivityConfirmationFinalizationTest {
     assertThat(f.cycle.getStatus()).isEqualTo(path == Path.REVIEW ? "PENDING_REVIEW" : "WAITLISTED");
     assertThat(f.offer.getStatus()).isEqualTo("PENDING");
     assertThat(f.auditRows).extracting(AuditLog::getAction).containsExactly("activity.finished");
-    assertThat(f.notifications).isEmpty();
+    assertThat(f.events).isEmpty();
   }
 
   @ParameterizedTest @CsvSource({"REVIEW,FINISHED", "REVIEW,CANCELED", "REVIEW,DRAFT",
@@ -51,7 +51,7 @@ class ActivityConfirmationFinalizationTest {
     assertThatThrownBy(f::confirm).isInstanceOf(BusinessException.class)
         .extracting(error -> ((BusinessException) error).code()).isEqualTo("ACTIVITY_NOT_OPEN_FOR_CONFIRMATION");
     assertThat(f.cycle.getStatus()).isNotEqualTo("CONFIRMED");
-    assertThat(f.auditRows).isEmpty(); assertThat(f.notifications).isEmpty();
+    assertThat(f.auditRows).isEmpty(); assertThat(f.events).isEmpty();
   }
 
   @ParameterizedTest @EnumSource(value = Path.class, names = {"REVIEW", "PROMOTION"})
@@ -60,7 +60,7 @@ class ActivityConfirmationFinalizationTest {
     assertThatThrownBy(f::confirm).isInstanceOf(BusinessException.class)
         .extracting(error -> ((BusinessException) error).code()).isEqualTo("ACTIVITY_NOT_OPEN_FOR_CONFIRMATION");
     assertThat(f.cycle.getStatus()).isNotEqualTo("CONFIRMED");
-    assertThat(f.auditRows).isEmpty(); assertThat(f.notifications).isEmpty();
+    assertThat(f.auditRows).isEmpty(); assertThat(f.events).isEmpty();
   }
 
   @ParameterizedTest @EnumSource(value = Path.class, names = {"REVIEW", "PROMOTION"})
@@ -69,7 +69,7 @@ class ActivityConfirmationFinalizationTest {
     assertThatThrownBy(f::confirm).isInstanceOf(BusinessException.class)
         .extracting(error -> ((BusinessException) error).code()).isEqualTo("ACTIVITY_NOT_OPEN_FOR_CONFIRMATION");
     assertThat(f.cycle.getStatus()).isNotEqualTo("CONFIRMED");
-    assertThat(f.auditRows).isEmpty(); assertThat(f.notifications).isEmpty();
+    assertThat(f.auditRows).isEmpty(); assertThat(f.events).isEmpty();
   }
 
   @ParameterizedTest @EnumSource(value = Path.class, names = {"REVIEW", "PROMOTION"})
@@ -88,7 +88,8 @@ class ActivityConfirmationFinalizationTest {
     assertThat(f.cycle.getAttendanceStatus()).isEqualTo("PENDING");
     assertThat(f.auditRows).extracting(AuditLog::getAction)
         .containsExactly(path == Path.REVIEW ? "registration.reviewed" : path == Path.PROMOTION ? "promotion.accepted" : "registration.submitted");
-    assertThat(f.notifications).hasSize(path == Path.PROMOTION ? 0 : 1);
+    assertThat(f.events).hasSize(1);
+    assertThat(f.events.get(0).payload() instanceof NotificationIntentPayload).isEqualTo(path != Path.PROMOTION);
     assertThat(f.transactions.committedOrders).singleElement().satisfies(order -> {
       assertThat(order).startsWith("activity", "member", "position", "cycle");
       if (path == Path.PROMOTION) assertThat(order).containsExactly("activity", "member", "position", "cycle", "offer");
@@ -101,7 +102,7 @@ class ActivityConfirmationFinalizationTest {
     assertThatThrownBy(f::confirm).isInstanceOf(BusinessException.class)
         .extracting(error -> ((BusinessException) error).code()).isEqualTo("ACTIVITY_NOT_FOUND");
     assertThat(f.cycle.getStatus()).isNotEqualTo("CONFIRMED");
-    assertThat(f.auditRows).isEmpty(); assertThat(f.notifications).isEmpty();
+    assertThat(f.auditRows).isEmpty(); assertThat(f.events).isEmpty();
   }
 
   @ParameterizedTest @EnumSource(value = Path.class, names = {"REVIEW", "PROMOTION"})
@@ -178,7 +179,7 @@ class ActivityConfirmationFinalizationTest {
     final ReentrantLock activityLock = new ReentrantLock(), memberLock = new ReentrantLock(),
         positionLock = new ReentrantLock(), cycleLock = new ReentrantLock(), offerLock = new ReentrantLock();
     final List<AuditLog> auditRows = new CopyOnWriteArrayList<>();
-    final List<NotificationWriter.NotificationCommand> notifications = new CopyOnWriteArrayList<>();
+    final List<DomainEventCommand> events = new CopyOnWriteArrayList<>();
     final CountDownLatch confirmationAttempted = new CountDownLatch(1), finalizerAttempted = new CountDownLatch(1);
     Runnable afterArchive = () -> {}, beforeConfirmationWrite = () -> {}, afterPositionLock = () -> {};
     final ModelTransactions transactions = new ModelTransactions();
@@ -219,9 +220,13 @@ class ActivityConfirmationFinalizationTest {
       var policies = proxy(new ActivityRegistrationPolicyService(activities, positions,
           mock(ActivityQuestionMapper.class), mock(ActivityPositionQuestionMapper.class), authorization, new ObjectMapper()));
       AuditService audit = new AuditService(audits, new ObjectMapper());
-      NotificationWriter writer = new NotificationWriter() {
-        @Override public void write(NotificationCommand command) { notifications.add(command); transactions.tx().notifications.add(command); }
-        @Override public int writeMany(Collection<Long> userIds, NotificationTemplate template) { throw new UnsupportedOperationException(); }
+      DomainEventPublisher publisher = new DomainEventPublisher() {
+        @Override public UUID publish(DomainEventCommand command) {
+          events.add(command); transactions.tx().events.add(command); return UUID.randomUUID();
+        }
+        @Override public int publishMany(Collection<Long> userIds, NotificationEventTemplate template) {
+          throw new UnsupportedOperationException();
+        }
       };
 
       when(activities.selectByIdForUpdate(11L)).thenAnswer(call -> {
@@ -284,10 +289,10 @@ class ActivityConfirmationFinalizationTest {
                   cycles,
                   audit,
                   mock(com.volunteerflow.activity.ActivityDetailCacheInvalidator.class)));
-      review = proxy(new RegistrationReviewService(registrations, cycles, positions, policies, members, offers, authorization, audit, writer, clock));
-      promotion = proxy(new PromotionService(policies, members, registrations, cycles, offers, authorization, audit, writer));
+      review = proxy(new RegistrationReviewService(registrations, cycles, positions, policies, members, offers, authorization, audit, publisher, clock));
+      promotion = proxy(new PromotionService(policies, members, registrations, cycles, offers, authorization, audit, publisher));
       submission = proxy(new RegistrationSubmissionService(policies, members, registrations, cycles, mock(RegistrationAnswerMapper.class),
-          offers, new RegistrationAnswerValidator(), audit, writer, clock));
+          offers, new RegistrationAnswerValidator(), audit, publisher, clock));
     }
 
     void confirm() {
@@ -333,7 +338,7 @@ class ActivityConfirmationFinalizationTest {
         if (tx.oldActivity != null) activity.setStatus(tx.oldActivity);
         if (tx.oldCycle != null) cycle = copy(tx.oldCycle);
         if (tx.oldOffer != null) { offer.setStatus(tx.oldOffer.getStatus()); offer.setRespondedAt(tx.oldOffer.getRespondedAt()); }
-        auditRows.removeAll(tx.audits); notifications.removeAll(tx.notifications);
+        auditRows.removeAll(tx.audits); events.removeAll(tx.events);
       }
       @Override protected void doSetRollbackOnly(DefaultTransactionStatus status) { current.get().rollbackOnly = true; }
       @Override protected void doCleanupAfterCompletion(Object transaction) {
@@ -345,7 +350,7 @@ class ActivityConfirmationFinalizationTest {
   private static final class Tx {
     final Map<String, ReentrantLock> locks = new LinkedHashMap<>();
     final List<AuditLog> audits = new ArrayList<>();
-    final List<NotificationWriter.NotificationCommand> notifications = new ArrayList<>();
+    final List<DomainEventCommand> events = new ArrayList<>();
     int lastRank = -1; boolean rollbackOnly; String oldActivity; RegistrationCycle oldCycle; PromotionOffer oldOffer;
   }
   private static final class Holder implements SmartTransactionObject {

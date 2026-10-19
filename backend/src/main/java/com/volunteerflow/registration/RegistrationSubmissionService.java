@@ -8,8 +8,10 @@ import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService.RegistrationPolicy;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.DomainEventPublisher;
+import com.volunteerflow.infrastructure.event.DomainEventTypes;
+import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
@@ -39,7 +41,7 @@ public class RegistrationSubmissionService {
   private final PromotionOfferMapper offers;
   private final RegistrationAnswerValidator validator;
   private final AuditService audit;
-  private final NotificationWriter notifications;
+  private final DomainEventPublisher events;
   private final Clock clock;
 
   public RegistrationSubmissionService(
@@ -51,7 +53,7 @@ public class RegistrationSubmissionService {
       PromotionOfferMapper offers,
       RegistrationAnswerValidator validator,
       AuditService audit,
-      NotificationWriter notifications,
+      DomainEventPublisher events,
       Clock clock) {
     this.policies = policies;
     this.members = members;
@@ -61,7 +63,7 @@ public class RegistrationSubmissionService {
     this.offers = offers;
     this.validator = validator;
     this.audit = audit;
-    this.notifications = notifications;
+    this.events = events;
     this.clock = clock;
   }
 
@@ -72,17 +74,23 @@ public class RegistrationSubmissionService {
     if (request == null || request.positionId() == null || request.positionId() <= 0) {
       throw semantic("INVALID_REGISTRATION_REQUEST", "A position is required");
     }
+    SubmissionOutcome outcome;
     try {
-      return submitWithinTransaction(userId, activityId, request);
+      outcome = submitWithinTransaction(userId, activityId, request);
     } catch (DuplicateKeyException exception) {
       throw new BusinessException(
           HttpStatus.CONFLICT,
           "REGISTRATION_CONFLICT",
           "Registration changed concurrently; refresh and retry");
     }
+    // Outbox failures, including duplicate-key failures, must propagate unchanged.
+    events.publish(outcome.event());
+    return outcome.result();
   }
 
-  private RegistrationResult submitWithinTransaction(
+  private record SubmissionOutcome(RegistrationResult result, DomainEventCommand event) {}
+
+  private SubmissionOutcome submitWithinTransaction(
       Long userId, Long activityId, SubmitRegistrationRequest request) {
     Long organizationId =
         policies.loadForm(userId, activityId, request.positionId()).activity().getOrganizationId();
@@ -129,22 +137,17 @@ public class RegistrationSubmissionService {
             : Math.toIntExact(
                 cycles.countActiveWaitlistBefore(cycle.getPositionId(), cycle.getWaitlistSequence())
                     + 1);
-    notifications.write(
-        new NotificationCommand(
-            organizationId,
-            userId,
-            "REGISTRATION_RESULT",
-            "报名结果",
-            "当前报名状态：" + cycle.getStatus(),
-            "REGISTRATION",
-            registration.getId(),
-            "registration-result:" + cycle.getId() + ":" + cycle.getStatus()));
-    return new RegistrationResult(
+    DomainEventCommand event = new DomainEventCommand(
+        organizationId, activityId, "REGISTRATION", registration.getId().toString(),
+        DomainEventTypes.REGISTRATION_SUBMITTED, new NotificationIntentPayload(userId,
+            "REGISTRATION_RESULT", "报名结果", "当前报名状态：" + cycle.getStatus(),
+            "REGISTRATION", registration.getId()));
+    return new SubmissionOutcome(new RegistrationResult(
         registration.getId(),
         cycle.getId(),
         cycle.getStatus(),
         cycle.getWaitlistSequence(),
-        currentPosition);
+        currentPosition), event);
   }
 
   private void requireOpenWindow(Activity activity, LocalDateTime now) {

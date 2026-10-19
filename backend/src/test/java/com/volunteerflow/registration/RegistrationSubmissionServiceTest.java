@@ -14,7 +14,9 @@ import com.volunteerflow.activity.ActivityRegistrationPolicyService.Registration
 import com.volunteerflow.activity.ActivityRegistrationPolicyService.RegistrationPolicy;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
+import com.volunteerflow.infrastructure.event.RegistrationStatusPayload;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.registration.RegistrationSubmissionService.AnswerInput;
@@ -42,7 +44,7 @@ class RegistrationSubmissionServiceTest {
   private final RegistrationAnswerMapper answers = mock(RegistrationAnswerMapper.class);
   private final PromotionOfferMapper offerMapper = mock(PromotionOfferMapper.class);
   private final AuditService audit = mock(AuditService.class);
-  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
+  private final CapturingDomainEventPublisher notifications = new CapturingDomainEventPublisher();
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T08:00:00Z"), ZoneOffset.UTC);
   private final RegistrationSubmissionService service =
       new RegistrationSubmissionService(
@@ -92,6 +94,51 @@ class RegistrationSubmissionServiceTest {
   }
 
   @Test
+  void registrationAndAuditRollBackWhenOutboxInsertFails() {
+    var fixture = new RegistrationTransactionFixture(policies, members, registrations,
+        cycleMapper, answers, offerMapper, clock);
+    fixture.failOutbox = true;
+
+    assertThatThrownBy(() -> fixture.service.submit(21L, 10L, requestFor(20L)))
+        .isSameAs(fixture.insertFailure);
+
+    assertThat(fixture.transactions.rollbacks).isEqualTo(1);
+    assertThat(fixture.transactions.commits).isZero();
+    assertThat(fixture.committed).isEmpty();
+    assertThat(fixture.staged).isEmpty();
+    verifyNoInteractions(fixture.unavailableKafka);
+  }
+
+  @Test
+  void registrationCommitsWhileKafkaIsUnavailableBecauseNoKafkaCallOccursInTheTransaction() {
+    var fixture = new RegistrationTransactionFixture(policies, members, registrations,
+        cycleMapper, answers, offerMapper, clock);
+
+    var result = fixture.service.submit(21L, 10L, requestFor(20L));
+
+    assertThat(result.status()).isEqualTo("CONFIRMED");
+    assertThat(fixture.transactions.commits).isEqualTo(1);
+    assertThat(fixture.transactions.rollbacks).isZero();
+    assertThat(fixture.committed).hasSize(4)
+        .anyMatch(Registration.class::isInstance).anyMatch(RegistrationCycle.class::isInstance)
+        .anyMatch(com.volunteerflow.audit.AuditLog.class::isInstance);
+    var row = fixture.committed.stream()
+        .filter(com.volunteerflow.infrastructure.event.OutboxEvent.class::isInstance)
+        .map(com.volunteerflow.infrastructure.event.OutboxEvent.class::cast).findFirst().orElseThrow();
+    assertThat(row.getStatus()).isEqualTo("PENDING");
+    assertThat(row.getTopic()).isEqualTo("registration-topic");
+    assertThat(row.getMessageKey()).isEqualTo("100:10");
+    assertThat(row.getAggregateId()).isEqualTo(result.registrationId().toString());
+    var event = fixture.codec.decode(row.getPayloadJson());
+    assertThat(event.eventType()).isEqualTo("registration.submitted.v1");
+    assertThat(event.activityId()).isEqualTo(10L);
+    assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-09-15T08:00:00Z"));
+    assertThat(event.payload()).isEqualTo(new NotificationIntentPayload(21L,
+        "REGISTRATION_RESULT", "报名结果", "当前报名状态：CONFIRMED", "REGISTRATION", result.registrationId()));
+    verifyNoInteractions(fixture.unavailableKafka);
+  }
+
+  @Test
   void firstComeSubmissionConfirmsAndPersistsStableRelationCycleAndAudit() {
     RegistrationResult result = service.submit(21L, 10L, requestFor(20L));
     assertThat(result.status()).isEqualTo("CONFIRMED");
@@ -130,8 +177,12 @@ class RegistrationSubmissionServiceTest {
 
   @Test
   void submissionPersistsCurrentResultBeforeEmittingNotification() {
-    notifications.beforeWrite(
-        () -> verify(cycleMapper).insert(any(RegistrationCycle.class)));
+    notifications.beforePublish(
+        () -> {
+          verify(cycleMapper).insert(any(RegistrationCycle.class));
+          verify(audit).record(eq(100L), eq(21L), eq("registration.submitted"),
+              eq("registration_cycle"), anyLong(), eq("CONFIRMED"));
+        });
 
     RegistrationResult result = service.submit(21L, 10L, requestFor(20L));
 
@@ -139,27 +190,29 @@ class RegistrationSubmissionServiceTest {
     assertThat(cycle.getStatus()).isEqualTo("CONFIRMED");
     assertThat(notifications.commands())
         .containsExactly(
-            new NotificationCommand(
-                100L,
-                21L,
-                "REGISTRATION_RESULT",
-                "报名结果",
-                "当前报名状态：CONFIRMED",
-                "REGISTRATION",
-                result.registrationId(),
-                "registration-result:" + result.cycleId() + ":CONFIRMED"));
+            new DomainEventCommand(100L, 10L, "REGISTRATION", result.registrationId().toString(),
+                "registration.submitted.v1", new NotificationIntentPayload(21L,
+                "REGISTRATION_RESULT", "报名结果", "当前报名状态：CONFIRMED",
+                "REGISTRATION", result.registrationId())));
   }
 
   @Test
-  void notificationFailurePropagatesAfterSubmissionStateWrite() {
-    IllegalStateException failure = new IllegalStateException("notification unavailable");
-    notifications.beforeWrite(
+  void outboxFailurePropagatesAfterSubmissionStateWrite() {
+    IllegalStateException failure = new IllegalStateException("Outbox unavailable");
+    notifications.beforePublish(
         () -> verify(cycleMapper).insert(any(RegistrationCycle.class)));
-    notifications.failNextWrite(failure);
+    notifications.failNextPublish(failure);
 
     assertThatThrownBy(() -> service.submit(21L, 10L, requestFor(20L))).isSameAs(failure);
 
     assertThat(insertedCycle().getStatus()).isEqualTo("CONFIRMED");
+  }
+
+  @Test
+  void outboxDuplicateKeyFailureIsNotTranslatedToRegistrationConflict() {
+    var failure = new DuplicateKeyException("Outbox uniqueness failure");
+    notifications.failNextPublish(failure);
+    assertThatThrownBy(() -> service.submit(21L, 10L, requestFor(20L))).isSameAs(failure);
   }
 
   @Test
@@ -190,6 +243,10 @@ class RegistrationSubmissionServiceTest {
     assertThat(result.currentPosition()).isEqualTo(1);
     assertThat(position.getNextWaitlistSequence()).isEqualTo(2L);
     assertThat(insertedCycle().getWaitlistSequence()).isEqualTo(1L);
+    assertThat(notifications.commands()).containsExactly(new DomainEventCommand(
+        100L, 10L, "REGISTRATION", result.registrationId().toString(), "registration.submitted.v1",
+        new NotificationIntentPayload(21L, "REGISTRATION_RESULT", "报名结果", "当前报名状态：WAITLISTED",
+            "REGISTRATION", result.registrationId())));
   }
 
   @Test
@@ -209,6 +266,10 @@ class RegistrationSubmissionServiceTest {
     position.setRegistrationMode("REVIEW");
     RegistrationResult result = service.submit(21L, 10L, requestFor(20L));
     assertThat(result.status()).isEqualTo("PENDING_REVIEW");
+    assertThat(notifications.commands()).containsExactly(new DomainEventCommand(
+        100L, 10L, "REGISTRATION", result.registrationId().toString(), "registration.submitted.v1",
+        new NotificationIntentPayload(21L, "REGISTRATION_RESULT", "报名结果", "当前报名状态：PENDING_REVIEW",
+            "REGISTRATION", result.registrationId())));
     assertThat(insertedCycle().getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     assertThat(result.waitlistSequence()).isNull();
     assertThat(result.currentPosition()).isNull();

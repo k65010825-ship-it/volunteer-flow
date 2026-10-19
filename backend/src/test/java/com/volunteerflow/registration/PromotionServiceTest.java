@@ -8,7 +8,9 @@ import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
+import com.volunteerflow.infrastructure.event.RegistrationStatusPayload;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
@@ -33,7 +35,7 @@ class PromotionServiceTest {
   final OrganizationAuthorizationService authorization =
       mock(OrganizationAuthorizationService.class);
   final AuditService audit = mock(AuditService.class);
-  final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
+  final CapturingDomainEventPublisher notifications = new CapturingDomainEventPublisher();
   final PromotionService service = new PromotionService(
       policies, members, registrations, cycles, offers, authorization, audit, notifications);
   final LocalDateTime now = LocalDateTime.of(2026, 9, 16, 8, 0);
@@ -90,23 +92,21 @@ class PromotionServiceTest {
   @Test
   void offerCreationPersistsInvitationBeforeNotifyingCandidate() {
     when(cycles.selectFirstWaitlistedForUpdate(20L)).thenReturn(cycle);
-    notifications.beforeWrite(
-        () -> verify(offers).insert(any(PromotionOffer.class)));
+    notifications.beforePublish(
+        () -> {
+          verify(offers).insert(any(PromotionOffer.class));
+          verify(audit).record(eq(10L), eq(7L), eq("promotion.offered"),
+              eq("promotion_offer"), anyLong(), eq("Released seat"));
+        });
 
     PromotionOffer result = service.offerNextFirstCome(20L, 7L, "Released seat");
 
     assertThat(result.getStatus()).isEqualTo("PENDING");
     assertThat(notifications.commands())
         .containsExactly(
-            new NotificationCommand(
-                10L,
-                21L,
-                "PROMOTION_OFFER",
-                "递补邀请",
-                "请及时确认",
-                "PROMOTION_OFFER",
-                result.getId(),
-                "promotion-offer:" + result.getId() + ":created"));
+            new DomainEventCommand(10L, 11L, "PROMOTION_OFFER", result.getId().toString(),
+                "registration.promotion-offered.v1", new NotificationIntentPayload(21L,
+                "PROMOTION_OFFER", "递补邀请", "请及时确认", "PROMOTION_OFFER", result.getId())));
   }
 
   @Test
@@ -136,6 +136,27 @@ class PromotionServiceTest {
     verify(cycles, times(1)).selectFirstWaitlistedForUpdate(20L);
     verify(cycles, never()).updateById(any(RegistrationCycle.class));
     verifyNoInteractions(policies);
+  }
+
+  @Test
+  void capacityFillPublishesOneRecipientSpecificOfferEventPerInvitation() {
+    RegistrationCycle second = cycle(102L, 110L, 22L);
+    second.setWaitlistSequence(2L);
+    when(cycles.countConfirmed(20L)).thenReturn(18L);
+    when(cycles.selectFirstWaitlistedForUpdate(20L)).thenReturn(cycle, second);
+
+    assertThat(service.fillAvailableFirstComeSeats(position, 7L, "Capacity increased")).isEqualTo(2);
+
+    var inserted = ArgumentCaptor.forClass(PromotionOffer.class);
+    verify(offers, times(2)).insert(inserted.capture());
+    assertThat(notifications.commands()).hasSize(2);
+    for (int i = 0; i < 2; i++) {
+      Long offerId = inserted.getAllValues().get(i).getId();
+      assertThat(notifications.commands().get(i)).isEqualTo(new DomainEventCommand(
+          10L, 11L, "PROMOTION_OFFER", offerId.toString(), "registration.promotion-offered.v1",
+          new NotificationIntentPayload(i == 0 ? 21L : 22L, "PROMOTION_OFFER",
+              "递补邀请", "请及时确认", "PROMOTION_OFFER", offerId)));
+    }
   }
 
   @Test
@@ -240,11 +261,18 @@ class PromotionServiceTest {
   @ParameterizedTest
   @ValueSource(strings = {"ACCEPT", "DECLINE"})
   void ownOfferResponseDoesNotEmitSelfNotification(String decision) {
+    notifications.beforePublish(() -> verify(audit).record(10L, 21L,
+        "ACCEPT".equals(decision) ? "promotion.accepted" : "promotion.declined", "promotion_offer", 300L,
+        "ACCEPT".equals(decision) ? "CONFIRMED" : "PROMOTION_DECLINED"));
     service.respond(21L, 300L, new PromotionResponseRequest(decision));
 
     assertThat(cycle.getStatus())
         .isEqualTo("ACCEPT".equals(decision) ? "CONFIRMED" : "PROMOTION_DECLINED");
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(notifications.commands()).containsExactly(new DomainEventCommand(
+        10L, 11L, "PROMOTION_OFFER", "300",
+        "ACCEPT".equals(decision) ? "registration.promotion-accepted.v1" : "registration.promotion-declined.v1",
+        new RegistrationStatusPayload(21L, 21L, 100L,
+            "ACCEPT".equals(decision) ? "CONFIRMED" : "PROMOTION_DECLINED", null)));
   }
 
   @Test
@@ -261,10 +289,22 @@ class PromotionServiceTest {
     assertThat(inserted.getValue().getRegistrationCycleId()).isEqualTo(102L);
     Long nextOfferId = inserted.getValue().getId();
     assertThat(nextOfferId).isNotEqualTo(300L);
-    assertThat(notifications.commands()).containsExactly(new NotificationCommand(
-        10L, 22L, "PROMOTION_OFFER", "递补邀请", "请及时确认", "PROMOTION_OFFER",
-        nextOfferId, "promotion-offer:" + nextOfferId + ":created"));
-    assertThat(notifications.commands()).noneMatch(command -> command.userId().equals(21L));
+    assertThat(notifications.commands()).containsExactly(
+        new DomainEventCommand(10L, 11L, "PROMOTION_OFFER", "300",
+            "registration.promotion-declined.v1",
+            new RegistrationStatusPayload(21L, 21L, 100L, "PROMOTION_DECLINED", null)),
+        new DomainEventCommand(10L, 11L, "PROMOTION_OFFER", nextOfferId.toString(),
+            "registration.promotion-offered.v1", new NotificationIntentPayload(
+                22L, "PROMOTION_OFFER", "递补邀请", "请及时确认", "PROMOTION_OFFER", nextOfferId)));
+  }
+
+  @Test
+  void responseOutboxFailurePropagatesBeforeInvitingNextCandidate() {
+    var failure = new IllegalStateException("Outbox unavailable");
+    notifications.failNextPublish(failure);
+    assertThatThrownBy(() -> service.respond(21L, 300L, new PromotionResponseRequest("DECLINE")))
+        .isSameAs(failure);
+    verify(cycles, never()).selectFirstWaitlistedForUpdate(anyLong());
   }
 
   @Test

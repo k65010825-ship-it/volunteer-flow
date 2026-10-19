@@ -6,8 +6,11 @@ import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.DomainEventPublisher;
+import com.volunteerflow.infrastructure.event.DomainEventTypes;
+import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
+import com.volunteerflow.infrastructure.event.RegistrationStatusPayload;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import jakarta.validation.constraints.NotBlank;
@@ -35,7 +38,7 @@ public class PromotionService {
   private final PromotionOfferMapper offers;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
-  private final NotificationWriter notifications;
+  private final DomainEventPublisher events;
 
   public PromotionService(
       ActivityRegistrationPolicyService policies,
@@ -45,7 +48,7 @@ public class PromotionService {
       PromotionOfferMapper offers,
       OrganizationAuthorizationService authorization,
       AuditService audit,
-      NotificationWriter notifications) {
+      DomainEventPublisher events) {
     this.policies = policies;
     this.members = members;
     this.registrations = registrations;
@@ -53,7 +56,7 @@ public class PromotionService {
     this.offers = offers;
     this.authorization = authorization;
     this.audit = audit;
-    this.notifications = notifications;
+    this.events = events;
   }
 
   /**
@@ -207,6 +210,11 @@ public class PromotionService {
         "promotion_offer",
         offer.getId(),
         cycle.getStatus());
+    events.publish(new DomainEventCommand(
+        cycle.getOrganizationId(), cycle.getActivityId(), "PROMOTION_OFFER", offer.getId().toString(),
+        accepted ? DomainEventTypes.REGISTRATION_PROMOTION_ACCEPTED : DomainEventTypes.REGISTRATION_PROMOTION_DECLINED,
+        new RegistrationStatusPayload(userId, cycle.getUserId(), cycle.getRegistrationId(),
+            cycle.getStatus(), null)));
     if (!accepted && "FIRST_COME".equals(position.getRegistrationMode())) {
       offerNextFirstCome(position.getId(), userId, "Previous invitation declined");
     }
@@ -245,16 +253,10 @@ public class PromotionService {
         "promotion_offer",
         offer.getId(),
         reason);
-    notifications.write(
-        new NotificationCommand(
-            cycle.getOrganizationId(),
-            cycle.getUserId(),
-            "PROMOTION_OFFER",
-            "递补邀请",
-            "请及时确认",
-            "PROMOTION_OFFER",
-            offer.getId(),
-            "promotion-offer:" + offer.getId() + ":created"));
+    events.publish(new DomainEventCommand(
+        cycle.getOrganizationId(), cycle.getActivityId(), "PROMOTION_OFFER", offer.getId().toString(),
+        DomainEventTypes.REGISTRATION_PROMOTION_OFFERED, new NotificationIntentPayload(
+            cycle.getUserId(), "PROMOTION_OFFER", "递补邀请", "请及时确认", "PROMOTION_OFFER", offer.getId())));
     return offer;
   }
 

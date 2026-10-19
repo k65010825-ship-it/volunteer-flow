@@ -100,12 +100,33 @@ class TransactionalOutboxEventPublisherTest {
   void codecRestoresTheTypedPayloadFromEventType() {
     for (String type : DomainEventTypes.ALL) {
       DomainEventPayload payload = type.equals("checkin.completed.v1") || type.equals("checkin.corrected.v1")
-          ? new CheckinStatusPayload(9L, 11L, 12L, "DYNAMIC_CODE") : intent(9L);
+          ? new CheckinStatusPayload(9L, 11L, 12L, "DYNAMIC_CODE")
+          : List.of("registration.cancelled.v1", "registration.promotion-accepted.v1",
+              "registration.promotion-declined.v1").contains(type)
+              ? new RegistrationStatusPayload(9L, 9L, 2001L, "CANCELED", null) : intent(9L);
       DomainEventEnvelope event = envelope(type, payload);
       DomainEventEnvelope restored = codec.decode(codec.encode(event));
       assertThat(restored).isEqualTo(event);
       assertThat(restored.payload()).isExactlyInstanceOf(payload.getClass());
     }
+  }
+
+  @Test
+  void registrationFactsRoundTripWithoutNotificationIntentAndRejectWrongPayload() {
+    for (String type : List.of("registration.cancelled.v1", "registration.promotion-accepted.v1",
+        "registration.promotion-declined.v1")) {
+      var payload = new RegistrationStatusPayload(9L, 9L, 2001L, "CANCELED", "Schedule conflict");
+      transaction.execute(status -> publisher.publish(command(type, payload)));
+      DomainEventEnvelope restored = codec.decode(rows.get(rows.size() - 1).getPayloadJson());
+      assertThat(restored.payload()).isEqualTo(payload);
+      assertThat(codec.encode(restored)).doesNotContain("notificationType", "title", "content");
+      assertThatThrownBy(() -> command(type, intent(9L))).isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThat(rows).hasSize(3);
+    assertThatThrownBy(() -> new RegistrationStatusPayload(9L, 9L, 0L, "CANCELED", null))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new RegistrationStatusPayload(9L, 9L, 2001L, " ", null))
+        .isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

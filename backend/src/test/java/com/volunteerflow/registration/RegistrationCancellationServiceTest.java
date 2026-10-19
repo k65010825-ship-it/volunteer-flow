@@ -8,6 +8,8 @@ import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService.CancellationTiming;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.RegistrationStatusPayload;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.registration.RegistrationCancellationService.CancellationRequest;
@@ -25,8 +27,9 @@ class RegistrationCancellationServiceTest {
   final PromotionOfferMapper offers = mock(PromotionOfferMapper.class);
   final AuditService audit = mock(AuditService.class);
   final PromotionService promotions = mock(PromotionService.class);
+  final CapturingDomainEventPublisher events = new CapturingDomainEventPublisher();
   final RegistrationCancellationService service = new RegistrationCancellationService(
-      policies, members, registrations, cycles, offers, promotions, audit);
+      policies, members, registrations, cycles, offers, promotions, audit, events);
   final LocalDateTime now = LocalDateTime.of(2026, 9, 16, 8, 0);
   RegistrationCycle cycle;
 
@@ -54,6 +57,9 @@ class RegistrationCancellationServiceTest {
     assertThat(result.getCanceledAt()).isEqualTo(now);
     verify(promotions).offerNextFirstCome(20L, 21L, "Registration canceled");
     verify(audit).record(10L, 21L, "registration.canceled", "registration_cycle", 101L, null);
+    assertThat(events.commands()).containsExactly(new DomainEventCommand(
+        10L, 11L, "REGISTRATION", "100", "registration.cancelled.v1",
+        new RegistrationStatusPayload(21L, 21L, 100L, "CANCELED", null)));
   }
 
   @Test
@@ -64,6 +70,9 @@ class RegistrationCancellationServiceTest {
     assertThat(result.getStatus()).isEqualTo("LATE_CANCELED");
     assertThat(result.getAttendanceStatus()).isEqualTo("NOT_REQUIRED");
     assertThat(result.getCancelReason()).isEqualTo("Sick");
+    assertThat(events.commands()).containsExactly(new DomainEventCommand(
+        10L, 11L, "REGISTRATION", "100", "registration.cancelled.v1",
+        new RegistrationStatusPayload(21L, 21L, 100L, "LATE_CANCELED", "Sick")));
     verify(audit)
         .record(
             10L, 21L, "registration.late_canceled", "registration_cycle", 101L, "Sick");
@@ -162,6 +171,19 @@ class RegistrationCancellationServiceTest {
         () -> service.cancel(21L, 100L, new CancellationRequest(null)),
         "REGISTRATION_NOT_ACTIVE");
     verifyNoInteractions(audit, promotions);
+  }
+
+  @Test
+  void cancellationOutboxFailurePropagatesAfterStateAndAuditBeforePromotion() {
+    var failure = new IllegalStateException("Outbox unavailable");
+    events.beforePublish(() -> {
+      verify(cycles).updateById(cycle);
+      verify(audit).record(10L, 21L, "registration.canceled", "registration_cycle", 101L, null);
+    });
+    events.failNextPublish(failure);
+    assertThatThrownBy(() -> service.cancel(21L, 100L, new CancellationRequest(null)))
+        .isSameAs(failure);
+    verifyNoInteractions(promotions);
   }
 
   @Test

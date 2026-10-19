@@ -31,6 +31,10 @@ public final class DomainEventTypes {
     if (eventType == null || !ALL.contains(eventType)) {
       throw new IllegalArgumentException("Unsupported event type/version");
     }
+    if (Set.of(REGISTRATION_CANCELLED, REGISTRATION_PROMOTION_ACCEPTED,
+        REGISTRATION_PROMOTION_DECLINED).contains(eventType)) {
+      return RegistrationStatusPayload.class;
+    }
     return CHECKIN_COMPLETED.equals(eventType) || CHECKIN_CORRECTED.equals(eventType)
         ? CheckinStatusPayload.class : NotificationIntentPayload.class;
   }

@@ -10,7 +10,9 @@ import com.volunteerflow.activity.ActivityPositionMapper;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
+import com.volunteerflow.infrastructure.event.RegistrationStatusPayload;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
@@ -39,7 +41,7 @@ class RegistrationReviewServiceTest {
   private final OrganizationAuthorizationService authorization =
       mock(OrganizationAuthorizationService.class);
   private final AuditService audit = mock(AuditService.class);
-  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
+  private final CapturingDomainEventPublisher notifications = new CapturingDomainEventPublisher();
   private final Clock clock = Clock.fixed(Instant.parse("2026-09-15T08:00:00Z"), ZoneOffset.UTC);
   private final RegistrationReviewService service =
       new RegistrationReviewService(
@@ -110,6 +112,10 @@ class RegistrationReviewServiceTest {
     assertThat(result.getReviewedBy()).isEqualTo(7L);
     assertThat(result.getReviewedAt()).isEqualTo(LocalDateTime.now(clock));
     assertThat(result.getReviewReason()).isEqualTo("Strong fit");
+    assertThat(notifications.commands()).containsExactly(new DomainEventCommand(
+        10L, 11L, "REGISTRATION", "100", "registration.reviewed.v1",
+        new NotificationIntentPayload(21L, "REGISTRATION_REVIEW", "报名审核结果",
+            "审核结果：" + resultingStatus, "REGISTRATION", 100L)));
     verify(cycleMapper).updateById(lockedCycle);
     verify(audit)
         .record(10L, 7L, "registration.reviewed", "registration_cycle", 101L, resultingStatus);
@@ -117,22 +123,29 @@ class RegistrationReviewServiceTest {
 
   @Test
   void reviewPersistsDecisionBeforeEmittingNotification() {
-    notifications.beforeWrite(() -> verify(cycleMapper).updateById(lockedCycle));
+    notifications.beforePublish(() -> {
+      verify(cycleMapper).updateById(lockedCycle);
+      verify(audit).record(10L, 7L, "registration.reviewed", "registration_cycle", 101L, "CONFIRMED");
+    });
 
     RegistrationCycle result = service.decide(7L, 100L, decision("CONFIRM"));
 
     assertThat(result.getStatus()).isEqualTo("CONFIRMED");
     assertThat(notifications.commands())
         .containsExactly(
-            new NotificationCommand(
-                10L,
-                21L,
-                "REGISTRATION_REVIEW",
-                "报名审核结果",
-                "审核结果：CONFIRMED",
-                "REGISTRATION",
-                100L,
-                "registration-review:101:CONFIRMED"));
+            new DomainEventCommand(10L, 11L, "REGISTRATION", "100",
+                "registration.reviewed.v1", new NotificationIntentPayload(21L,
+                "REGISTRATION_REVIEW", "报名审核结果", "审核结果：CONFIRMED",
+                "REGISTRATION", 100L)));
+  }
+
+  @Test
+  void reviewOutboxFailureIsNotSwallowed() {
+    var failure = new IllegalStateException("Outbox unavailable");
+    notifications.failNextPublish(failure);
+    assertThatThrownBy(() -> service.decide(7L, 100L, decision("CONFIRM"))).isSameAs(failure);
+    verify(cycleMapper).updateById(lockedCycle);
+    verify(audit).record(10L, 7L, "registration.reviewed", "registration_cycle", 101L, "CONFIRMED");
   }
 
   @Test

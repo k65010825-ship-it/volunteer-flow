@@ -10,7 +10,9 @@ import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
+import com.volunteerflow.infrastructure.event.RegistrationStatusPayload;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +35,7 @@ class PromotionExpiryJobTest {
       mock(ActivityRegistrationPolicyService.class);
   private final PromotionService promotions = mock(PromotionService.class);
   private final AuditService audit = mock(AuditService.class);
-  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
+  private final CapturingDomainEventPublisher notifications = new CapturingDomainEventPublisher();
   private final LocalDateTime now = LocalDateTime.of(2026, 9, 17, 12, 0);
   private final PromotionExpiryService service =
       new PromotionExpiryService(
@@ -86,6 +88,7 @@ class PromotionExpiryJobTest {
   void expiresAtExactDeadlineOnceAndAdvancesFirstComeQueueAfterAudit() {
     assertThat(service.expireOne(300L)).isTrue();
     assertThat(service.expireOne(300L)).isFalse();
+    assertThat(notifications.commands()).hasSize(1);
     assertThat(offer.getStatus()).isEqualTo("EXPIRED");
     assertThat(offer.getRespondedAt()).isEqualTo(now);
     assertThat(cycle.getStatus()).isEqualTo("PROMOTION_EXPIRED");
@@ -106,10 +109,12 @@ class PromotionExpiryJobTest {
 
   @Test
   void expiryPersistsTerminalStatesBeforeNotifyingCandidate() {
-    notifications.beforeWrite(
+    notifications.beforePublish(
         () -> {
           verify(offers).updateById(offer);
           verify(cycles).updateById(cycle);
+          verify(audit).record(10L, null, "promotion.expired", "promotion_offer", 300L,
+              "PROMOTION_EXPIRED");
         });
 
     assertThat(service.expireOne(300L)).isTrue();
@@ -118,15 +123,17 @@ class PromotionExpiryJobTest {
     assertThat(cycle.getStatus()).isEqualTo("PROMOTION_EXPIRED");
     assertThat(notifications.commands())
         .containsExactly(
-            new NotificationCommand(
-                10L,
-                7L,
-                "PROMOTION_OFFER",
-                "递补邀请已过期",
-                "递补邀请已过期",
-                "PROMOTION_OFFER",
-                300L,
-                "promotion-offer:300:expired"));
+            new DomainEventCommand(10L, 20L, "PROMOTION_OFFER", "300",
+                "registration.promotion-expired.v1", new NotificationIntentPayload(7L,
+                "PROMOTION_OFFER", "递补邀请已过期", "递补邀请已过期", "PROMOTION_OFFER", 300L)));
+  }
+
+  @Test
+  void expiryOutboxFailurePropagatesBeforeInvitingNextCandidate() {
+    var failure = new IllegalStateException("Outbox unavailable");
+    notifications.failNextPublish(failure);
+    assertThatThrownBy(() -> service.expireOne(300L)).isSameAs(failure);
+    verifyNoInteractions(promotions);
   }
 
   @Test

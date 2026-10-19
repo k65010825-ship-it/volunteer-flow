@@ -11,6 +11,10 @@ import com.volunteerflow.activity.ActivityPosition;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService.CancellationTiming;
 import com.volunteerflow.audit.AuditService;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.DomainEventPublisher;
+import com.volunteerflow.infrastructure.event.DomainEventTypes;
+import com.volunteerflow.infrastructure.event.RegistrationStatusPayload;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import java.time.LocalDateTime;
 import java.util.Set;
@@ -31,6 +35,7 @@ public class RegistrationCancellationService {
   private final PromotionOfferMapper offers;
   private final PromotionService promotions;
   private final AuditService audit;
+  private final DomainEventPublisher events;
 
   public RegistrationCancellationService(
       ActivityRegistrationPolicyService policies,
@@ -39,7 +44,8 @@ public class RegistrationCancellationService {
       RegistrationCycleMapper cycles,
       PromotionOfferMapper offers,
       PromotionService promotions,
-      AuditService audit) {
+      AuditService audit,
+      DomainEventPublisher events) {
     this.policies = policies;
     this.members = members;
     this.registrations = registrations;
@@ -47,6 +53,7 @@ public class RegistrationCancellationService {
     this.offers = offers;
     this.promotions = promotions;
     this.audit = audit;
+    this.events = events;
   }
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -119,6 +126,11 @@ public class RegistrationCancellationService {
         "registration_cycle",
         cycle.getId(),
         reason);
+    events.publish(new DomainEventCommand(
+        registration.getOrganizationId(), registration.getActivityId(), "REGISTRATION",
+        registration.getId().toString(), DomainEventTypes.REGISTRATION_CANCELLED,
+        new RegistrationStatusPayload(userId, registration.getUserId(), registration.getId(),
+            cycle.getStatus(), reason)));
     if (released && "FIRST_COME".equals(position.getRegistrationMode())) {
       promotions.offerNextFirstCome(position.getId(), userId, "Registration canceled");
     }

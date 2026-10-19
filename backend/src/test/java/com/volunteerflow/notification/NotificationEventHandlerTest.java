@@ -82,9 +82,22 @@ class NotificationEventHandlerTest {
   }
 
   @Test
+  void registrationFactsRecordConsumedMarkerWithoutAddingSelfNotification() {
+    for (String type : List.of("registration.cancelled.v1", "registration.promotion-accepted.v1",
+        "registration.promotion-declined.v1")) {
+      NotificationConsumerFixture f = new NotificationConsumerFixture();
+      var event = f.event(type, new RegistrationStatusPayload(9L, 9L, 2001L, "CANCELED", null));
+      assertThat(f.handler.handle(event)).isEqualTo(NotificationEventHandler.ProcessingResult.NO_NOTIFICATION);
+      assertThat(f.handler.handle(event)).isEqualTo(NotificationEventHandler.ProcessingResult.DUPLICATE);
+      assertThat(f.markers).hasSize(1);
+      assertThat(f.rows).isEmpty();
+    }
+  }
+
+  @Test
   void mapsEveryApprovedNotificationIntentWithoutBusinessQueries() {
     for (String type : DomainEventTypes.ALL) {
-      if (type.equals("checkin.completed.v1") || type.equals("checkin.corrected.v1")) continue;
+      if (DomainEventTypes.payloadType(type) != NotificationIntentPayload.class) continue;
       NotificationConsumerFixture f = new NotificationConsumerFixture();
       assertThat(f.handler.handle(f.event(type, f.event().payload())))
           .isEqualTo(NotificationEventHandler.ProcessingResult.CREATED);
