@@ -36,6 +36,7 @@ public class RegistrationCancellationService {
   private final PromotionService promotions;
   private final AuditService audit;
   private final DomainEventPublisher events;
+  private final PromotionReconciliationRequester reconciliation;
 
   public RegistrationCancellationService(
       ActivityRegistrationPolicyService policies,
@@ -45,7 +46,8 @@ public class RegistrationCancellationService {
       PromotionOfferMapper offers,
       PromotionService promotions,
       AuditService audit,
-      DomainEventPublisher events) {
+      DomainEventPublisher events,
+      PromotionReconciliationRequester reconciliation) {
     this.policies = policies;
     this.members = members;
     this.registrations = registrations;
@@ -54,6 +56,7 @@ public class RegistrationCancellationService {
     this.promotions = promotions;
     this.audit = audit;
     this.events = events;
+    this.reconciliation = reconciliation;
   }
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -131,8 +134,11 @@ public class RegistrationCancellationService {
         registration.getId().toString(), DomainEventTypes.REGISTRATION_CANCELLED,
         new RegistrationStatusPayload(userId, registration.getUserId(), registration.getId(),
             cycle.getStatus(), reason)));
-    if (released && "FIRST_COME".equals(position.getRegistrationMode())) {
-      promotions.offerNextFirstCome(position.getId(), userId, "Registration canceled");
+    if (released) {
+      reconciliation.request(registration.getOrganizationId(), position.getId(), now);
+      if ("FIRST_COME".equals(position.getRegistrationMode())) {
+        promotions.offerNextFirstCome(position.getId(), userId, "Registration canceled");
+      }
     }
     return cycle;
   }

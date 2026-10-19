@@ -25,6 +25,7 @@ import com.volunteerflow.infrastructure.event.*;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.CapturingDomainEventPublisher;
 import com.volunteerflow.registration.PromotionService;
+import com.volunteerflow.registration.PromotionReconciliationRequester;
 import com.volunteerflow.registration.RegistrationCycleMapper;
 import java.lang.reflect.Method;
 import java.time.Clock;
@@ -75,7 +76,8 @@ class ActivityChangeServiceTest {
           events,
           promotions,
           cacheInvalidator,
-          clock);
+          clock,
+          mock(PromotionReconciliationRequester.class));
 
   @BeforeEach
   void persistSingleRowWrites() {
@@ -1003,7 +1005,7 @@ class ActivityChangeServiceTest {
     when(positions.activateDraft(2L, 100L, 1L)).thenAnswer(call -> f.stage(position));
     ActivityChangeService proxied = f.proxy(new ActivityChangeService(activities, positions,
         activityQuestions, positionQuestions, registrationCycles, authorization, f.audit,
-        f.publisher, promotions, cacheInvalidator, clock));
+        f.publisher, promotions, cacheInvalidator, clock, mock(PromotionReconciliationRequester.class)));
     if ("activity".equals(action)) return () -> proxied.changeActivity(7L, 1L, changedTitleRequest());
     if ("position".equals(action)) return () -> proxied.changePosition(7L, 2L, validPositionChange(21, "FIRST_COME"));
     position.setStatus("DRAFT");

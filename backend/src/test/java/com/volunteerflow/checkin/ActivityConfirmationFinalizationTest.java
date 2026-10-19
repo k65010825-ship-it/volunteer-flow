@@ -290,7 +290,8 @@ class ActivityConfirmationFinalizationTest {
                   audit,
                   mock(com.volunteerflow.activity.ActivityDetailCacheInvalidator.class)));
       review = proxy(new RegistrationReviewService(registrations, cycles, positions, policies, members, offers, authorization, audit, publisher, clock));
-      promotion = proxy(new PromotionService(policies, members, registrations, cycles, offers, authorization, audit, publisher));
+      promotion = proxy(new PromotionService(policies, members, registrations, cycles, offers, authorization, audit, publisher,
+          mock(com.volunteerflow.registration.PromotionReconciliationRequester.class)));
       submission = proxy(new RegistrationSubmissionService(policies, members, registrations, cycles, mock(RegistrationAnswerMapper.class),
           offers, new RegistrationAnswerValidator(), audit, publisher, clock));
     }

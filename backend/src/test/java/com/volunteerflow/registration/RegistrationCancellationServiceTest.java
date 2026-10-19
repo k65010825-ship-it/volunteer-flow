@@ -29,7 +29,8 @@ class RegistrationCancellationServiceTest {
   final PromotionService promotions = mock(PromotionService.class);
   final CapturingDomainEventPublisher events = new CapturingDomainEventPublisher();
   final RegistrationCancellationService service = new RegistrationCancellationService(
-      policies, members, registrations, cycles, offers, promotions, audit, events);
+      policies, members, registrations, cycles, offers, promotions, audit, events,
+      mock(PromotionReconciliationRequester.class));
   final LocalDateTime now = LocalDateTime.of(2026, 9, 16, 8, 0);
   RegistrationCycle cycle;
 

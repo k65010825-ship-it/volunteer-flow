@@ -39,7 +39,8 @@ class PromotionExpiryJobTest {
   private final LocalDateTime now = LocalDateTime.of(2026, 9, 17, 12, 0);
   private final PromotionExpiryService service =
       new PromotionExpiryService(
-          offers, cycles, members, policies, promotions, audit, notifications);
+          offers, cycles, members, policies, promotions, audit, notifications,
+          mock(PromotionReconciliationRequester.class));
   private PromotionOffer offer;
   private RegistrationCycle cycle;
   private ActivityPosition position;

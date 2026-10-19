@@ -37,7 +37,8 @@ class PromotionServiceTest {
   final AuditService audit = mock(AuditService.class);
   final CapturingDomainEventPublisher notifications = new CapturingDomainEventPublisher();
   final PromotionService service = new PromotionService(
-      policies, members, registrations, cycles, offers, authorization, audit, notifications);
+      policies, members, registrations, cycles, offers, authorization, audit, notifications,
+      mock(PromotionReconciliationRequester.class));
   final LocalDateTime now = LocalDateTime.of(2026, 9, 16, 8, 0);
   Registration registration;
   RegistrationCycle cycle;

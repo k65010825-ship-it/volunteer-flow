@@ -13,6 +13,14 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface PromotionReconcileTaskMapper extends BaseMapper<PromotionReconcileTask> {
+  @Select("SELECT CURRENT_TIMESTAMP(6)")
+  @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
+  LocalDateTime currentDatabaseTime();
+
+  @Select("SELECT * FROM promotion_reconcile_task WHERE position_id=#{positionId} FOR UPDATE")
+  @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
+  PromotionReconcileTask selectByPositionForUpdate(@Param("positionId") Long positionId);
+
   /** A request made during processing must not steal the worker's lease or lose its newer version. */
   @Insert("""
       INSERT INTO promotion_reconcile_task
@@ -73,6 +81,7 @@ public interface PromotionReconcileTaskMapper extends BaseMapper<PromotionReconc
         next_run_at=#{now}, attempt_count=0, last_error=NULL, locked_by=NULL, locked_until=NULL
       WHERE position_id=#{positionId} AND status='PROCESSING' AND locked_by=#{workerId}
         AND processed_version<#{claimedVersion} AND request_version>=#{claimedVersion}
+        AND locked_until>#{now}
       """)
   int markProcessed(@Param("positionId") Long positionId, @Param("claimedVersion") long claimedVersion,
       @Param("workerId") String workerId, @Param("now") LocalDateTime now);
@@ -83,8 +92,10 @@ public interface PromotionReconcileTaskMapper extends BaseMapper<PromotionReconc
         locked_by=NULL, locked_until=NULL
       WHERE position_id=#{positionId} AND status='PROCESSING' AND locked_by=#{workerId}
         AND processed_version<#{claimedVersion} AND request_version>=#{claimedVersion}
+        AND locked_until>#{now}
       """)
   int markRetry(@Param("positionId") Long positionId, @Param("claimedVersion") long claimedVersion,
       @Param("workerId") String workerId, @Param("attemptCount") int attemptCount,
-      @Param("nextRunAt") LocalDateTime nextRunAt, @Param("lastError") String lastError);
+      @Param("nextRunAt") LocalDateTime nextRunAt, @Param("lastError") String lastError,
+      @Param("now") LocalDateTime now);
 }

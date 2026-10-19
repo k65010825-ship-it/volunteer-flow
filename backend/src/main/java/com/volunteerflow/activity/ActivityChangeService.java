@@ -9,6 +9,7 @@ import com.volunteerflow.infrastructure.event.DomainEventTypes;
 import com.volunteerflow.infrastructure.event.NotificationEventTemplate;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.PromotionService;
+import com.volunteerflow.registration.PromotionReconciliationRequester;
 import com.volunteerflow.registration.RegistrationCycleMapper;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -46,6 +47,7 @@ public class ActivityChangeService {
   private final PromotionService promotions;
   private final ActivityDetailCacheInvalidator cacheInvalidator;
   private final Clock clock;
+  private final PromotionReconciliationRequester reconciliation;
 
   public ActivityChangeService(
       ActivityMapper activities,
@@ -58,7 +60,8 @@ public class ActivityChangeService {
       DomainEventPublisher events,
       PromotionService promotions,
       ActivityDetailCacheInvalidator cacheInvalidator,
-      Clock clock) {
+      Clock clock,
+      PromotionReconciliationRequester reconciliation) {
     this.activities = activities;
     this.positions = positions;
     this.activityQuestions = activityQuestions;
@@ -70,6 +73,7 @@ public class ActivityChangeService {
     this.promotions = promotions;
     this.cacheInvalidator = cacheInvalidator;
     this.clock = clock;
+    this.reconciliation = reconciliation;
   }
 
   @Transactional
@@ -284,6 +288,7 @@ public class ActivityChangeService {
     int notifiedRecipients =
         publishPositionChangeEvents(activity, position, reason, "岗位信息变更");
     if (request.capacity() > oldCapacity) {
+      reconciliation.request(activity.getOrganizationId(), positionId, now());
       promotions.fillAvailableFirstComeSeats(position, actorId, reason);
     }
     cacheInvalidator.evictAfterCommit(activity.getId());

@@ -122,6 +122,15 @@ class Stage5PersistenceContractTest {
   }
 
   @Test
+  void reconciliationExecutionAndCompletionFenceExpiredLeaseOwners() {
+    BoundSql lock = bound(RECONCILE, "selectByPositionForUpdate", parameters());
+    assertThat(sql(lock)).isEqualTo("SELECT * FROM promotion_reconcile_task WHERE position_id=? FOR UPDATE");
+    assertThat(bindings(lock)).containsExactly("positionId");
+    assertThat(sql(bound(RECONCILE, "markProcessed", parameters()))).contains("locked_until>?");
+    assertThat(sql(bound(RECONCILE, "markRetry", parameters()))).contains("locked_until>?");
+  }
+
+  @Test
   void reconciliationRequestsIncrementVersionWithoutStealingProcessingLease() {
     assertThat(sql(bound(RECONCILE, "upsertRequest", parameters())))
         .contains("INSERT INTO promotion_reconcile_task", "ON DUPLICATE KEY UPDATE",

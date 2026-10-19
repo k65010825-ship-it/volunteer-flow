@@ -77,6 +77,12 @@ volunteerflow:
       ttl: ${DYNAMIC_CHECKIN_TTL:45s}
       token-bytes: ${DYNAMIC_CHECKIN_TOKEN_BYTES:24}
   registration:
+    promotion-reconciliation:
+      scan-delay: ${PROMOTION_RECONCILIATION_SCAN_DELAY:30s}
+      batch-size: ${PROMOTION_RECONCILIATION_BATCH_SIZE:100}
+      lease: ${PROMOTION_RECONCILIATION_LEASE:60s}
+      retry-initial: ${PROMOTION_RECONCILIATION_RETRY_INITIAL:5s}
+      retry-max: ${PROMOTION_RECONCILIATION_RETRY_MAX:5m}
     promotion-expiry:
       scan-delay: ${PROMOTION_EXPIRY_SCAN_DELAY:30s}
       batch-size: ${PROMOTION_EXPIRY_BATCH_SIZE:100}

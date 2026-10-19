@@ -39,6 +39,7 @@ public class PromotionService {
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
   private final DomainEventPublisher events;
+  private final PromotionReconciliationRequester reconciliation;
 
   public PromotionService(
       ActivityRegistrationPolicyService policies,
@@ -48,7 +49,8 @@ public class PromotionService {
       PromotionOfferMapper offers,
       OrganizationAuthorizationService authorization,
       AuditService audit,
-      DomainEventPublisher events) {
+      DomainEventPublisher events,
+      PromotionReconciliationRequester reconciliation) {
     this.policies = policies;
     this.members = members;
     this.registrations = registrations;
@@ -57,6 +59,7 @@ public class PromotionService {
     this.authorization = authorization;
     this.audit = audit;
     this.events = events;
+    this.reconciliation = reconciliation;
   }
 
   /**
@@ -215,8 +218,11 @@ public class PromotionService {
         accepted ? DomainEventTypes.REGISTRATION_PROMOTION_ACCEPTED : DomainEventTypes.REGISTRATION_PROMOTION_DECLINED,
         new RegistrationStatusPayload(userId, cycle.getUserId(), cycle.getRegistrationId(),
             cycle.getStatus(), null)));
-    if (!accepted && "FIRST_COME".equals(position.getRegistrationMode())) {
-      offerNextFirstCome(position.getId(), userId, "Previous invitation declined");
+    if (!accepted) {
+      reconciliation.request(cycle.getOrganizationId(), position.getId(), now);
+      if ("FIRST_COME".equals(position.getRegistrationMode())) {
+        offerNextFirstCome(position.getId(), userId, "Previous invitation declined");
+      }
     }
     return offer;
   }

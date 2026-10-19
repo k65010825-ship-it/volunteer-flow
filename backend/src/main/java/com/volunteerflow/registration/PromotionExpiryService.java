@@ -28,6 +28,7 @@ public class PromotionExpiryService {
   private final PromotionService promotions;
   private final AuditService audit;
   private final DomainEventPublisher events;
+  private final PromotionReconciliationRequester reconciliation;
 
   public PromotionExpiryService(
       PromotionOfferMapper offers,
@@ -36,7 +37,8 @@ public class PromotionExpiryService {
       ActivityRegistrationPolicyService policies,
       PromotionService promotions,
       AuditService audit,
-      DomainEventPublisher events) {
+      DomainEventPublisher events,
+      PromotionReconciliationRequester reconciliation) {
     this.offers = offers;
     this.cycles = cycles;
     this.members = members;
@@ -44,6 +46,7 @@ public class PromotionExpiryService {
     this.promotions = promotions;
     this.audit = audit;
     this.events = events;
+    this.reconciliation = reconciliation;
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
@@ -96,6 +99,7 @@ public class PromotionExpiryService {
         cycle.getOrganizationId(), cycle.getActivityId(), "PROMOTION_OFFER", offerId.toString(),
         DomainEventTypes.REGISTRATION_PROMOTION_EXPIRED, new NotificationIntentPayload(
             cycle.getUserId(), "PROMOTION_OFFER", "递补邀请已过期", "递补邀请已过期", "PROMOTION_OFFER", offerId)));
+    reconciliation.request(cycle.getOrganizationId(), position.getId(), now);
     if ("FIRST_COME".equals(position.getRegistrationMode())) {
       promotions.offerNextFirstCome(position.getId(), null, "Previous invitation expired");
     }
