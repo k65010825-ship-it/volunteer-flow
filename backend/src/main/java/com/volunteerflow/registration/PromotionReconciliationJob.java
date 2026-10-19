@@ -1,5 +1,6 @@
 package com.volunteerflow.registration;
 
+import com.volunteerflow.infrastructure.event.EventPipelineMetrics;
 import java.util.List;
 import java.util.UUID;
 import org.slf4j.Logger;
@@ -13,9 +14,11 @@ import org.springframework.stereotype.Component;
 public class PromotionReconciliationJob {
   private static final Logger log = LoggerFactory.getLogger(PromotionReconciliationJob.class);
   private final PromotionReconciliationService reconciliation;
+  private final EventPipelineMetrics metrics;
 
-  public PromotionReconciliationJob(PromotionReconciliationService reconciliation) {
+  public PromotionReconciliationJob(PromotionReconciliationService reconciliation, EventPipelineMetrics metrics) {
     this.reconciliation = reconciliation;
+    this.metrics = metrics;
   }
 
   @Scheduled(fixedDelayString = "${volunteerflow.registration.promotion-reconciliation.scan-delay:30s}")
@@ -25,6 +28,7 @@ public class PromotionReconciliationJob {
     try {
       claimed = reconciliation.claimBatch(owner);
     } catch (RuntimeException failure) {
+      metrics.reconciliationFailed();
       log.warn("Promotion reconciliation failed category=CLAIM_FAILED");
       return 0;
     }
@@ -32,8 +36,12 @@ public class PromotionReconciliationJob {
     for (PromotionReconcileTask task : claimed) {
       try {
         if (reconciliation.reconcile(task.getPositionId(), task.getRequestVersion(), owner)
-            != PromotionReconciliationService.ReconciliationResult.STALE) processed++;
+            != PromotionReconciliationService.ReconciliationResult.STALE) {
+          metrics.reconciled();
+          processed++;
+        }
       } catch (RuntimeException failure) {
+        metrics.reconciliationFailed();
         log.warn("Promotion reconciliation failed; positionId={} category=RECONCILIATION_FAILED", task.getPositionId());
         try {
           reconciliation.retry(task, owner);

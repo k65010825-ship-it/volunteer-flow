@@ -3,6 +3,7 @@ package com.volunteerflow.registration;
 import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import com.volunteerflow.infrastructure.event.EventPipelineTestMetrics;
 import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.slf4j.LoggerFactory;
 
 class PromotionReconciliationJobTest {
+  private final EventPipelineTestMetrics observation = new EventPipelineTestMetrics();
   @Test
   void claimsOnlyIndexedDueTasks() {
     ReconciliationFixture f = new ReconciliationFixture();
@@ -33,7 +35,9 @@ class PromotionReconciliationJobTest {
     f.task(21, "PENDING", f.now);
     f.task(22, "PENDING", f.now);
     f.failedPositions.add(21L);
-    assertThat(new PromotionReconciliationJob(f.service).reconcileBatch()).isEqualTo(2);
+    assertThat(new PromotionReconciliationJob(f.service, observation.metrics).reconcileBatch()).isEqualTo(2);
+    assertThat(observation.registry.get("promotion.reconcile.success").counter().count()).isEqualTo(2);
+    assertThat(observation.registry.get("promotion.reconcile.failure").counter().count()).isEqualTo(1);
     assertThat(f.row(20).getProcessedVersion()).isEqualTo(1);
     assertThat(f.row(21).getStatus()).isEqualTo("RETRY");
     assertThat(f.row(22).getStatus()).isEqualTo("DONE");
@@ -46,7 +50,7 @@ class PromotionReconciliationJobTest {
   void leaseOwnerIsFreshForEveryBatch() {
     ReconciliationFixture f = new ReconciliationFixture();
     f.request();
-    PromotionReconciliationJob job = new PromotionReconciliationJob(f.service);
+    PromotionReconciliationJob job = new PromotionReconciliationJob(f.service, observation.metrics);
     job.reconcileBatch();
     job.reconcileBatch();
     assertThat(f.claimOwners).hasSize(2).doesNotHaveDuplicates();
@@ -65,7 +69,7 @@ class PromotionReconciliationJobTest {
     Logger logger = (Logger) LoggerFactory.getLogger(PromotionReconciliationJob.class);
     ListAppender<ILoggingEvent> logs = new ListAppender<>(); logs.start(); logger.addAppender(logs);
     try {
-      PromotionReconciliationJob job = new PromotionReconciliationJob(service);
+      PromotionReconciliationJob job = new PromotionReconciliationJob(service, observation.metrics);
       assertThat(job.reconcileBatch()).isZero();
       assertThat(job.reconcileBatch()).isZero();
       assertThat(logs.list).extracting(ILoggingEvent::getFormattedMessage).containsExactly(

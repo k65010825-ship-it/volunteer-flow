@@ -103,7 +103,7 @@ class KafkaEventConfigurationTest {
     OutboxRelayService relay = new OutboxRelayService(f.claims(), new OutboxStateService(f.mapper, f.clock, f.properties),
         blockedBroker, new DomainEventCodec(JsonMapper.builder().findAndAddModules().build()),
         new EventTopicRouter("volunteerflow.activity-events.v1", "volunteerflow.registration-events.v1", "volunteerflow.checkin-events.v1"),
-        f.properties, f.clock);
+        f.properties, f.clock, new EventPipelineTestMetrics().metrics);
     try {
       runner.withUserConfiguration(SchedulingProbe.class, OutboxRelayJob.class)
           .withBean(OutboxRelayService.class, () -> relay).withBean(SchedulingObservation.class, () -> observation)

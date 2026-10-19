@@ -13,6 +13,9 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface PromotionReconcileTaskMapper extends BaseMapper<PromotionReconcileTask> {
+  @Select("SELECT COUNT(*) FROM promotion_reconcile_task WHERE status IN ('PENDING','RETRY','PROCESSING')")
+  long countPending();
+
   @Select("SELECT CURRENT_TIMESTAMP(6)")
   @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
   LocalDateTime currentDatabaseTime();

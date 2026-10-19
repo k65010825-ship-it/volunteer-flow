@@ -32,6 +32,7 @@ import org.springframework.kafka.listener.DefaultErrorHandler;
 import org.springframework.kafka.support.SendResult;
 
 class NotificationConsumerConfigurationTest {
+  private final EventPipelineTestMetrics observation = new EventPipelineTestMetrics();
   final NotificationConsumerConfiguration configuration = new NotificationConsumerConfiguration();
 
   @Test
@@ -39,9 +40,11 @@ class NotificationConsumerConfigurationTest {
     NotificationConsumerFixture f = new NotificationConsumerFixture();
     new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(KafkaAutoConfiguration.class))
         .withUserConfiguration(KafkaEventConfiguration.class, NotificationConsumerConfiguration.class)
+        .withBean(EventPipelineMetrics.class, () -> observation.metrics)
+        .withBean(io.micrometer.core.instrument.MeterRegistry.class, () -> observation.registry)
         .withBean(DomainEventCodec.class, () -> f.codec)
         .withBean(NotificationEventHandler.class, () -> f.handler)
-        .withBean(KafkaNotificationListener.class, () -> new KafkaNotificationListener(f.codec, f.handler))
+        .withBean(KafkaNotificationListener.class, () -> new KafkaNotificationListener(f.codec, f.handler, observation.metrics))
         .withPropertyValues("volunteerflow.events.consumer-auto-startup=false")
         .run(context -> {
           assertThat(context).hasNotFailed();
@@ -64,8 +67,10 @@ class NotificationConsumerConfigurationTest {
     NotificationConsumerFixture f = new NotificationConsumerFixture();
     new ApplicationContextRunner().withConfiguration(AutoConfigurations.of(KafkaAutoConfiguration.class))
         .withUserConfiguration(KafkaEventConfiguration.class, NotificationConsumerConfiguration.class)
+        .withBean(EventPipelineMetrics.class, () -> observation.metrics)
+        .withBean(io.micrometer.core.instrument.MeterRegistry.class, () -> observation.registry)
         .withBean(DomainEventCodec.class, () -> f.codec).withBean(NotificationEventHandler.class, () -> f.handler)
-        .withBean(KafkaNotificationListener.class, () -> new KafkaNotificationListener(f.codec, f.handler))
+        .withBean(KafkaNotificationListener.class, () -> new KafkaNotificationListener(f.codec, f.handler, observation.metrics))
         .withPropertyValues("volunteerflow.events.consumer-auto-startup=false", "volunteerflow.events.consumer-group=custom-group",
             "volunteerflow.events.topics.activity=custom-activity", "volunteerflow.events.topics.registration=custom-registration",
             "volunteerflow.events.topics.checkin=custom-checkin")
@@ -80,10 +85,10 @@ class NotificationConsumerConfigurationTest {
   @Test
   void malformedJsonRetriesThreeTimesThenPublishesToDlt() {
     NotificationConsumerFixture f = new NotificationConsumerFixture();
-    KafkaNotificationListener listener = new KafkaNotificationListener(f.codec, f.handler);
+    KafkaNotificationListener listener = new KafkaNotificationListener(f.codec, f.handler, observation.metrics);
     List<ProducerRecord<Object, Object>> published = new ArrayList<>();
     KafkaOperations<Object, Object> broker = broker(published);
-    DefaultErrorHandler errors = configuration.notificationErrorHandler(configuration.notificationDeadLetterRecoverer(broker, new KafkaEventProperties()));
+    DefaultErrorHandler errors = configuration.notificationErrorHandler(configuration.notificationDeadLetterRecoverer(broker, new KafkaEventProperties(), observation.provider()));
     var record = KafkaNotificationListenerTest.record("private-event-content { malformed");
     try {
       for (int attempt = 1; attempt <= 3; attempt++) {
@@ -96,13 +101,14 @@ class NotificationConsumerConfigurationTest {
       assertThat(published.get(0).value()).isEqualTo(record.value());
       assertThat(f.markers).isEmpty();
       assertThat(f.rows).isEmpty();
+      assertThat(observation.registry.get("kafka.consumer.dlt").counter().count()).isEqualTo(1);
     } finally { errors.clearThreadState(); }
   }
 
   @Test
   void dltHeadersContainOnlySafeOriginMetadata() {
     List<ProducerRecord<Object, Object>> published = new ArrayList<>();
-    DeadLetterPublishingRecoverer recoverer = configuration.notificationDeadLetterRecoverer(broker(published), new KafkaEventProperties());
+    DeadLetterPublishingRecoverer recoverer = configuration.notificationDeadLetterRecoverer(broker(published), new KafkaEventProperties(), observation.provider());
     var record = KafkaNotificationListenerTest.record("private-event-content");
     record.headers().add("Authorization", bytes("secret-token"));
     record.headers().add("kafka_dlt-exception-stacktrace", bytes("RAW_STACK password=SECRET"));
@@ -129,7 +135,7 @@ class NotificationConsumerConfigurationTest {
     KafkaOperations<Object, Object> broker = broker(published);
     when(broker.send(any(ProducerRecord.class))).thenReturn(CompletableFuture.failedFuture(
         new IllegalStateException("RAW_BROKER_EXCEPTION password=SECRET private-event-content")));
-    DefaultErrorHandler errors = configuration.notificationErrorHandler(configuration.notificationDeadLetterRecoverer(broker, new KafkaEventProperties()));
+    DefaultErrorHandler errors = configuration.notificationErrorHandler(configuration.notificationDeadLetterRecoverer(broker, new KafkaEventProperties(), observation.provider()));
     Logger root = (Logger) LoggerFactory.getLogger(Logger.ROOT_LOGGER_NAME);
     ListAppender<ILoggingEvent> capture = new ListAppender<>(); capture.start(); root.addAppender(capture);
     var record = KafkaNotificationListenerTest.record("private-event-content");
@@ -138,6 +144,7 @@ class NotificationConsumerConfigurationTest {
         assertThat(errors.handleOne(new IllegalStateException("RAW_DB_ERROR password=SECRET"), record, null, null)).isFalse();
       }
       assertThat(capture.list).anySatisfy(event -> assertThat(event.getFormattedMessage()).contains("DLT_PUBLISH_FAILED"));
+      assertThat(observation.registry.get("kafka.consumer.dlt").counter().count()).isZero();
       assertThat(capture.list).allSatisfy(event -> {
         assertThat(event.getFormattedMessage()).doesNotContain("RAW_", "SECRET", "private-event-content");
         if (event.getThrowableProxy() != null) {

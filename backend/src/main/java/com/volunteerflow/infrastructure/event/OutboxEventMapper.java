@@ -13,6 +13,15 @@ import org.apache.ibatis.annotations.Update;
 
 @Mapper
 public interface OutboxEventMapper extends BaseMapper<OutboxEvent> {
+  @Select("SELECT COUNT(*) FROM outbox_event WHERE status IN ('PENDING','RETRY','PROCESSING')")
+  long countPending();
+
+  @Select("SELECT COUNT(*) FROM outbox_event WHERE status='DEAD'")
+  long countDead();
+
+  @Select("SELECT MIN(create_time) FROM outbox_event WHERE status IN ('PENDING','RETRY','PROCESSING')")
+  LocalDateTime oldestPendingCreatedAt();
+
   /** Select and claim must share a short transaction; send to Kafka only after committing. */
   default List<OutboxEvent> selectClaimableForUpdate(LocalDateTime now, int limit) {
     if (limit <= 0) {

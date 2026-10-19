@@ -21,11 +21,14 @@ public class OutboxRelayService {
   private final EventTopicRouter topics;
   private final KafkaEventProperties properties;
   private final Clock clock;
+  private final EventPipelineMetrics metrics;
 
   public OutboxRelayService(OutboxClaimService claims, OutboxStateService states, KafkaEventGateway gateway,
-      DomainEventCodec codec, EventTopicRouter topics, KafkaEventProperties properties, Clock clock) {
+      DomainEventCodec codec, EventTopicRouter topics, KafkaEventProperties properties, Clock clock,
+      EventPipelineMetrics metrics) {
     this.claims = claims; this.states = states; this.gateway = gateway; this.codec = codec;
     this.topics = topics; this.properties = properties; this.clock = clock;
+    this.metrics = metrics;
   }
 
   @Transactional(propagation = Propagation.NEVER)
@@ -47,12 +50,16 @@ public class OutboxRelayService {
           // Unknown send outcome: lease expiry recovers this and all unprocessed rows.
           break;
         } catch (Exception brokerFailure) {
+          metrics.publishFailed();
           states.markRetry(row, workerId);
           log.warn("Outbox publish failed; eventId={} topic={} category=BROKER_PUBLISH_FAILED", row.getEventId(), row.getTopic());
           continue;
         }
         // Intentionally outside the broker-failure catch. A DB failure must NOT rewrite an acknowledged send as RETRY.
-        if (states.markPublished(row, workerId, receipt)) published++;
+        if (states.markPublished(row, workerId, receipt)) {
+          metrics.publishSucceeded();
+          published++;
+        }
       } catch (RuntimeException stateFailure) {
         log.warn("Outbox state update failed; rowId={} category=STATE_UPDATE_FAILED", row.getId());
         // PROCESSING remains recoverable; never leak arbitrary exception messages/payloads.

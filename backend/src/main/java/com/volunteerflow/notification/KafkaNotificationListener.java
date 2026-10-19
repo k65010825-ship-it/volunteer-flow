@@ -2,6 +2,7 @@ package com.volunteerflow.notification;
 
 import com.volunteerflow.infrastructure.event.DomainEventCodec;
 import com.volunteerflow.infrastructure.event.DomainEventEnvelope;
+import com.volunteerflow.infrastructure.event.EventPipelineMetrics;
 import org.apache.kafka.clients.consumer.ConsumerRecord;
 import org.springframework.context.annotation.Profile;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -12,10 +13,12 @@ import org.springframework.stereotype.Component;
 public class KafkaNotificationListener {
   private final DomainEventCodec codec;
   private final NotificationEventHandler handler;
+  private final EventPipelineMetrics metrics;
 
-  public KafkaNotificationListener(DomainEventCodec codec, NotificationEventHandler handler) {
+  public KafkaNotificationListener(DomainEventCodec codec, NotificationEventHandler handler, EventPipelineMetrics metrics) {
     this.codec = codec;
     this.handler = handler;
+    this.metrics = metrics;
   }
 
   @KafkaListener(id = "notification-events", containerFactory = "notificationKafkaListenerContainerFactory",
@@ -32,7 +35,8 @@ public class KafkaNotificationListener {
       throw new ProcessingFailure("INVALID_EVENT_CONTRACT");
     }
     try {
-      handler.handle(event);
+      var result = handler.handle(event);
+      metrics.consumed(result == NotificationEventHandler.ProcessingResult.DUPLICATE);
     } catch (RuntimeException failure) {
       // SQL exceptions may contain credentials or payloads. Never let them reach Kafka logging.
       throw new ProcessingFailure("NOTIFICATION_PROCESSING_FAILED");

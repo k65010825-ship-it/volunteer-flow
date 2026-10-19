@@ -112,7 +112,7 @@ management:
   endpoints:
     web:
       exposure:
-        include: health,info
+        include: health,info,metrics
   endpoint:
     health:
       show-details: never
@@ -123,6 +123,8 @@ management:
           include: readinessState,db
         dependencies:
           include: db,redis
+        event-pipeline:
+          include: eventPipeline
 
 server:
   shutdown: graceful

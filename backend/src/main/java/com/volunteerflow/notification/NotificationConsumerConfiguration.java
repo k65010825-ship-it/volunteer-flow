@@ -1,6 +1,8 @@
 package com.volunteerflow.notification;
 
 import com.volunteerflow.infrastructure.event.KafkaEventProperties;
+import com.volunteerflow.infrastructure.event.EventPipelineMetrics;
+import io.micrometer.core.instrument.MeterRegistry;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.Map;
@@ -16,6 +18,7 @@ import org.apache.kafka.common.serialization.StringDeserializer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.kafka.annotation.EnableKafka;
@@ -23,6 +26,7 @@ import org.springframework.kafka.config.ConcurrentKafkaListenerContainerFactory;
 import org.springframework.kafka.core.ConsumerFactory;
 import org.springframework.kafka.core.DefaultKafkaConsumerFactory;
 import org.springframework.kafka.core.KafkaOperations;
+import org.springframework.kafka.core.MicrometerConsumerListener;
 import org.springframework.kafka.listener.ContainerProperties;
 import org.springframework.kafka.listener.DeadLetterPublishingRecoverer;
 import org.springframework.kafka.listener.DefaultErrorHandler;
@@ -34,7 +38,8 @@ import org.springframework.util.backoff.FixedBackOff;
 public class NotificationConsumerConfiguration {
   private static final Logger LOG = LoggerFactory.getLogger(NotificationConsumerConfiguration.class);
   @Bean
-  ConsumerFactory<String, String> notificationConsumerFactory(KafkaEventProperties properties) {
+  ConsumerFactory<String, String> notificationConsumerFactory(KafkaEventProperties properties,
+      ObjectProvider<MeterRegistry> registries) {
     Map<String, Object> config = new HashMap<>();
     config.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, properties.getBootstrapServers());
     config.put(ConsumerConfig.CLIENT_ID_CONFIG, properties.getClientId() + "-notification");
@@ -44,7 +49,9 @@ public class NotificationConsumerConfiguration {
     config.put(ConsumerConfig.ENABLE_AUTO_COMMIT_CONFIG, false);
     config.put(ConsumerConfig.AUTO_OFFSET_RESET_CONFIG, "earliest");
     config.put(ConsumerConfig.ALLOW_AUTO_CREATE_TOPICS_CONFIG, false);
-    return new DefaultKafkaConsumerFactory<>(config);
+    var factory = new DefaultKafkaConsumerFactory<String, String>(config);
+    registries.ifAvailable(registry -> factory.addListener(new MicrometerConsumerListener<>(registry)));
+    return factory;
   }
 
   @Bean
@@ -79,7 +86,7 @@ public class NotificationConsumerConfiguration {
 
   @Bean
   DeadLetterPublishingRecoverer notificationDeadLetterRecoverer(KafkaOperations<?, ?> template,
-      KafkaEventProperties properties) {
+      KafkaEventProperties properties, ObjectProvider<EventPipelineMetrics> metrics) {
     DeadLetterPublishingRecoverer recoverer = new DeadLetterPublishingRecoverer(template,
         (record, failure) -> new TopicPartition(record.topic() + ".DLT", record.partition())) {
       @Override
@@ -108,6 +115,7 @@ public class NotificationConsumerConfiguration {
         // Default publish() logs full ProducerRecord + exception on failure; keep that path out.
         try {
           operations.send(output).get(properties.getSendTimeout().toMillis(), TimeUnit.MILLISECONDS);
+          metrics.ifAvailable(EventPipelineMetrics::deadLettered);
         } catch (InterruptedException interrupted) {
           Thread.currentThread().interrupt();
           LOG.warn("Notification dead-letter publication failed category=DLT_PUBLISH_FAILED");
