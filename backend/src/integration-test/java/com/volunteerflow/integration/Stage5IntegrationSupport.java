@@ -74,6 +74,7 @@ abstract class Stage5IntegrationSupport {
   }
 
   @Container static final MySQLContainer<?> mysql = new MySQLContainer<>("mysql:8.0.43")
+      .withCommand("--log-bin-trust-function-creators=1") // Disposable test DB only; no SUPER grant to the app user.
       .withDatabaseName("stage5_disposable").withUsername("stage5").withPassword(UUID.randomUUID().toString());
   @Container static final KafkaContainer broker = new KafkaContainer("apache/kafka:3.9.1");
 
