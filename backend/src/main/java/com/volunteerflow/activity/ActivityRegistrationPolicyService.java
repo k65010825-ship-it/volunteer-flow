@@ -69,11 +69,16 @@ public class ActivityRegistrationPolicyService {
 
   /** Call after all blocking locks, while still holding the parent activity, immediately before CONFIRMED writes. */
   public static void requireActivityOpenForConfirmation(Activity activity, LocalDateTime now) {
-    if (activity == null || !"PUBLISHED".equals(activity.getStatus())
-        || activity.getActivityEndAt() == null || !now.isBefore(activity.getActivityEndAt())) {
+    if (!isActivityOpenForConfirmation(activity, now)) {
       throw new BusinessException(HttpStatus.CONFLICT, "ACTIVITY_NOT_OPEN_FOR_CONFIRMATION",
           "Activity is no longer open for confirmation");
     }
+  }
+
+  /** Delayed work uses the same boundary but completes terminal work instead of retrying it. */
+  public static boolean isActivityOpenForConfirmation(Activity activity, LocalDateTime now) {
+    return activity != null && "PUBLISHED".equals(activity.getStatus())
+        && activity.getActivityEndAt() != null && now.isBefore(activity.getActivityEndAt());
   }
 
   /** Allocates from a position already locked by the caller, in that same transaction. */

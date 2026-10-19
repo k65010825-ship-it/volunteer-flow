@@ -1,6 +1,8 @@
 package com.volunteerflow.registration;
 
+import com.volunteerflow.activity.Activity;
 import com.volunteerflow.activity.ActivityPosition;
+import com.volunteerflow.activity.ActivityPositionMapper;
 import com.volunteerflow.activity.ActivityRegistrationPolicyService;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -16,14 +18,16 @@ import org.springframework.transaction.annotation.Transactional;
 @Profile("!test")
 public class PromotionReconciliationService {
   private final PromotionReconcileTaskMapper tasks;
+  private final ActivityPositionMapper positions;
   private final ActivityRegistrationPolicyService policies;
   private final PromotionService promotions;
   private final PromotionReconciliationProperties properties;
 
-  public PromotionReconciliationService(PromotionReconcileTaskMapper tasks,
+  public PromotionReconciliationService(PromotionReconcileTaskMapper tasks, ActivityPositionMapper positions,
       ActivityRegistrationPolicyService policies, PromotionService promotions,
       PromotionReconciliationProperties properties) {
     this.tasks = tasks;
+    this.positions = positions;
     this.policies = policies;
     this.promotions = promotions;
     this.properties = properties;
@@ -48,12 +52,15 @@ public class PromotionReconciliationService {
   }
 
   /**
-   * One position per transaction. Position precedes task/cycle/offer locks, as in request hooks;
-   * automatic selection never locks membership after position. Owner is explicit to fence ABA.
+   * One known position per transaction. A nonlocking primary-key snapshot resolves the ancestor;
+   * locks are activity -> position -> task -> cycle/offer. No ancestor is acquired after position.
    */
   @Transactional(propagation = Propagation.REQUIRES_NEW, isolation = Isolation.READ_COMMITTED)
   public ReconciliationResult reconcile(Long positionId, long claimedVersion, String workerId) {
     requireOwner(workerId);
+    ActivityPosition snapshot = positions.selectById(positionId);
+    Activity activity = snapshot == null || snapshot.getOrganizationId() == null || snapshot.getActivityId() == null
+        ? null : policies.lockActivityForRegistrationChange(snapshot.getOrganizationId(), snapshot.getActivityId());
     ActivityPosition position = policies.lockPositionForRegistrationChange(positionId);
     PromotionReconcileTask task = tasks.selectByPositionForUpdate(positionId);
     if (!owns(task, claimedVersion, workerId, tasks.currentDatabaseTime())) {
@@ -61,7 +68,13 @@ public class PromotionReconciliationService {
     }
     PromotionOffer offer = null;
     if (position != null && Objects.equals(positionId, position.getId())
-        && Objects.equals(task.getOrganizationId(), position.getOrganizationId())) {
+        && snapshot != null && activity != null
+        && Objects.equals(snapshot.getActivityId(), position.getActivityId())
+        && Objects.equals(snapshot.getOrganizationId(), position.getOrganizationId())
+        && Objects.equals(activity.getId(), position.getActivityId())
+        && Objects.equals(activity.getOrganizationId(), position.getOrganizationId())
+        && Objects.equals(task.getOrganizationId(), position.getOrganizationId())
+        && ActivityRegistrationPolicyService.isActivityOpenForConfirmation(activity, tasks.currentDatabaseTime())) {
       offer = promotions.offerNextFirstCome(positionId, null, "Waitlist reconciliation");
     }
     LocalDateTime now = tasks.currentDatabaseTime();

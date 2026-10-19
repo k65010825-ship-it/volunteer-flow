@@ -178,7 +178,7 @@ class PromotionReconciliationServiceTest {
     f.request();
     f.service.claimBatch("owner");
     f.service.reconcile(20L, 1, "owner");
-    assertThat(f.operations).containsSubsequence("position", "task", "position", "cycle", "offer", "complete");
+    assertThat(f.operations).containsSubsequence("snapshot", "activity", "position", "task", "position", "cycle", "offer", "complete");
     verifyNoInteractions(f.members);
   }
 }

@@ -31,6 +31,11 @@ final class ReconciliationFixture {
   final Transactions transactions = new Transactions();
   final PromotionReconciliationProperties properties = new PromotionReconciliationProperties();
   final ActivityRegistrationPolicyService policies = mock(ActivityRegistrationPolicyService.class);
+  final ActivityPositionMapper positions = mock(ActivityPositionMapper.class);
+  final Activity activity = new Activity();
+  final AuditService audit = mock(AuditService.class);
+  final CapturingDomainEventPublisher events = new CapturingDomainEventPublisher();
+  Runnable afterPositionLock = () -> {};
   final OrganizationMemberMapper members = mock(OrganizationMemberMapper.class);
   final RegistrationCycleMapper cycles = mock(RegistrationCycleMapper.class);
   final PromotionOfferMapper offers = mock(PromotionOfferMapper.class);
@@ -42,12 +47,24 @@ final class ReconciliationFixture {
   final PromotionReconciliationService service;
 
   ReconciliationFixture() {
+    activity.setId(11L); activity.setOrganizationId(10L); activity.setStatus("PUBLISHED");
+    activity.setRegistrationEndAt(now.minusHours(1)); activity.setActivityEndAt(now.plusHours(2));
+    when(positions.selectById(anyLong())).thenAnswer(call -> {
+      operations.add("snapshot");
+      if (!Objects.equals(call.getArgument(0), 20L)) return null;
+      ActivityPosition snapshot = new ActivityPosition();
+      org.springframework.beans.BeanUtils.copyProperties(position, snapshot); return snapshot;
+    });
+    when(policies.lockActivityForRegistrationChange(10L, 11L)).thenAnswer(call -> {
+      operations.add("activity"); return activity;
+    });
     position.setCapacity(1);
     waitlist.add(PromotionServiceTest.cycle(101L, 100L, 21L));
     waitlist.add(PromotionServiceTest.cycle(102L, 200L, 22L));
     when(policies.lockPositionForRegistrationChange(anyLong())).thenAnswer(call -> {
       operations.add("position");
       if (failedPositions.contains(call.getArgument(0))) throw new IllegalStateException("secret token");
+      afterPositionLock.run();
       return Objects.equals(call.getArgument(0), 20L) ? position : null;
     });
     when(cycles.selectFirstWaitlistedForUpdate(20L)).thenAnswer(call -> {
@@ -61,9 +78,8 @@ final class ReconciliationFixture {
       assertTransaction(); operations.add("offer"); activeOffers.add(call.getArgument(0)); return 1;
     });
     promotions = proxy(new PromotionService(policies, members, mock(RegistrationMapper.class), cycles,
-        offers, mock(OrganizationAuthorizationService.class), mock(AuditService.class),
-        new CapturingDomainEventPublisher(), requester));
-    service = proxy(new PromotionReconciliationService(mapper, policies, promotions, properties));
+        offers, mock(OrganizationAuthorizationService.class), audit, events, requester));
+    service = proxy(new PromotionReconciliationService(mapper, positions, policies, promotions, properties));
   }
 
   PromotionReconcileTask row(long id) { return rows.get(id); }
