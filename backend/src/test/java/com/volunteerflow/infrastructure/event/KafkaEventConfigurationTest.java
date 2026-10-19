@@ -22,6 +22,12 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import java.lang.reflect.Proxy;
+import java.time.Clock;
+import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
 class KafkaEventConfigurationTest {
   private final ApplicationContextRunner runner = new ApplicationContextRunner()
@@ -113,6 +119,56 @@ class KafkaEventConfigurationTest {
           });
     } finally { observation.release.countDown(); }
   }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"select", "delete"})
+  void scheduledRetentionFailureLogsOnlySafeCategoryAndDoesNotEscape(String failingOperation) {
+    String rawMessage = "RETENTION_RAW_EXCEPTION password=retention-secret payload=private-retention-payload";
+    AtomicReference<String> mapperThread = new AtomicReference<>();
+    CountDownLatch failureWasLogged = new CountDownLatch(1);
+    OutboxEventMapper failingMapper = (OutboxEventMapper) Proxy.newProxyInstance(
+        OutboxEventMapper.class.getClassLoader(), new Class<?>[]{OutboxEventMapper.class}, (proxy, method, arguments) -> {
+          mapperThread.set(Thread.currentThread().getName());
+          if (method.getName().equals("selectPublishedIdsBefore") && failingOperation.equals("delete")) return List.of(1L);
+          if (method.getName().equals("selectPublishedIdsBefore") || method.getName().equals("deletePublishedByIds")) {
+            throw new IllegalStateException(rawMessage);
+          }
+          throw new AssertionError("Unexpected mapper operation: " + method.getName());
+        });
+    Logger logger = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    ListAppender<ILoggingEvent> capture = new ListAppender<>() {
+      @Override protected void append(ILoggingEvent event) {
+        super.append(event);
+        if (event.getFormattedMessage().contains("RETENTION_FAILED")
+            || event.getFormattedMessage().contains("Unexpected error occurred in scheduled task")) {
+          failureWasLogged.countDown();
+        }
+      }
+    };
+    capture.start(); logger.addAppender(capture);
+    try {
+      runner.withUserConfiguration(RetentionScheduling.class, OutboxRetentionJob.class)
+          .withBean(OutboxEventMapper.class, () -> failingMapper).withBean(Clock.class, Clock::systemUTC)
+          .run(context -> {
+            assertThat(context).hasNotFailed();
+            assertThat(failureWasLogged.await(3, TimeUnit.SECONDS)).isTrue();
+            assertThat(mapperThread.get()).startsWith("volunteerflow-maintenance-");
+          });
+      assertThat(capture.list).anySatisfy(event -> {
+        assertThat(event.getLoggerName()).isEqualTo(OutboxRetentionJob.class.getName());
+        assertThat(event.getFormattedMessage()).contains("category=RETENTION_FAILED");
+      });
+      assertThat(capture.list).allSatisfy(event -> {
+        assertThat(event.getFormattedMessage()).doesNotContain("RETENTION_RAW_EXCEPTION", "retention-secret",
+            "private-retention-payload", "Unexpected error occurred in scheduled task");
+        assertThat(event.getThrowableProxy()).isNull();
+      });
+    } finally { logger.detachAppender(capture); capture.stop(); }
+  }
+
+  @TestConfiguration(proxyBeanMethods = false)
+  @EnableScheduling
+  static class RetentionScheduling {}
 
   static class SchedulingObservation {
     final CountDownLatch started = new CountDownLatch(1);
