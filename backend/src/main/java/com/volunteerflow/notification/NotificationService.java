@@ -1,6 +1,7 @@
 package com.volunteerflow.notification;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.notification.NotificationViews.NotificationItem;
 import com.volunteerflow.notification.NotificationViews.NotificationPage;
@@ -13,10 +14,12 @@ import java.util.Collection;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.UUID;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Propagation;
 
 @Service
 @Profile("!test")
@@ -31,6 +34,16 @@ public class NotificationService implements NotificationWriter {
 
   public NotificationService(NotificationMapper notifications) {
     this.notifications = notifications;
+  }
+
+  /** Event sink must join the consumed-marker transaction, never create an independent one. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void writeEvent(UUID eventId, Long organizationId, NotificationIntentPayload intent) {
+    Objects.requireNonNull(eventId, "eventId");
+    Objects.requireNonNull(intent, "intent");
+    write(new NotificationCommand(organizationId, intent.userId(), intent.notificationType(),
+        intent.title(), intent.content(), intent.businessType(), intent.businessId(),
+        eventId + ":" + intent.userId() + ":IN_APP"));
   }
 
   @Override
