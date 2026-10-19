@@ -8,6 +8,7 @@ ALTER TABLE outbox_event
     ADD COLUMN published_offset BIGINT NULL,
     DROP INDEX idx_outbox_event_status_retry,
     ADD KEY idx_outbox_event_status_retry_id (status, next_retry_at, id),
+    ADD KEY idx_outbox_event_status_lease_id (status, locked_until, id),
     ADD KEY idx_outbox_event_published_at_id (published_at, id);
 
 CREATE TABLE consumed_event (
@@ -34,5 +35,6 @@ CREATE TABLE promotion_reconcile_task (
     update_time DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6)
         ON UPDATE CURRENT_TIMESTAMP(6),
     PRIMARY KEY (position_id),
-    KEY idx_promotion_reconcile_status_run_position (status, next_run_at, position_id)
+    KEY idx_promotion_reconcile_status_run_position (status, next_run_at, position_id),
+    KEY idx_promotion_reconcile_status_lease_position (status, locked_until, position_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;

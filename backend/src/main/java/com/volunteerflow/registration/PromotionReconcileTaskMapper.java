@@ -2,6 +2,7 @@ package com.volunteerflow.registration;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.ibatis.annotations.Insert;
 import org.apache.ibatis.annotations.Mapper;
@@ -25,14 +26,34 @@ public interface PromotionReconcileTaskMapper extends BaseMapper<PromotionReconc
       @Param("nextRunAt") LocalDateTime nextRunAt);
 
   /** Select and claim execute together in a short transaction. */
+  default List<PromotionReconcileTask> selectClaimableForUpdate(LocalDateTime now, int limit) {
+    if (limit <= 0) {
+      return List.of();
+    }
+    List<PromotionReconcileTask> result = new ArrayList<>(selectDueForUpdate(now, limit));
+    if (result.size() < limit) {
+      result.addAll(selectExpiredLeasesForUpdate(now, limit - result.size()));
+    }
+    return result;
+  }
+
+  /** Internal query path: leading status participates in ordering to match the due index. */
   @Select("""
-      SELECT * FROM promotion_reconcile_task
-      WHERE (status IN ('PENDING', 'RETRY') AND next_run_at<=#{now})
-         OR (status='PROCESSING' AND locked_until<=#{now})
-      ORDER BY next_run_at, position_id LIMIT #{limit} FOR UPDATE SKIP LOCKED
+      SELECT * FROM promotion_reconcile_task FORCE INDEX (idx_promotion_reconcile_status_run_position)
+      WHERE status IN ('PENDING', 'RETRY') AND next_run_at<=#{now}
+      ORDER BY status, next_run_at, position_id LIMIT #{limit} FOR UPDATE SKIP LOCKED
       """)
   @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
-  List<PromotionReconcileTask> selectClaimableForUpdate(@Param("now") LocalDateTime now, @Param("limit") int limit);
+  List<PromotionReconcileTask> selectDueForUpdate(@Param("now") LocalDateTime now, @Param("limit") int limit);
+
+  /** Internal query path: only expired leases are in the indexed time range. */
+  @Select("""
+      SELECT * FROM promotion_reconcile_task FORCE INDEX (idx_promotion_reconcile_status_lease_position)
+      WHERE status='PROCESSING' AND locked_until<=#{now}
+      ORDER BY locked_until, position_id LIMIT #{limit} FOR UPDATE SKIP LOCKED
+      """)
+  @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
+  List<PromotionReconcileTask> selectExpiredLeasesForUpdate(@Param("now") LocalDateTime now, @Param("limit") int limit);
 
   @Update("""
       UPDATE promotion_reconcile_task

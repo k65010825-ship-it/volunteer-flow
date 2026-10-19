@@ -7,7 +7,10 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.core.MybatisConfiguration;
+import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.Proxy;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -46,11 +49,18 @@ class Stage5PersistenceContractTest {
 
   @Test
   void outboxDiscoveryUsesBoundedDueAndExpiredLeaseQueries() {
-    BoundSql statement = bound(OUTBOX, "selectClaimableForUpdate", parameters());
-    assertThat(sql(statement)).contains(
-        "status IN ('PENDING', 'RETRY') AND (next_retry_at IS NULL OR next_retry_at<=?)",
-        "status='PROCESSING' AND locked_until<=?", "ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED");
-    assertThat(bindings(statement)).containsExactly("now", "now", "limit");
+    BoundSql statement = bound(OUTBOX, "selectDueForUpdate", parameters());
+    assertThat(sql(statement)).isEqualTo("SELECT * FROM outbox_event "
+        + "FORCE INDEX (idx_outbox_event_status_retry_id) "
+        + "WHERE status IN ('PENDING', 'RETRY') AND (next_retry_at IS NULL OR next_retry_at<=?) "
+        + "ORDER BY status, next_retry_at, id LIMIT ? FOR UPDATE SKIP LOCKED");
+    assertThat(bindings(statement)).containsExactly("now", "limit");
+    BoundSql expired = bound(OUTBOX, "selectExpiredLeasesForUpdate", parameters());
+    assertThat(sql(expired)).isEqualTo("SELECT * FROM outbox_event "
+        + "FORCE INDEX (idx_outbox_event_status_lease_id) "
+        + "WHERE status='PROCESSING' AND locked_until<=? "
+        + "ORDER BY locked_until, id LIMIT ? FOR UPDATE SKIP LOCKED");
+    assertThat(bindings(expired)).containsExactly("now", "limit");
     assertThat(sql(bound(OUTBOX, "claim", parameters())))
         .contains("status='PROCESSING'", "locked_by=?", "locked_until=?",
             "WHERE id IN ( ? , ? )", "next_retry_at<=?", "locked_until<=?");
@@ -83,11 +93,18 @@ class Stage5PersistenceContractTest {
 
   @Test
   void reconciliationClaimsDueWorkWithExpectedVersionAndOwnerFencing() {
-    BoundSql due = bound(RECONCILE, "selectClaimableForUpdate", parameters());
-    assertThat(sql(due)).contains("status IN ('PENDING', 'RETRY') AND next_run_at<=?",
-        "status='PROCESSING' AND locked_until<=?",
-        "ORDER BY next_run_at, position_id LIMIT ? FOR UPDATE SKIP LOCKED");
-    assertThat(bindings(due)).containsExactly("now", "now", "limit");
+    BoundSql due = bound(RECONCILE, "selectDueForUpdate", parameters());
+    assertThat(sql(due)).isEqualTo("SELECT * FROM promotion_reconcile_task "
+        + "FORCE INDEX (idx_promotion_reconcile_status_run_position) "
+        + "WHERE status IN ('PENDING', 'RETRY') AND next_run_at<=? "
+        + "ORDER BY status, next_run_at, position_id LIMIT ? FOR UPDATE SKIP LOCKED");
+    assertThat(bindings(due)).containsExactly("now", "limit");
+    BoundSql expired = bound(RECONCILE, "selectExpiredLeasesForUpdate", parameters());
+    assertThat(sql(expired)).isEqualTo("SELECT * FROM promotion_reconcile_task "
+        + "FORCE INDEX (idx_promotion_reconcile_status_lease_position) "
+        + "WHERE status='PROCESSING' AND locked_until<=? "
+        + "ORDER BY locked_until, position_id LIMIT ? FOR UPDATE SKIP LOCKED");
+    assertThat(bindings(expired)).containsExactly("now", "limit");
     assertThat(sql(bound(RECONCILE, "claim", parameters())))
         .contains("WHERE position_id=? AND request_version=?",
             "next_run_at<=?", "locked_until<=?", "locked_by=?", "locked_until=?");
@@ -111,6 +128,67 @@ class Stage5PersistenceContractTest {
             "request_version=request_version+1", "next_run_at=LEAST(next_run_at, VALUES(next_run_at))",
             "status=CASE WHEN status='PROCESSING' THEN 'PROCESSING' ELSE 'PENDING' END")
         .doesNotContain("locked_by=", "locked_until=", "processed_version=");
+  }
+
+  @Test
+  void claimableFacadesPassOnlyRemainingLimitToLeaseReclamation() throws Exception {
+    for (String mapperName : List.of(OUTBOX, RECONCILE)) {
+      Class<?> entityType = Class.forName(mapperName.replace("Mapper", ""));
+      List<Object> due = List.of(entityType.getConstructor().newInstance(), entityType.getConstructor().newInstance());
+      List<Object> expired = List.of(entityType.getConstructor().newInstance(), entityType.getConstructor().newInstance());
+      List<String> calls = new ArrayList<>();
+      Object mapper = mapperWithCandidates(mapperName, due, expired, calls);
+      Object result = mapper.getClass().getMethod("selectClaimableForUpdate", LocalDateTime.class, int.class)
+          .invoke(mapper, parameters().get("now"), 3);
+      assertThat(result).isEqualTo(List.of(due.get(0), due.get(1), expired.get(0)));
+      assertThat(calls).containsExactly("selectDueForUpdate:3", "selectExpiredLeasesForUpdate:1");
+    }
+  }
+
+  @Test
+  void claimableFacadesDoNotReclaimLeasesWhenDueBatchIsFull() throws Exception {
+    for (String mapperName : List.of(OUTBOX, RECONCILE)) {
+      Class<?> entityType = Class.forName(mapperName.replace("Mapper", ""));
+      List<Object> due = List.of(entityType.getConstructor().newInstance(), entityType.getConstructor().newInstance());
+      List<String> calls = new ArrayList<>();
+      Object mapper = mapperWithCandidates(mapperName, due, due, calls);
+      Object result = mapper.getClass().getMethod("selectClaimableForUpdate", LocalDateTime.class, int.class)
+          .invoke(mapper, parameters().get("now"), 2);
+      assertThat(result).isEqualTo(due);
+      assertThat(calls).containsExactly("selectDueForUpdate:2");
+    }
+  }
+
+  @Test
+  void claimableFacadesSkipAllSqlForNonPositiveLimits() throws Exception {
+    for (String mapperName : List.of(OUTBOX, RECONCILE)) {
+      List<String> calls = new ArrayList<>();
+      Object mapper = mapperWithCandidates(mapperName, List.of(), List.of(), calls);
+      for (int limit : List.of(0, -1)) {
+        assertThat((List<?>) mapper.getClass().getMethod("selectClaimableForUpdate", LocalDateTime.class, int.class)
+            .invoke(mapper, parameters().get("now"), limit)).isEmpty();
+      }
+      assertThat(calls).isEmpty();
+    }
+  }
+
+  private Object mapperWithCandidates(String mapperName, List<?> due, List<?> expired, List<String> calls)
+      throws Exception {
+    Class<?> mapperType = Class.forName(mapperName);
+    assertThat(mapperType.getMethod("selectClaimableForUpdate", LocalDateTime.class, int.class).isDefault())
+        .as("claimable facade delegates to separately indexed query paths").isTrue();
+    return Proxy.newProxyInstance(mapperType.getClassLoader(), new Class<?>[] {mapperType},
+        (proxy, method, args) -> {
+          if (method.isDefault()) {
+            return InvocationHandler.invokeDefault(proxy, method, args);
+          }
+          if (method.getName().equals("selectDueForUpdate") || method.getName().equals("selectExpiredLeasesForUpdate")) {
+            int limit = (int) args[1];
+            calls.add(method.getName() + ":" + limit);
+            return (method.getName().equals("selectDueForUpdate") ? due : expired).stream().limit(limit).toList();
+          }
+          throw new AssertionError("Unexpected mapper call: " + method);
+        });
   }
 
   @Test
@@ -154,6 +232,7 @@ class Stage5PersistenceContractTest {
     Class<?> type = assertDoesNotThrow(() -> Class.forName(mapper));
     MybatisConfiguration configuration = new MybatisConfiguration();
     configuration.addMapper(type);
+    assertThat(configuration.hasStatement(mapper + "." + method)).as("mapped query %s", method).isTrue();
     return configuration.getMappedStatement(mapper + "." + method).getBoundSql(parameters);
   }
 

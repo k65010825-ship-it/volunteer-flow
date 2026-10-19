@@ -111,6 +111,7 @@ class FlywayMigrationContractTest {
         "last_error VARCHAR(1000) NULL", "published_partition INT NULL",
         "published_offset BIGINT NULL",
         "KEY idx_outbox_event_status_retry_id (status, next_retry_at, id)",
+        "KEY idx_outbox_event_status_lease_id (status, locked_until, id)",
         "KEY idx_outbox_event_published_at_id (published_at, id)",
         "CREATE TABLE consumed_event", "id BIGINT NOT NULL",
         "consumer_name VARCHAR(128) NOT NULL", "event_id CHAR(36) NOT NULL",
@@ -131,6 +132,8 @@ class FlywayMigrationContractTest {
         "last_error VARCHAR(1000) NULL", "create_time DATETIME(6) NOT NULL",
         "update_time DATETIME(6) NOT NULL", "PRIMARY KEY (position_id)",
         "KEY idx_promotion_reconcile_status_run_position (status, next_run_at, position_id)");
+    assertThat(sql).contains(
+        "KEY idx_promotion_reconcile_status_lease_position (status, locked_until, position_id)");
     assertThat(PHYSICAL_REFERENCE.matcher(sql).find()).isFalse();
   }
 

@@ -2,6 +2,7 @@ package com.volunteerflow.infrastructure.event;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
@@ -13,14 +14,34 @@ import org.apache.ibatis.annotations.Update;
 @Mapper
 public interface OutboxEventMapper extends BaseMapper<OutboxEvent> {
   /** Select and claim must share a short transaction; send to Kafka only after committing. */
+  default List<OutboxEvent> selectClaimableForUpdate(LocalDateTime now, int limit) {
+    if (limit <= 0) {
+      return List.of();
+    }
+    List<OutboxEvent> result = new ArrayList<>(selectDueForUpdate(now, limit));
+    if (result.size() < limit) {
+      result.addAll(selectExpiredLeasesForUpdate(now, limit - result.size()));
+    }
+    return result;
+  }
+
+  /** Internal query path: leading status participates in ordering to match the due index. */
   @Select("""
-      SELECT * FROM outbox_event
-      WHERE (status IN ('PENDING', 'RETRY') AND (next_retry_at IS NULL OR next_retry_at<=#{now}))
-         OR (status='PROCESSING' AND locked_until<=#{now})
-      ORDER BY id LIMIT #{limit} FOR UPDATE SKIP LOCKED
+      SELECT * FROM outbox_event FORCE INDEX (idx_outbox_event_status_retry_id)
+      WHERE status IN ('PENDING', 'RETRY') AND (next_retry_at IS NULL OR next_retry_at<=#{now})
+      ORDER BY status, next_retry_at, id LIMIT #{limit} FOR UPDATE SKIP LOCKED
       """)
   @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
-  List<OutboxEvent> selectClaimableForUpdate(@Param("now") LocalDateTime now, @Param("limit") int limit);
+  List<OutboxEvent> selectDueForUpdate(@Param("now") LocalDateTime now, @Param("limit") int limit);
+
+  /** Internal query path: only expired leases are in the indexed time range. */
+  @Select("""
+      SELECT * FROM outbox_event FORCE INDEX (idx_outbox_event_status_lease_id)
+      WHERE status='PROCESSING' AND locked_until<=#{now}
+      ORDER BY locked_until, id LIMIT #{limit} FOR UPDATE SKIP LOCKED
+      """)
+  @Options(useCache = false, flushCache = Options.FlushCachePolicy.TRUE)
+  List<OutboxEvent> selectExpiredLeasesForUpdate(@Param("now") LocalDateTime now, @Param("limit") int limit);
 
   @Update("""
       <script>
