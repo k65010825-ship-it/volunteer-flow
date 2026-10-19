@@ -21,6 +21,23 @@ spring:
       timeout: ${REDIS_COMMAND_TIMEOUT:2s}
 
 volunteerflow:
+  events:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    client-id: ${KAFKA_CLIENT_ID:volunteerflow-outbox}
+    consumer-group: ${KAFKA_CONSUMER_GROUP:volunteerflow-notification-v1}
+    topics:
+      activity: ${KAFKA_ACTIVITY_TOPIC:volunteerflow.activity-events.v1}
+      registration: ${KAFKA_REGISTRATION_TOPIC:volunteerflow.registration-events.v1}
+      checkin: ${KAFKA_CHECKIN_TOPIC:volunteerflow.checkin-events.v1}
+    poll-interval: ${OUTBOX_POLL_INTERVAL:1s}
+    batch-size: ${OUTBOX_BATCH_SIZE:100}
+    lease: ${OUTBOX_LEASE:60s}
+    send-timeout: ${OUTBOX_SEND_TIMEOUT:10s}
+    retry-initial: ${OUTBOX_RETRY_INITIAL:5s}
+    retry-max: ${OUTBOX_RETRY_MAX:5m}
+    retention: ${OUTBOX_RETENTION:7d}
+    retention-interval: ${OUTBOX_RETENTION_INTERVAL:1h}
+    retention-batch-size: ${OUTBOX_RETENTION_BATCH_SIZE:100}
   rate-limit:
     enabled: ${RATE_LIMIT_ENABLED:true}
     key-secret: ${RATE_LIMIT_KEY_SECRET:}

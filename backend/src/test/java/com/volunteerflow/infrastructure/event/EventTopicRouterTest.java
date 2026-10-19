@@ -32,9 +32,9 @@ class EventTopicRouterTest {
           assertThat(router.topicFor(type)).isEqualTo("volunteerflow." + family + "-events.v1"));
     });
     new ApplicationContextRunner().withUserConfiguration(EventTopicRouter.class)
-        .withPropertyValues("volunteerflow.kafka.topics.activity=custom.activity",
-            "volunteerflow.kafka.topics.registration=custom.registration",
-            "volunteerflow.kafka.topics.checkin=custom.checkin")
+        .withPropertyValues("volunteerflow.events.topics.activity=custom.activity",
+            "volunteerflow.events.topics.registration=custom.registration",
+            "volunteerflow.events.topics.checkin=custom.checkin")
         .run(context -> CATALOG.forEach((type, family) ->
             assertThat(context.getBean(EventTopicRouter.class).topicFor(type))
                 .isEqualTo("custom." + family)));

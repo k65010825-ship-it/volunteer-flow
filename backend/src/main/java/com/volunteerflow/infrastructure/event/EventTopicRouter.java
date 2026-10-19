@@ -10,9 +10,9 @@ public class EventTopicRouter {
   private final String checkinTopic;
 
   public EventTopicRouter(
-      @Value("${volunteerflow.kafka.topics.activity:volunteerflow.activity-events.v1}") String activityTopic,
-      @Value("${volunteerflow.kafka.topics.registration:volunteerflow.registration-events.v1}") String registrationTopic,
-      @Value("${volunteerflow.kafka.topics.checkin:volunteerflow.checkin-events.v1}") String checkinTopic) {
+      @Value("${volunteerflow.events.topics.activity:volunteerflow.activity-events.v1}") String activityTopic,
+      @Value("${volunteerflow.events.topics.registration:volunteerflow.registration-events.v1}") String registrationTopic,
+      @Value("${volunteerflow.events.topics.checkin:volunteerflow.checkin-events.v1}") String checkinTopic) {
     validateTopic(activityTopic);
     validateTopic(registrationTopic);
     validateTopic(checkinTopic);
