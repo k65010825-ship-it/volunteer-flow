@@ -6,9 +6,9 @@ import static org.mockito.Mockito.*;
 
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.*;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
-import com.volunteerflow.registration.CapturingNotificationWriter;
+import com.volunteerflow.registration.CapturingDomainEventPublisher;
 import com.volunteerflow.registration.RegistrationCycleMapper;
 import java.time.Clock;
 import java.time.Instant;
@@ -19,6 +19,8 @@ import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.dao.OptimisticLockingFailureException;
 
 class ActivityServiceTest {
@@ -31,7 +33,7 @@ class ActivityServiceTest {
       mock(OrganizationAuthorizationService.class);
   private final AuditService auditService = mock(AuditService.class);
   private final RegistrationCycleMapper cycleMapper = mock(RegistrationCycleMapper.class);
-  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
+  private final CapturingDomainEventPublisher events = new CapturingDomainEventPublisher();
   private final ActivityDetailCache detailCache = mock(ActivityDetailCache.class);
   private final ActivityDetailCacheInvalidator cacheInvalidator =
       mock(ActivityDetailCacheInvalidator.class);
@@ -45,7 +47,7 @@ class ActivityServiceTest {
           authorization,
           auditService,
           cycleMapper,
-          notifications,
+          events,
           detailCache,
           cacheInvalidator,
           clock);
@@ -272,7 +274,13 @@ class ActivityServiceTest {
     when(positionQuestionMapper.selectPositionIdsByActivityForUpdate(1L))
         .thenReturn(Collections.nCopies(6, 30L));
 
+    events.beforePublish(() -> {
+      assertThat(activity.getStatus()).isEqualTo("PUBLISHED");
+      verify(auditService).record(100L, 7L, "activity.published", "activity", 1L, null);
+    });
     Activity result = service.publish(7L, 1L);
+    assertThat(events.commands()).containsExactly(new DomainEventCommand(
+        100L, 1L, "ACTIVITY", "1", "activity.published.v1", new ActivityStatusPayload(7L, "PUBLISHED")));
 
     assertThat(result.getStatus()).isEqualTo("PUBLISHED");
     assertThat(result.getPublishedAt())
@@ -333,35 +341,32 @@ class ActivityServiceTest {
     when(activityMapper.cancelCurrent(eq(1L), eq(100L), any())).thenReturn(1);
     when(cycleMapper.selectAffectedUserIdsForActivityCancellation(100L, 1L))
         .thenReturn(List.of(21L, 22L, 21L));
-    notifications.beforeWrite(
+    events.beforePublish(
         () -> {
           assertThat(activity.getStatus()).isEqualTo("CANCELED");
           verify(activityMapper).cancelCurrent(1L, 100L, LocalDateTime.now(clock));
+          verify(auditService).record(100L, 7L, "activity.canceled", "activity", 1L, "天气原因");
         });
 
     Activity result = service.cancel(7L, 1L, "天气原因");
 
     assertThat(result.getStatus()).isEqualTo("CANCELED");
-    assertThat(notifications.commands())
+    assertThat(events.commands())
         .containsExactly(
-            new NotificationCommand(
-                100L,
-                21L,
+            new DomainEventCommand(100L, 1L, "ACTIVITY", "1", "activity.cancelled.v1",
+                new NotificationIntentPayload(21L,
                 "ACTIVITY_CANCELED",
                 "活动已取消",
                 "迎新志愿服务已取消：天气原因",
                 "ACTIVITY",
-                1L,
-                "activity:1:canceled"),
-            new NotificationCommand(
-                100L,
-                22L,
+                1L)),
+            new DomainEventCommand(100L, 1L, "ACTIVITY", "1", "activity.cancelled.v1",
+                new NotificationIntentPayload(22L,
                 "ACTIVITY_CANCELED",
                 "活动已取消",
                 "迎新志愿服务已取消：天气原因",
                 "ACTIVITY",
-                1L,
-                "activity:1:canceled"));
+                1L)));
     var order = inOrder(cycleMapper, activityMapper, authorization);
     order.verify(activityMapper).selectByIdForUpdate(1L);
     order.verify(authorization).requirePermission(7L, 100L, "activity:cancel");
@@ -385,7 +390,83 @@ class ActivityServiceTest {
         .isInstanceOf(OptimisticLockingFailureException.class);
 
     verifyNoInteractions(auditService);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"published", "cancelled"})
+  void activityAndAuditCommitWithRoutedUtcOutboxWithoutKafka(String action) {
+    BusinessOutboxFixture f = new BusinessOutboxFixture(clock);
+    Activity activity = arrangeTransactionalActivity(f, action);
+    ActivityService proxied = transactionalService(f);
+    if ("published".equals(action)) proxied.publish(7L, 1L);
+    else proxied.cancel(7L, 1L, "天气原因");
+    assertThat(f.commits).isEqualTo(1);
+    assertThat(f.rollbacks).isZero();
+    assertThat(f.committed).anyMatch(Activity.class::isInstance)
+        .anyMatch(com.volunteerflow.audit.AuditLog.class::isInstance);
+    assertThat(f.rows()).hasSize("published".equals(action) ? 1 : 2);
+    assertThat(f.rows()).extracting(OutboxEvent::getEventId).doesNotHaveDuplicates();
+    assertThat(f.rows()).allSatisfy(row -> {
+      assertThat(row.getTopic()).isEqualTo("volunteerflow.activity-events.v1");
+      assertThat(row.getMessageKey()).isEqualTo("100:1");
+      assertThat(row.getStatus()).isEqualTo("PENDING");
+      var event = f.codec.decode(row.getPayloadJson());
+      assertThat(event.eventType()).isEqualTo("activity." + action + ".v1");
+      assertThat(event.aggregateType()).isEqualTo("ACTIVITY");
+      assertThat(event.aggregateId()).isEqualTo("1");
+      assertThat(event.organizationId()).isEqualTo(100L);
+      assertThat(event.activityId()).isEqualTo(1L);
+      assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-09-15T00:00:00Z"));
+    });
+    if ("cancelled".equals(action)) {
+      assertThat(f.rows()).extracting(row -> ((NotificationIntentPayload) f.codec.decode(row.getPayloadJson()).payload()).userId())
+          .containsExactly(21L, 22L);
+      activity.setTitle("later mutable title");
+      assertThat(f.rows()).allSatisfy(row -> assertThat(
+          ((NotificationIntentPayload) f.codec.decode(row.getPayloadJson()).payload()).content())
+          .isEqualTo("迎新志愿服务已取消：天气原因"));
+    }
+    verifyNoInteractions(f.unavailableKafka);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"published", "cancelled"})
+  void activityAuditAndEarlierFanoutRollBackWhenOutboxInsertFails(String action) {
+    BusinessOutboxFixture f = new BusinessOutboxFixture(clock);
+    arrangeTransactionalActivity(f, action);
+    f.failAtInsert = "published".equals(action) ? 1 : 2;
+    assertThatThrownBy(() -> {
+      if ("published".equals(action)) transactionalService(f).publish(7L, 1L);
+      else transactionalService(f).cancel(7L, 1L, "天气原因");
+    }).isSameAs(f.failure);
+    assertThat(f.insertAttempts).isEqualTo(f.failAtInsert);
+    assertThat(f.rollbacks).isEqualTo(1);
+    assertThat(f.commits).isZero();
+    assertThat(f.staged).isEmpty();
+    assertThat(f.committed).isEmpty();
+    verifyNoInteractions(f.unavailableKafka, cacheInvalidator);
+  }
+
+  private Activity arrangeTransactionalActivity(BusinessOutboxFixture f, String action) {
+    Activity activity = validDraft();
+    activity.setTitle("迎新志愿服务");
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(activity);
+    if ("published".equals(action)) {
+      when(positionMapper.selectActiveByActivityForUpdate(100L, 1L)).thenReturn(List.of(activePosition()));
+      when(activityMapper.updateById(any(Activity.class))).thenAnswer(call -> f.stage(call.getArgument(0)));
+    } else {
+      activity.setStatus("PUBLISHED");
+      when(cycleMapper.selectAffectedUserIdsForActivityCancellation(100L, 1L)).thenReturn(List.of(21L, 22L, 21L));
+      when(activityMapper.cancelCurrent(eq(1L), eq(100L), any())).thenAnswer(call -> f.stage(activity));
+    }
+    return activity;
+  }
+
+  private ActivityService transactionalService(BusinessOutboxFixture f) {
+    return f.proxy(new ActivityService(activityMapper, positionMapper, activityQuestionMapper,
+        positionQuestionMapper, authorization, f.audit, cycleMapper, f.publisher,
+        detailCache, cacheInvalidator, clock));
   }
 
   private Activity validDraft() {

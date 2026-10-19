@@ -21,9 +21,9 @@ import com.volunteerflow.audit.AuditLog;
 import com.volunteerflow.audit.AuditLogMapper;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter.NotificationCommand;
+import com.volunteerflow.infrastructure.event.*;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
-import com.volunteerflow.registration.CapturingNotificationWriter;
+import com.volunteerflow.registration.CapturingDomainEventPublisher;
 import com.volunteerflow.registration.PromotionService;
 import com.volunteerflow.registration.RegistrationCycleMapper;
 import java.lang.reflect.Method;
@@ -60,7 +60,7 @@ class ActivityChangeServiceTest {
   private final PromotionService promotions = mock(PromotionService.class);
   private final ActivityDetailCacheInvalidator cacheInvalidator =
       mock(ActivityDetailCacheInvalidator.class);
-  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
+  private final CapturingDomainEventPublisher events = new CapturingDomainEventPublisher();
   private final Clock clock =
       Clock.fixed(Instant.parse("2026-09-20T10:00:00Z"), ZoneOffset.UTC);
   private final ActivityChangeService service =
@@ -72,7 +72,7 @@ class ActivityChangeServiceTest {
           registrationCycles,
           authorization,
           audit,
-          notifications,
+          events,
           promotions,
           cacheInvalidator,
           clock);
@@ -120,7 +120,7 @@ class ActivityChangeServiceTest {
 
     verify(activities, never()).updatePublishedFields(eq(1L), eq(100L), anyMap());
     verifyNoInteractions(audit, registrationCycles);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -213,17 +213,15 @@ class ActivityChangeServiceTest {
     verify(positions).updatePublishedFields(eq(2L), eq(100L), eq(1L), changes.capture());
     assertThat(changes.getValue()).containsOnly(Map.entry("capacity", 21));
     verify(promotions).fillAvailableFirstComeSeats(position, 7L, "增加一个名额");
-    assertThat(notifications.commands())
+    assertThat(events.commands())
         .containsExactly(
-            new NotificationCommand(
-                100L,
-                21L,
+            new DomainEventCommand(100L, 1L, "ACTIVITY_POSITION", "2", "activity.changed.v1",
+                new NotificationIntentPayload(21L,
                 "POSITION_CHANGE",
                 "岗位信息变更",
                 "礼仪岗已更新：增加一个名额",
                 "ACTIVITY",
-                1L,
-                "position-change:2:601"));
+                1L)));
     var order = inOrder(activities, positions, audit, registrationCycles, promotions);
     order.verify(activities).selectByIdForUpdate(1L);
     order.verify(positions).selectByIdForUpdate(2L);
@@ -254,7 +252,7 @@ class ActivityChangeServiceTest {
         .isInstanceOf(OptimisticLockingFailureException.class);
 
     verifyNoInteractions(audit, registrationCycles, promotions);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -276,7 +274,7 @@ class ActivityChangeServiceTest {
             anyMap(),
             org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(602L);
-    when(registrationCycles.selectAffectedUserIds(1L, NOW)).thenReturn(List.of(21L, 22L));
+    when(registrationCycles.selectAffectedUserIds(1L, NOW)).thenReturn(List.of(21L, 22L, 21L));
 
     PositionPublicationResult result = service.publishPosition(7L, 2L);
 
@@ -285,14 +283,24 @@ class ActivityChangeServiceTest {
     assertThat(result.notifiedRecipients()).isEqualTo(2);
     assertThat(draft.getStatus()).isEqualTo("ACTIVE");
     assertThat(draft.getVersion()).isEqualTo(3);
-    assertThat(notifications.commands())
-        .extracting(NotificationCommand::userId)
+    assertThat(events.commands())
+        .extracting(command -> ((NotificationIntentPayload) command.payload()).userId())
         .containsExactly(21L, 22L);
-    assertThat(notifications.commands())
-        .extracting(NotificationCommand::deduplicationKey)
-        .containsOnly("position-change:2:602");
-    assertThat(notifications.commands())
-        .extracting(NotificationCommand::businessType, NotificationCommand::businessId)
+    assertThat(events.commands())
+        .allSatisfy(command -> {
+          assertThat(command.organizationId()).isEqualTo(100L);
+          assertThat(command.activityId()).isEqualTo(1L);
+          assertThat(command.aggregateType()).isEqualTo("ACTIVITY_POSITION");
+          assertThat(command.aggregateId()).isEqualTo("2");
+          assertThat(command.eventType()).isEqualTo("activity.changed.v1");
+          NotificationIntentPayload payload = (NotificationIntentPayload) command.payload();
+          assertThat(payload.notificationType()).isEqualTo("POSITION_CHANGE");
+          assertThat(payload.title()).isEqualTo("新增岗位发布");
+          assertThat(payload.content()).isEqualTo("礼仪岗已发布");
+        });
+    assertThat(events.commands())
+        .extracting(command -> ((NotificationIntentPayload) command.payload()).businessType(),
+            command -> ((NotificationIntentPayload) command.payload()).businessId())
         .containsOnly(org.assertj.core.groups.Tuple.tuple("ACTIVITY", 1L));
     var order = inOrder(activities, positions, activityQuestions, positionQuestions);
     order.verify(activities).selectByIdForUpdate(1L);
@@ -355,7 +363,7 @@ class ActivityChangeServiceTest {
         .isInstanceOf(OptimisticLockingFailureException.class);
 
     verifyNoInteractions(audit, registrationCycles);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -373,7 +381,7 @@ class ActivityChangeServiceTest {
             eq("场地调整")))
         .thenReturn(501L);
     when(registrationCycles.selectAffectedUserIds(1L, NOW)).thenReturn(List.of(21L, 22L));
-    notifications.beforeWrite(
+    events.beforePublish(
         () ->
             verify(audit)
                 .recordChange(
@@ -441,14 +449,22 @@ class ActivityChangeServiceTest {
     assertThat(result.auditId()).isEqualTo(501L);
     assertThat(result.notifiedRecipients()).isEqualTo(2);
     assertThat(activity.getVersion()).isEqualTo(4);
-    assertThat(notifications.commands())
-        .extracting(NotificationCommand::userId)
+    assertThat(events.commands())
+        .extracting(command -> ((NotificationIntentPayload) command.payload()).userId())
         .containsExactly(21L, 22L);
-    assertThat(notifications.commands())
-        .extracting(NotificationCommand::deduplicationKey)
-        .containsOnly("activity-change:1:501");
-    assertThat(notifications.commands())
-        .extracting(NotificationCommand::type, NotificationCommand::businessType)
+    assertThat(events.commands())
+        .allSatisfy(command -> {
+          assertThat(command.organizationId()).isEqualTo(100L);
+          assertThat(command.activityId()).isEqualTo(1L);
+          assertThat(command.aggregateType()).isEqualTo("ACTIVITY");
+          assertThat(command.aggregateId()).isEqualTo("1");
+          assertThat(command.eventType()).isEqualTo("activity.changed.v1");
+          assertThat(((NotificationIntentPayload) command.payload()).title()).isEqualTo("活动信息变更");
+          assertThat(((NotificationIntentPayload) command.payload()).content()).isEqualTo("新标题已更新：场地调整");
+        });
+    assertThat(events.commands())
+        .extracting(command -> ((NotificationIntentPayload) command.payload()).notificationType(),
+            command -> ((NotificationIntentPayload) command.payload()).businessType())
         .containsOnly(org.assertj.core.groups.Tuple.tuple("ACTIVITY_CHANGE", "ACTIVITY"));
     var order = inOrder(activities, audit, registrationCycles);
     order.verify(activities).selectByIdForUpdate(1L);
@@ -484,7 +500,7 @@ class ActivityChangeServiceTest {
     verify(activities, never()).selectById(1L);
     verify(activities, never()).updatePublishedFields(eq(1L), eq(100L), anyMap());
     verifyNoInteractions(audit, registrationCycles);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -510,7 +526,7 @@ class ActivityChangeServiceTest {
 
     verify(activities, never()).updatePublishedFields(eq(1L), eq(100L), anyMap());
     verifyNoInteractions(audit, registrationCycles);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -762,7 +778,7 @@ class ActivityChangeServiceTest {
         .isInstanceOf(OptimisticLockingFailureException.class);
 
     verifyNoInteractions(audit, registrationCycles);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -921,6 +937,77 @@ class ActivityChangeServiceTest {
     when(positions.selectById(2L)).thenReturn(position);
     when(activities.selectByIdForUpdate(1L)).thenReturn(publishedActivity());
     when(positions.selectByIdForUpdate(2L)).thenReturn(position);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"activity", "position", "publication"})
+  void changesCommitOneRoutedOutboxPerDistinctRecipient(String action) {
+    BusinessOutboxFixture f = new BusinessOutboxFixture(clock);
+    transactionalChange(f, action).run();
+    assertThat(f.commits).isEqualTo(1);
+    assertThat(f.rows()).hasSize(2);
+    assertThat(f.rows()).extracting(OutboxEvent::getEventId).doesNotHaveDuplicates();
+    assertThat(f.rows()).extracting(row -> ((NotificationIntentPayload) f.codec.decode(row.getPayloadJson()).payload()).userId())
+        .containsExactly(21L, 22L);
+    assertThat(f.rows()).allSatisfy(row -> {
+      assertThat(row.getTopic()).isEqualTo("volunteerflow.activity-events.v1");
+      assertThat(row.getMessageKey()).isEqualTo("100:1");
+      var event = f.codec.decode(row.getPayloadJson());
+      assertThat(event.eventType()).isEqualTo("activity.changed.v1");
+      assertThat(event.organizationId()).isEqualTo(100L);
+      assertThat(event.activityId()).isEqualTo(1L);
+      assertThat(event.aggregateType()).isEqualTo("activity".equals(action) ? "ACTIVITY" : "ACTIVITY_POSITION");
+      assertThat(event.aggregateId()).isEqualTo("activity".equals(action) ? "1" : "2");
+      assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-09-20T10:00:00Z"));
+      var payload = (NotificationIntentPayload) event.payload();
+      assertThat(payload.businessType()).isEqualTo("ACTIVITY");
+      assertThat(payload.businessId()).isEqualTo(1L);
+      assertThat(payload.title()).isEqualTo(switch (action) {
+        case "activity" -> "活动信息变更";
+        case "position" -> "岗位信息变更";
+        default -> "新增岗位发布";
+      });
+      assertThat(payload.content()).isEqualTo(switch (action) {
+        case "activity" -> "新标题已更新：信息更正";
+        case "position" -> "礼仪岗已更新：增加一个名额";
+        default -> "礼仪岗已发布";
+      });
+    });
+    verifyNoInteractions(f.unavailableKafka);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"activity", "position", "publication"})
+  void secondOutboxFailureRollsBackChangedStateAuditAndFirstRecipient(String action) {
+    BusinessOutboxFixture f = new BusinessOutboxFixture(clock);
+    f.failAtInsert = 2;
+    Runnable change = transactionalChange(f, action);
+    assertThatThrownBy(change::run).isSameAs(f.failure);
+    assertThat(f.insertAttempts).isEqualTo(2);
+    assertThat(f.rollbacks).isEqualTo(1);
+    assertThat(f.commits).isZero();
+    assertThat(f.committed).isEmpty();
+    assertThat(f.staged).isEmpty();
+    verifyNoInteractions(promotions, cacheInvalidator, f.unavailableKafka);
+  }
+
+  private Runnable transactionalChange(BusinessOutboxFixture f, String action) {
+    Activity activity = publishedActivity();
+    ActivityPosition position = activePosition();
+    when(registrationCycles.selectAffectedUserIds(1L, NOW)).thenReturn(List.of(21L, 22L, 21L));
+    when(activities.selectByIdForUpdate(1L)).thenReturn(activity);
+    when(positions.selectById(2L)).thenReturn(position);
+    when(positions.selectByIdForUpdate(2L)).thenReturn(position);
+    when(activities.updatePublishedFields(eq(1L), eq(100L), anyMap())).thenAnswer(call -> f.stage(activity));
+    when(positions.updatePublishedFields(eq(2L), eq(100L), eq(1L), anyMap())).thenAnswer(call -> f.stage(position));
+    when(positions.activateDraft(2L, 100L, 1L)).thenAnswer(call -> f.stage(position));
+    ActivityChangeService proxied = f.proxy(new ActivityChangeService(activities, positions,
+        activityQuestions, positionQuestions, registrationCycles, authorization, f.audit,
+        f.publisher, promotions, cacheInvalidator, clock));
+    if ("activity".equals(action)) return () -> proxied.changeActivity(7L, 1L, changedTitleRequest());
+    if ("position".equals(action)) return () -> proxied.changePosition(7L, 2L, validPositionChange(21, "FIRST_COME"));
+    position.setStatus("DRAFT");
+    return () -> proxied.publishPosition(7L, 2L);
   }
 
   private ActivityPosition activePosition() {

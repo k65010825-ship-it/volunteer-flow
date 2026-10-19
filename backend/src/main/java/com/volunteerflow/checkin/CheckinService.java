@@ -6,6 +6,10 @@ import com.volunteerflow.activity.ActivityMapper;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.checkin.DynamicCheckinTokenStore.VerifiedCredential;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.infrastructure.event.CheckinStatusPayload;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.DomainEventPublisher;
+import com.volunteerflow.infrastructure.event.DomainEventTypes;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.RegistrationCycle;
@@ -39,15 +43,17 @@ public class CheckinService {
   private final CheckinRecordMapper records;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
+  private final DomainEventPublisher events;
   private final CheckinCodeGenerator codes;
   private final Clock clock;
 
   public CheckinService(ActivityMapper activities, CheckinSessionMapper sessions,
       OrganizationMemberMapper members, RegistrationCycleMapper cycles, CheckinRecordMapper records,
-      OrganizationAuthorizationService authorization, AuditService audit, CheckinCodeGenerator codes, Clock clock) {
+      OrganizationAuthorizationService authorization, AuditService audit, DomainEventPublisher events,
+      CheckinCodeGenerator codes, Clock clock) {
     this.activities = activities; this.sessions = sessions; this.members = members;
     this.cycles = cycles; this.records = records; this.authorization = authorization;
-    this.audit = audit; this.codes = codes; this.clock = clock;
+    this.audit = audit; this.events = events; this.codes = codes; this.clock = clock;
   }
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -233,6 +239,10 @@ public class CheckinService {
     audit.recordChange(activity.getOrganizationId(), actorId,
         "MANUAL".equals(method) ? "checkin.manual.created" : "checkin.self.created", "checkin_record", row.getId(),
         Map.of(), Map.of("activityId", activity.getId(), "registrationCycleId", cycle.getId(), "method", method), reason);
+    events.publish(new DomainEventCommand(activity.getOrganizationId(), activity.getId(), "CHECKIN_RECORD",
+        row.getId().toString(), "MANUAL".equals(method)
+            ? DomainEventTypes.CHECKIN_CORRECTED : DomainEventTypes.CHECKIN_COMPLETED,
+        new CheckinStatusPayload(cycle.getUserId(), session.getId(), row.getId(), method)));
     return new CheckinResult(row.getId(), activity.getId(), cycle.getUserId(), method, now);
   }
 

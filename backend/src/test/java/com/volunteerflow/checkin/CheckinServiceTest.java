@@ -15,6 +15,8 @@ import com.volunteerflow.checkin.CheckinService.CheckinRequest;
 import com.volunteerflow.checkin.CheckinService.ManualCheckinRequest;
 import com.volunteerflow.checkin.DynamicCheckinTokenStore.VerifiedCredential;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.infrastructure.event.*;
+import com.volunteerflow.registration.CapturingDomainEventPublisher;
 import com.volunteerflow.organization.OrganizationMember;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
@@ -50,6 +52,7 @@ class CheckinServiceTest {
   private final CheckinRecordMapper records = mock(CheckinRecordMapper.class);
   private final OrganizationAuthorizationService authorization = mock(OrganizationAuthorizationService.class);
   private final AuditLogMapper auditLogs = mock(AuditLogMapper.class);
+  private final CapturingDomainEventPublisher events = new CapturingDomainEventPublisher();
   private final List<CheckinRecord> stored = new ArrayList<>();
   private final List<AuditLog> logs = new ArrayList<>();
   private final CheckinCodeGenerator codes = new SecureCheckinCodeGenerator(new SecureRandom());
@@ -92,12 +95,20 @@ class CheckinServiceTest {
       logs.add(invocation.getArgument(0)); return 1;
     });
     service = new CheckinService(activities, sessions, members, cycles, records, authorization,
-        new AuditService(auditLogs, new ObjectMapper()), codes, Clock.fixed(now.toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
+        new AuditService(auditLogs, new ObjectMapper()), events, codes, Clock.fixed(now.toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
   }
 
   @Test
   void correctNormalizedCodeCreatesOneSelfRecordTransitionsAttendanceAndAuditsWithoutSecrets() throws Exception {
+    events.beforePublish(() -> {
+      assertThat(stored).hasSize(1);
+      assertThat(logs).hasSize(1);
+      assertThat(cycle.getAttendanceStatus()).isEqualTo("CHECKED_IN");
+    });
     var result = service.selfCheckin(21L, 101L, request);
+    assertThat(events.commands()).containsExactly(new DomainEventCommand(10L, 11L, "CHECKIN_RECORD",
+        result.recordId().toString(), "checkin.completed.v1",
+        new CheckinStatusPayload(21L, 101L, result.recordId(), "SELF_SERVICE")));
     assertThat(stored).hasSize(1);
     CheckinRecord row = stored.get(0);
     assertThat(row.getCheckinMethod()).isEqualTo("SELF_SERVICE");
@@ -223,7 +234,7 @@ class CheckinServiceTest {
     Clock lockWaitClock = mock(Clock.class);
     when(lockWaitClock.instant()).thenReturn(expiry);
     CheckinService delayed = new CheckinService(activities, sessions, members, cycles, records,
-        authorization, new AuditService(auditLogs, new ObjectMapper()), codes, lockWaitClock);
+        authorization, new AuditService(auditLogs, new ObjectMapper()), events, codes, lockWaitClock);
 
     rejects(() -> delayed.dynamicSelfCheckin(21L, 101L, 11L, expired),
         "INVALID_DYNAMIC_CHECKIN_CODE");
@@ -358,6 +369,9 @@ class CheckinServiceTest {
     assertThat(row.getOperatorId()).isEqualTo(7L); assertThat(row.getManualReason()).isEqualTo("attendance corrected");
     assertThat(row.getRegistrationCycleId()).isEqualTo(301L); assertThat(row.getUserId()).isEqualTo(21L);
     assertThat(result.method()).isEqualTo("MANUAL");
+    assertThat(events.commands()).containsExactly(new DomainEventCommand(10L, 11L, "CHECKIN_RECORD",
+        result.recordId().toString(), "checkin.corrected.v1",
+        new CheckinStatusPayload(21L, 101L, result.recordId(), "MANUAL")));
     assertThat(logs).hasSize(1); assertThat(logs.get(0).getAction()).isEqualTo("checkin.manual.created");
     assertThat(logs.get(0).getActorUserId()).isEqualTo(7L); assertThat(logs.get(0).getReason()).isEqualTo("attendance corrected");
     assertThat(new ObjectMapper().findAndRegisterModules().writeValueAsString(logs)).doesNotContain("ABCD2345", session.getStaticCodeHash());
@@ -480,6 +494,108 @@ class CheckinServiceTest {
     assertThatThrownBy(() -> service.manualCheckin(7L, 101L, manual)).isSameAs(failure); unchanged();
   }
 
+  @Test
+  void dynamicCheckinEmitsSameCompletionFactWithoutCredential() {
+    session.setSessionType("DYNAMIC_QR");
+    var proof = new VerifiedCredential(101L, now.toEpochSecond(ZoneOffset.UTC),
+        now.plusMinutes(1).toInstant(ZoneOffset.UTC));
+    var result = service.dynamicSelfCheckin(21L, 101L, 11L, proof);
+    assertThat(events.commands()).containsExactly(new DomainEventCommand(10L, 11L, "CHECKIN_RECORD",
+        result.recordId().toString(), "checkin.completed.v1",
+        new CheckinStatusPayload(21L, 101L, result.recordId(), "SELF_SERVICE")));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"SELF_SERVICE", "MANUAL"})
+  void outboxFailureRollsBackRecordAttendanceAndAudit(String method) {
+    if ("MANUAL".equals(method)) arrangeManual();
+    DatabaseTransactions tx = new DatabaseTransactions();
+    when(activities.selectByIdForUpdate(11L)).thenAnswer(call -> { tx.lockActivity(); return activity; });
+    events.beforePublish(() -> {
+      assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue();
+      assertThat(stored).hasSize(1);
+      assertThat(logs).hasSize(1);
+      assertThat(cycle.getAttendanceStatus()).isEqualTo("CHECKED_IN");
+    });
+    RuntimeException failure = new DuplicateKeyException("Outbox insert failed");
+    events.failNextPublish(failure);
+    assertThatThrownBy(() -> {
+      if ("MANUAL".equals(method)) proxied(tx).manualCheckin(7L, 101L, manual);
+      else proxied(tx).selfCheckin(21L, 101L, request);
+    }).isSameAs(failure);
+    assertThat(tx.commits.get()).isZero();
+    assertThat(tx.rollbacks.get()).isEqualTo(1);
+    unchanged();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"SELF_SERVICE", "DYNAMIC_QR", "MANUAL"})
+  void realPublisherCommitsAttendanceAuditAndOnlyNonNotificationFact(String mode) {
+    BusinessOutboxFixture f = new BusinessOutboxFixture(
+        Clock.fixed(now.toInstant(ZoneOffset.UTC), ZoneId.of("Asia/Shanghai")));
+    transactionalCheckin(f, mode).run();
+    assertThat(f.commits).isEqualTo(1);
+    assertThat(f.rollbacks).isZero();
+    assertThat(f.committed).anyMatch(CheckinRecord.class::isInstance)
+        .anyMatch(RegistrationCycle.class::isInstance).anyMatch(AuditLog.class::isInstance);
+    assertThat(f.rows()).singleElement().satisfies(row -> {
+      assertThat(row.getTopic()).isEqualTo("volunteerflow.checkin-events.v1");
+      assertThat(row.getMessageKey()).isEqualTo("10:11");
+      assertThat(row.getStatus()).isEqualTo("PENDING");
+      var event = f.codec.decode(row.getPayloadJson());
+      assertThat(event.organizationId()).isEqualTo(10L);
+      assertThat(event.activityId()).isEqualTo(11L);
+      assertThat(event.aggregateType()).isEqualTo("CHECKIN_RECORD");
+      assertThat(event.aggregateId()).isEqualTo(stored.get(0).getId().toString());
+      assertThat(event.eventType()).isEqualTo("MANUAL".equals(mode) ? "checkin.corrected.v1" : "checkin.completed.v1");
+      assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-10-10T08:00:00Z"));
+      assertThat(event.payload()).isEqualTo(new CheckinStatusPayload(21L, 101L,
+          stored.get(0).getId(), "MANUAL".equals(mode) ? "MANUAL" : "SELF_SERVICE"));
+      assertThat(row.getPayloadJson()).doesNotContain("notificationType", "title", "content",
+          "staticCodeHash", "ABCD2345", "abcd2345", "expiresAt", "token", session.getStaticCodeHash());
+    });
+    verifyNoInteractions(f.unavailableKafka);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"SELF_SERVICE", "DYNAMIC_QR", "MANUAL"})
+  void realOutboxFailureRollsBackCheckinAuditAndAttendance(String mode) {
+    BusinessOutboxFixture f = new BusinessOutboxFixture(Clock.fixed(now.toInstant(ZoneOffset.UTC), ZoneOffset.UTC));
+    f.failAtInsert = 1;
+    Runnable action = transactionalCheckin(f, mode);
+    assertThatThrownBy(action::run).isSameAs(f.failure);
+    assertThat(f.rollbacks).isEqualTo(1);
+    assertThat(f.commits).isZero();
+    assertThat(f.committed).isEmpty();
+    assertThat(f.staged).isEmpty();
+    assertThat(stored).isEmpty();
+    assertThat(cycle.getAttendanceStatus()).isEqualTo("PENDING");
+    assertThat(cycle.getVersion()).isZero();
+    verifyNoInteractions(f.unavailableKafka);
+  }
+
+  private Runnable transactionalCheckin(BusinessOutboxFixture f, String mode) {
+    doAnswer(call -> {
+      stored.add(call.getArgument(0)); return f.stage(call.getArgument(0));
+    }).when(records).insert(any(CheckinRecord.class));
+    doAnswer(call -> {
+      cycle.setAttendanceStatus("CHECKED_IN"); cycle.setVersion(1); return f.stage(cycle);
+    }).when(cycles).markCheckedIn(301L, 10L, 11L, 21L, 0);
+    f.afterRollback = () -> { stored.clear(); cycle.setAttendanceStatus("PENDING"); cycle.setVersion(0); };
+    CheckinService proxied = f.proxy(new CheckinService(activities, sessions, members, cycles,
+        records, authorization, f.audit, f.publisher, codes, Clock.fixed(now.toInstant(ZoneOffset.UTC), ZoneOffset.UTC)));
+    if ("MANUAL".equals(mode)) {
+      arrangeManual();
+      return () -> proxied.manualCheckin(7L, 101L, manual);
+    }
+    if ("DYNAMIC_QR".equals(mode)) {
+      session.setSessionType("DYNAMIC_QR");
+      return () -> proxied.dynamicSelfCheckin(21L, 101L, 11L, new VerifiedCredential(101L,
+          now.toEpochSecond(ZoneOffset.UTC), now.plusMinutes(1).toInstant(ZoneOffset.UTC)));
+    }
+    return () -> proxied.selfCheckin(21L, 101L, request);
+  }
+
   private CheckinService proxied(DatabaseTransactions tx) {
     ProxyFactory factory = new ProxyFactory(service);
     factory.addAdvice(new TransactionInterceptor(tx, new AnnotationTransactionAttributeSource()));
@@ -521,6 +637,7 @@ class CheckinServiceTest {
 
   private void unchanged() {
     assertThat(stored).isEmpty(); assertThat(logs).isEmpty();
+    assertThat(events.commands()).isEmpty();
     assertThat(cycle.getAttendanceStatus()).isEqualTo("PENDING");
   }
 

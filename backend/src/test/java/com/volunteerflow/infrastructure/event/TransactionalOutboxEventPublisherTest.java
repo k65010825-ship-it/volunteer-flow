@@ -101,6 +101,8 @@ class TransactionalOutboxEventPublisherTest {
     for (String type : DomainEventTypes.ALL) {
       DomainEventPayload payload = type.equals("checkin.completed.v1") || type.equals("checkin.corrected.v1")
           ? new CheckinStatusPayload(9L, 11L, 12L, "DYNAMIC_CODE")
+          : type.equals("activity.published.v1") ? new ActivityStatusPayload(7L, "PUBLISHED")
+          : type.equals("checkin.closed.v1") ? new CheckinSessionStatusPayload(7L, 11L, "CLOSED")
           : List.of("registration.cancelled.v1", "registration.promotion-accepted.v1",
               "registration.promotion-declined.v1").contains(type)
               ? new RegistrationStatusPayload(9L, 9L, 2001L, "CANCELED", null) : intent(9L);
@@ -109,6 +111,33 @@ class TransactionalOutboxEventPublisherTest {
       assertThat(restored).isEqualTo(event);
       assertThat(restored.payload()).isExactlyInstanceOf(payload.getClass());
     }
+  }
+
+  @Test
+  void activityPublicationAndSessionClosureRoundTripAsFactsWithoutNotification() {
+    var commands = List.of(
+        new DomainEventCommand(1001L, 3001L, "ACTIVITY", "3001", "activity.published.v1",
+            new ActivityStatusPayload(7L, "PUBLISHED")),
+        new DomainEventCommand(1001L, 3001L, "CHECKIN_SESSION", "11", "checkin.closed.v1",
+            new CheckinSessionStatusPayload(7L, 11L, "CLOSED")));
+    for (DomainEventCommand command : commands) {
+      transaction.execute(status -> publisher.publish(command));
+      OutboxEvent row = rows.get(rows.size() - 1);
+      DomainEventEnvelope event = codec.decode(row.getPayloadJson());
+      assertThat(event.payload()).isEqualTo(command.payload());
+      assertThat(row.getPayloadJson()).doesNotContain("notificationType", "title", "content", "reason", "userId");
+      assertThat(event.occurredAt()).isEqualTo(NOW);
+      assertThat(row.getMessageKey()).isEqualTo("1001:3001");
+      assertThat(row.getTopic()).isEqualTo(command.eventType().startsWith("activity.") ? "activity-topic" : "checkin-topic");
+      assertThatThrownBy(() -> new DomainEventCommand(1001L, 3001L, command.aggregateType(),
+          command.aggregateId(), command.eventType(), intent(9L))).isInstanceOf(IllegalArgumentException.class);
+    }
+    assertThat(rows).hasSize(2);
+    assertThatThrownBy(() -> new ActivityStatusPayload(0L, "PUBLISHED")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new ActivityStatusPayload(7L, " ")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new CheckinSessionStatusPayload(0L, 11L, "CLOSED")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new CheckinSessionStatusPayload(7L, 0L, "CLOSED")).isInstanceOf(IllegalArgumentException.class);
+    assertThatThrownBy(() -> new CheckinSessionStatusPayload(7L, 11L, "")).isInstanceOf(IllegalArgumentException.class);
   }
 
   @Test

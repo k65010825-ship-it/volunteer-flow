@@ -4,8 +4,9 @@ import com.fasterxml.jackson.annotation.JsonAnySetter;
 import com.fasterxml.jackson.annotation.JsonSetter;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter;
-import com.volunteerflow.notification.NotificationWriter.NotificationTemplate;
+import com.volunteerflow.infrastructure.event.DomainEventPublisher;
+import com.volunteerflow.infrastructure.event.DomainEventTypes;
+import com.volunteerflow.infrastructure.event.NotificationEventTemplate;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.PromotionService;
 import com.volunteerflow.registration.RegistrationCycleMapper;
@@ -30,7 +31,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Coordinates a published activity change, its audit record, and affected-user notifications. */
+/** Coordinates a published activity change, its audit record, and affected-user events. */
 @Service
 @Profile("!test")
 public class ActivityChangeService {
@@ -41,7 +42,7 @@ public class ActivityChangeService {
   private final RegistrationCycleMapper registrationCycles;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
-  private final NotificationWriter notifications;
+  private final DomainEventPublisher events;
   private final PromotionService promotions;
   private final ActivityDetailCacheInvalidator cacheInvalidator;
   private final Clock clock;
@@ -54,7 +55,7 @@ public class ActivityChangeService {
       RegistrationCycleMapper registrationCycles,
       OrganizationAuthorizationService authorization,
       AuditService audit,
-      NotificationWriter notifications,
+      DomainEventPublisher events,
       PromotionService promotions,
       ActivityDetailCacheInvalidator cacheInvalidator,
       Clock clock) {
@@ -65,7 +66,7 @@ public class ActivityChangeService {
     this.registrationCycles = registrationCycles;
     this.authorization = authorization;
     this.audit = audit;
-    this.notifications = notifications;
+    this.events = events;
     this.promotions = promotions;
     this.cacheInvalidator = cacheInvalidator;
     this.clock = clock;
@@ -179,16 +180,16 @@ public class ActivityChangeService {
             reason);
     List<Long> affectedUserIds = registrationCycles.selectAffectedUserIds(activityId, now);
     int notifiedRecipients =
-        notifications.writeMany(
+        events.publishMany(
             affectedUserIds,
-            new NotificationTemplate(
-                activity.getOrganizationId(),
+            new NotificationEventTemplate(
+                activity.getOrganizationId(), activityId, "ACTIVITY", activityId.toString(),
+                DomainEventTypes.ACTIVITY_CHANGED,
                 "ACTIVITY_CHANGE",
                 "活动信息变更",
                 activity.getTitle() + "已更新：" + reason,
                 "ACTIVITY",
-                activityId,
-                "activity-change:" + activityId + ":" + auditId));
+                activityId));
     cacheInvalidator.evictAfterCommit(activityId);
     return new ActivityChangeResult(activity, auditId, notifiedRecipients);
   }
@@ -281,7 +282,7 @@ public class ActivityChangeService {
             Collections.unmodifiableMap(new LinkedHashMap<>(after)),
             reason);
     int notifiedRecipients =
-        writePositionChangeNotifications(activity, position, auditId, reason, "岗位信息变更");
+        publishPositionChangeEvents(activity, position, reason, "岗位信息变更");
     if (request.capacity() > oldCapacity) {
       promotions.fillAvailableFirstComeSeats(position, actorId, reason);
     }
@@ -330,7 +331,7 @@ public class ActivityChangeService {
             Map.of("status", "ACTIVE"),
             null);
     int notifiedRecipients =
-        writePositionChangeNotifications(activity, position, auditId, null, "新增岗位发布");
+        publishPositionChangeEvents(activity, position, null, "新增岗位发布");
     cacheInvalidator.evictAfterCommit(activity.getId());
     return new PositionPublicationResult(position, auditId, notifiedRecipients);
   }
@@ -360,10 +361,9 @@ public class ActivityChangeService {
     return locked;
   }
 
-  private int writePositionChangeNotifications(
+  private int publishPositionChangeEvents(
       Activity activity,
       ActivityPosition position,
-      Long auditId,
       String reason,
       String title) {
     List<Long> affectedUserIds = registrationCycles.selectAffectedUserIds(activity.getId(), now());
@@ -371,16 +371,16 @@ public class ActivityChangeService {
         reason == null || reason.isBlank()
             ? position.getName() + "已发布"
             : position.getName() + "已更新：" + reason;
-    return notifications.writeMany(
+    return events.publishMany(
         affectedUserIds,
-        new NotificationTemplate(
-            activity.getOrganizationId(),
+        new NotificationEventTemplate(
+            activity.getOrganizationId(), activity.getId(), "ACTIVITY_POSITION", position.getId().toString(),
+            DomainEventTypes.ACTIVITY_CHANGED,
             "POSITION_CHANGE",
             title,
             content,
             "ACTIVITY",
-            activity.getId(),
-            "position-change:" + position.getId() + ":" + auditId));
+            activity.getId()));
   }
 
   private void validatePositionTimes(

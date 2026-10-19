@@ -82,6 +82,21 @@ class NotificationEventHandlerTest {
   }
 
   @Test
+  void activityPublicationAndSessionClosureConsumeOnceWithoutInventingNotification() {
+    List<DomainEventPayload> facts = List.of(new ActivityStatusPayload(7L, "PUBLISHED"),
+        new CheckinSessionStatusPayload(7L, 11L, "CLOSED"));
+    List<String> types = List.of("activity.published.v1", "checkin.closed.v1");
+    for (int i = 0; i < types.size(); i++) {
+      NotificationConsumerFixture f = new NotificationConsumerFixture();
+      var event = f.codec.decode(f.codec.encode(f.event(types.get(i), facts.get(i))));
+      assertThat(f.handler.handle(event)).isEqualTo(NotificationEventHandler.ProcessingResult.NO_NOTIFICATION);
+      assertThat(f.handler.handle(event)).isEqualTo(NotificationEventHandler.ProcessingResult.DUPLICATE);
+      assertThat(f.markers).hasSize(1);
+      assertThat(f.rows).isEmpty();
+    }
+  }
+
+  @Test
   void registrationFactsRecordConsumedMarkerWithoutAddingSelfNotification() {
     for (String type : List.of("registration.cancelled.v1", "registration.promotion-accepted.v1",
         "registration.promotion-declined.v1")) {

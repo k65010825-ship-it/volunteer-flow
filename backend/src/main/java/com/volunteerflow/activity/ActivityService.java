@@ -3,8 +3,11 @@ package com.volunteerflow.activity;
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter;
-import com.volunteerflow.notification.NotificationWriter.NotificationTemplate;
+import com.volunteerflow.infrastructure.event.ActivityStatusPayload;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.DomainEventPublisher;
+import com.volunteerflow.infrastructure.event.DomainEventTypes;
+import com.volunteerflow.infrastructure.event.NotificationEventTemplate;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.RegistrationCycleMapper;
 import java.time.Clock;
@@ -37,7 +40,7 @@ public class ActivityService {
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
   private final RegistrationCycleMapper registrationCycles;
-  private final NotificationWriter notifications;
+  private final DomainEventPublisher events;
   private final ActivityDetailCache detailCache;
   private final ActivityDetailCacheInvalidator cacheInvalidator;
   private final Clock clock;
@@ -50,7 +53,7 @@ public class ActivityService {
       OrganizationAuthorizationService authorization,
       AuditService audit,
       RegistrationCycleMapper registrationCycles,
-      NotificationWriter notifications,
+      DomainEventPublisher events,
       ActivityDetailCache detailCache,
       ActivityDetailCacheInvalidator cacheInvalidator,
       Clock clock) {
@@ -61,7 +64,7 @@ public class ActivityService {
     this.authorization = authorization;
     this.audit = audit;
     this.registrationCycles = registrationCycles;
-    this.notifications = notifications;
+    this.events = events;
     this.detailCache = detailCache;
     this.cacheInvalidator = cacheInvalidator;
     this.clock = clock;
@@ -184,6 +187,8 @@ public class ActivityService {
     activity.setPublishedAt(now());
     activities.updateById(activity);
     audit.record(activity.getOrganizationId(), userId, "activity.published", "activity", id, null);
+    events.publish(new DomainEventCommand(activity.getOrganizationId(), id, "ACTIVITY",
+        id.toString(), DomainEventTypes.ACTIVITY_PUBLISHED, new ActivityStatusPayload(userId, "PUBLISHED")));
     cacheInvalidator.evictAfterCommit(id);
     return activity;
   }
@@ -215,16 +220,15 @@ public class ActivityService {
         activity.getTitle()
             + "已取消"
             + (reason == null || reason.isBlank() ? "" : "：" + reason.trim());
-    notifications.writeMany(
+    events.publishMany(
         affectedUserIds,
-        new NotificationTemplate(
-            activity.getOrganizationId(),
+        new NotificationEventTemplate(
+            activity.getOrganizationId(), id, "ACTIVITY", id.toString(), DomainEventTypes.ACTIVITY_CANCELLED,
             "ACTIVITY_CANCELED",
             "活动已取消",
             cancellationContent,
             "ACTIVITY",
-            id,
-            "activity:" + id + ":canceled"));
+            id));
     cacheInvalidator.evictAfterCommit(id);
     return activity;
   }

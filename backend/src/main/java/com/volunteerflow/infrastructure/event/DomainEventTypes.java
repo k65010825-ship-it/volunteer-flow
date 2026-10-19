@@ -35,6 +35,8 @@ public final class DomainEventTypes {
         REGISTRATION_PROMOTION_DECLINED).contains(eventType)) {
       return RegistrationStatusPayload.class;
     }
+    if (ACTIVITY_PUBLISHED.equals(eventType)) return ActivityStatusPayload.class;
+    if (CHECKIN_CLOSED.equals(eventType)) return CheckinSessionStatusPayload.class;
     return CHECKIN_COMPLETED.equals(eventType) || CHECKIN_CORRECTED.equals(eventType)
         ? CheckinStatusPayload.class : NotificationIntentPayload.class;
   }

@@ -10,8 +10,9 @@ import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.checkin.CheckinSessionService.OpenSessionRequest;
 import com.volunteerflow.checkin.CheckinSessionService.SessionView;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.infrastructure.event.*;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
-import com.volunteerflow.registration.CapturingNotificationWriter;
+import com.volunteerflow.registration.CapturingDomainEventPublisher;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Instant;
@@ -46,14 +47,14 @@ class CheckinSessionServiceTest {
   private final CheckinSessionMapper sessions = mock(CheckinSessionMapper.class);
   private final OrganizationAuthorizationService authorization = mock(OrganizationAuthorizationService.class);
   private final AuditService audit = mock(AuditService.class);
-  private final CapturingNotificationWriter notifications = new CapturingNotificationWriter();
+  private final CapturingDomainEventPublisher events = new CapturingDomainEventPublisher();
   private final CheckinCodeGenerator codes = new SecureCheckinCodeGenerator(new SecureRandom());
   private final DynamicCheckinTokenInvalidator dynamicTokens =
       mock(DynamicCheckinTokenInvalidator.class);
   private final Clock clock = Clock.fixed(Instant.parse("2026-10-08T04:00:00Z"), ZoneOffset.UTC);
   private final LocalDateTime now = LocalDateTime.of(2026, 10, 8, 4, 0);
   private final CheckinSessionService service = new CheckinSessionService(
-      activities, sessions, authorization, audit, notifications, codes, dynamicTokens, clock);
+      activities, sessions, authorization, audit, events, codes, dynamicTokens, clock);
   private final List<CheckinSession> inserted = new ArrayList<>();
   private Activity activity;
 
@@ -100,15 +101,21 @@ class CheckinSessionServiceTest {
     assertThat(json.writeValueAsString(persisted)).doesNotContain(opened.code(), persisted.getStaticCodeHash());
     assertThat(opened.toString()).doesNotContain(opened.code());
     verify(audit).record(10L, 7L, "checkin.session.opened", "checkin_session", opened.sessionId(), null);
-    assertThat(notifications.commands()).hasSize(2).allSatisfy(command -> {
+    assertThat(events.commands()).hasSize(2).allSatisfy(command -> {
       assertThat(command.organizationId()).isEqualTo(10L);
-      assertThat(command.type()).isEqualTo("CHECKIN_OPENED");
-      assertThat(command.businessType()).isEqualTo("ACTIVITY");
-      assertThat(command.businessId()).isEqualTo(11L);
-      assertThat(command.deduplicationKey()).isEqualTo("checkin-session:" + opened.sessionId() + ":opened");
-      assertThat(command.content()).doesNotContain(opened.code(), persisted.getStaticCodeHash());
+      assertThat(command.activityId()).isEqualTo(11L);
+      assertThat(command.aggregateType()).isEqualTo("CHECKIN_SESSION");
+      assertThat(command.aggregateId()).isEqualTo(opened.sessionId().toString());
+      assertThat(command.eventType()).isEqualTo("checkin.opened.v1");
+      NotificationIntentPayload payload = (NotificationIntentPayload) command.payload();
+      assertThat(payload.notificationType()).isEqualTo("CHECKIN_OPENED");
+      assertThat(payload.title()).isEqualTo("活动签到已开启");
+      assertThat(payload.businessType()).isEqualTo("ACTIVITY");
+      assertThat(payload.businessId()).isEqualTo(11L);
+      assertThat(payload.content()).isEqualTo("校园志愿活动签到已开启，请向现场管理员获取签到码；有效期至 2026-10-08T04:15");
+      assertThat(payload.content()).doesNotContain(opened.code(), persisted.getStaticCodeHash());
     });
-    assertThat(notifications.commands()).extracting(command -> command.userId()).containsExactly(21L, 22L);
+    assertThat(events.commands()).extracting(command -> ((NotificationIntentPayload) command.payload()).userId()).containsExactly(21L, 22L);
   }
 
   @Test
@@ -153,7 +160,7 @@ class CheckinSessionServiceTest {
     rejects(() -> service.open(7L, 11L, new OpenSessionRequest(minutes)), "INVALID_CHECKIN_DURATION");
     assertThat(inserted).isEmpty();
     verifyNoInteractions(audit);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -162,7 +169,7 @@ class CheckinSessionServiceTest {
     doThrow(denied).when(authorization).requirePermission(7L, 10L, "checkin:manage");
     assertThatThrownBy(() -> service.open(7L, 11L, new OpenSessionRequest(15))).isSameAs(denied);
     verifyNoInteractions(sessions, audit);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -236,7 +243,7 @@ class CheckinSessionServiceTest {
     assertThatThrownBy(() -> service.open(7L, 11L, new OpenSessionRequest(15)))
         .isInstanceOf(OptimisticLockingFailureException.class);
     verifyNoInteractions(audit);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
   }
 
   @Test
@@ -293,7 +300,8 @@ class CheckinSessionServiceTest {
     order.verify(sessions).selectById(101L);
     order.verify(activities).selectByIdForUpdate(11L);
     order.verify(sessions).selectByIdForUpdate(101L, 11L);
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).containsExactly(new DomainEventCommand(10L, 11L,
+        "CHECKIN_SESSION", "101", "checkin.closed.v1", new CheckinSessionStatusPayload(7L, 101L, "CLOSED")));
   }
 
   @Test
@@ -301,6 +309,8 @@ class CheckinSessionServiceTest {
     arrangeClose(session(101L, "OPEN", now.minusMinutes(1)));
     assertThat(service.close(7L, 101L).status()).isEqualTo("EXPIRED");
     verify(sessions).closeOpen(101L, 11L, "EXPIRED", now);
+    assertThat(events.commands()).containsExactly(new DomainEventCommand(10L, 11L,
+        "CHECKIN_SESSION", "101", "checkin.closed.v1", new CheckinSessionStatusPayload(7L, 101L, "EXPIRED")));
   }
 
   @Test
@@ -400,7 +410,7 @@ class CheckinSessionServiceTest {
     });
     when(sessions.selectEffectiveOpenForUpdate(11L, now)).thenAnswer(invocation ->
         inserted.stream().filter(row -> "OPEN".equals(row.getStatus()) && row.getClosesAt().isAfter(now)).findFirst().orElse(null));
-    notifications.beforeWrite(() -> {
+    events.beforePublish(() -> {
       firstInserted.countDown();
       await(allowCommit);
     });
@@ -420,7 +430,7 @@ class CheckinSessionServiceTest {
       assertThat(inserted).hasSize(1);
       assertThat(tx.commits.get()).isEqualTo(1);
       assertThat(tx.rollbacks.get()).isEqualTo(1);
-      assertThat(notifications.commands()).hasSize(2);
+      assertThat(events.commands()).hasSize(2);
     } finally {
       allowCommit.countDown();
       executor.shutdownNow();
@@ -429,20 +439,96 @@ class CheckinSessionServiceTest {
   }
 
   @Test
-  void notificationFailureRollsBackOpenThroughActualSpringTransactionAdvice() {
+  void outboxFailureRollsBackOpenThroughActualSpringTransactionAdvice() {
     DatabaseTransactions tx = new DatabaseTransactions(inserted);
     when(activities.selectByIdForUpdate(11L)).thenAnswer(invocation -> {
       tx.lockActivity();
       return activity;
     });
-    notifications.beforeWrite(() -> assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue());
-    RuntimeException failure = new IllegalStateException("Notification storage unavailable");
-    notifications.failNextWrite(failure);
+    events.beforePublish(() -> assertThat(TransactionSynchronizationManager.isActualTransactionActive()).isTrue());
+    RuntimeException failure = new IllegalStateException("Outbox storage unavailable");
+    events.failNextPublish(failure);
     assertThatThrownBy(() -> proxied(tx).open(7L, 11L, new OpenSessionRequest(15))).isSameAs(failure);
     assertThat(inserted).isEmpty();
     assertThat(tx.rollbacks.get()).isEqualTo(1);
     assertThat(tx.commits.get()).isZero();
-    assertThat(notifications.commands()).isEmpty();
+    assertThat(events.commands()).isEmpty();
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"STATIC_CODE", "DYNAMIC_QR", "CLOSED", "EXPIRED"})
+  void sessionAndAuditCommitWithUtcRoutedOutboxAndNoBroker(String mode) {
+    BusinessOutboxFixture f = new BusinessOutboxFixture(clock);
+    transactionalSessionAction(f, mode).run();
+    boolean opening = mode.endsWith("CODE") || mode.equals("DYNAMIC_QR");
+    assertThat(f.commits).isEqualTo(1);
+    assertThat(f.rows()).hasSize(opening ? 2 : 1);
+    assertThat(f.rows()).extracting(OutboxEvent::getEventId).doesNotHaveDuplicates();
+    assertThat(f.rows()).allSatisfy(row -> {
+      assertThat(row.getTopic()).isEqualTo("volunteerflow.checkin-events.v1");
+      assertThat(row.getMessageKey()).isEqualTo("10:11");
+      var event = f.codec.decode(row.getPayloadJson());
+      assertThat(event.eventType()).isEqualTo(opening ? "checkin.opened.v1" : "checkin.closed.v1");
+      assertThat(event.aggregateType()).isEqualTo("CHECKIN_SESSION");
+      assertThat(event.organizationId()).isEqualTo(10L);
+      assertThat(event.activityId()).isEqualTo(11L);
+      assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-10-08T04:00:00Z"));
+      if (opening) {
+        assertThat(event.aggregateId()).isEqualTo(inserted.get(0).getId().toString());
+        var payload = (NotificationIntentPayload) event.payload();
+        assertThat(payload.notificationType()).isEqualTo("CHECKIN_OPENED");
+        assertThat(payload.title()).isEqualTo("活动签到已开启");
+        assertThat(payload.businessType()).isEqualTo("ACTIVITY");
+        assertThat(payload.businessId()).isEqualTo(11L);
+        assertThat(payload.content()).isEqualTo("校园志愿活动签到已开启，"
+            + (mode.equals("DYNAMIC_QR") ? "请扫描现场二维码；有效期至 " : "请向现场管理员获取签到码；有效期至 ")
+            + "2026-10-08T04:15");
+        assertThat(row.getPayloadJson()).doesNotContain("staticCodeHash", "token", "digest");
+      } else {
+        assertThat(event.aggregateId()).isEqualTo("101");
+        assertThat(event.payload()).isEqualTo(new CheckinSessionStatusPayload(7L, 101L, mode));
+      }
+    });
+    if (opening) assertThat(f.rows()).extracting(row ->
+        ((NotificationIntentPayload) f.codec.decode(row.getPayloadJson()).payload()).userId())
+        .containsExactly(21L, 22L);
+    verifyNoInteractions(f.unavailableKafka);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"STATIC_CODE", "DYNAMIC_QR", "CLOSED", "EXPIRED"})
+  void sessionAuditAndEarlierFanoutRollBackWhenOutboxFails(String mode) {
+    BusinessOutboxFixture f = new BusinessOutboxFixture(clock);
+    f.failAtInsert = mode.endsWith("CODE") || mode.equals("DYNAMIC_QR") ? 2 : 1;
+    Runnable action = transactionalSessionAction(f, mode);
+    assertThatThrownBy(action::run).isSameAs(f.failure);
+    assertThat(f.insertAttempts).isEqualTo(f.failAtInsert);
+    assertThat(f.rollbacks).isEqualTo(1);
+    assertThat(f.commits).isZero();
+    assertThat(f.staged).isEmpty();
+    assertThat(f.committed).isEmpty();
+    verifyNoInteractions(f.unavailableKafka, dynamicTokens);
+  }
+
+  private Runnable transactionalSessionAction(BusinessOutboxFixture f, String mode) {
+    CheckinSessionService proxied = f.proxy(new CheckinSessionService(activities, sessions,
+        authorization, f.audit, f.publisher, codes, dynamicTokens, clock));
+    if (mode.equals("CLOSED") || mode.equals("EXPIRED")) {
+      CheckinSession row = session(101L, "OPEN", mode.equals("CLOSED") ? now.plusMinutes(15) : now);
+      arrangeClose(row);
+      when(sessions.closeOpen(101L, 11L, mode, now)).thenAnswer(call -> f.stage(row));
+      return () -> proxied.close(7L, 101L);
+    }
+    when(sessions.insertWithDigest(any(CheckinSession.class), any(byte[].class))).thenAnswer(call -> {
+      CheckinSession row = call.getArgument(0);
+      row.setStaticCodeHash(HexFormat.of().formatHex(call.getArgument(1)));
+      inserted.add(row);
+      return f.stage(row);
+    });
+    when(sessions.insert(any(CheckinSession.class))).thenAnswer(call -> {
+      inserted.add(call.getArgument(0)); return f.stage(call.getArgument(0));
+    });
+    return () -> proxied.open(7L, 11L, new OpenSessionRequest(15, mode));
   }
 
   private void arrangeClose(CheckinSession row) {

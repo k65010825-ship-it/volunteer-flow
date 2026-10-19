@@ -5,8 +5,11 @@ import com.volunteerflow.activity.Activity;
 import com.volunteerflow.activity.ActivityMapper;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
-import com.volunteerflow.notification.NotificationWriter;
-import com.volunteerflow.notification.NotificationWriter.NotificationTemplate;
+import com.volunteerflow.infrastructure.event.CheckinSessionStatusPayload;
+import com.volunteerflow.infrastructure.event.DomainEventCommand;
+import com.volunteerflow.infrastructure.event.DomainEventPublisher;
+import com.volunteerflow.infrastructure.event.DomainEventTypes;
+import com.volunteerflow.infrastructure.event.NotificationEventTemplate;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
@@ -28,7 +31,7 @@ public class CheckinSessionService {
   private final CheckinSessionMapper sessions;
   private final OrganizationAuthorizationService authorization;
   private final AuditService audit;
-  private final NotificationWriter notifications;
+  private final DomainEventPublisher events;
   private final CheckinCodeGenerator codes;
   private final DynamicCheckinTokenInvalidator dynamicTokens;
   private final Clock clock;
@@ -38,7 +41,7 @@ public class CheckinSessionService {
       CheckinSessionMapper sessions,
       OrganizationAuthorizationService authorization,
       AuditService audit,
-      NotificationWriter notifications,
+      DomainEventPublisher events,
       CheckinCodeGenerator codes,
       DynamicCheckinTokenInvalidator dynamicTokens,
       Clock clock) {
@@ -46,7 +49,7 @@ public class CheckinSessionService {
     this.sessions = sessions;
     this.authorization = authorization;
     this.audit = audit;
-    this.notifications = notifications;
+    this.events = events;
     this.codes = codes;
     this.dynamicTokens = dynamicTokens;
     this.clock = clock;
@@ -95,18 +98,18 @@ public class CheckinSessionService {
       throw new OptimisticLockingFailureException("Check-in session insert affected no row");
     }
     audit.record(activity.getOrganizationId(), actorId, "checkin.session.opened", "checkin_session", session.getId(), null);
-    notifications.writeMany(
+    events.publishMany(
         sessions.selectConfirmedUserIds(activity.getOrganizationId(), activityId),
-        new NotificationTemplate(
-            activity.getOrganizationId(),
+        new NotificationEventTemplate(
+            activity.getOrganizationId(), activityId, "CHECKIN_SESSION", session.getId().toString(),
+            DomainEventTypes.CHECKIN_OPENED,
             "CHECKIN_OPENED",
             "活动签到已开启",
             activity.getTitle() + ("DYNAMIC_QR".equals(sessionType)
                 ? "签到已开启，请扫描现场二维码；有效期至 "
                 : "签到已开启，请向现场管理员获取签到码；有效期至 ") + session.getClosesAt(),
             "ACTIVITY",
-            activityId,
-            "checkin-session:" + session.getId() + ":opened"));
+            activityId));
     return new OpenedSession(session.getId(), activityId, session.getOpensAt(), session.getClosesAt(), sessionType, code);
   }
 
@@ -132,6 +135,9 @@ public class CheckinSessionService {
     if ("CLOSED".equals(status)) session.setClosesAt(now);
     session.setVersion(session.getVersion() + 1);
     audit.record(activity.getOrganizationId(), actorId, "checkin.session.closed", "checkin_session", sessionId, null);
+    events.publish(new DomainEventCommand(activity.getOrganizationId(), activity.getId(),
+        "CHECKIN_SESSION", sessionId.toString(), DomainEventTypes.CHECKIN_CLOSED,
+        new CheckinSessionStatusPayload(actorId, sessionId, status)));
     if ("DYNAMIC_QR".equals(session.getSessionType())) {
       dynamicTokens.afterCommit(sessionId, closeInstant);
     }
