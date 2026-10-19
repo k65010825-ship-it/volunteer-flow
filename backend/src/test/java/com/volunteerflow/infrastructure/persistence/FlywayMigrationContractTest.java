@@ -100,4 +100,43 @@ class FlywayMigrationContractTest {
     assertThat(v9).contains("KEY idx_notification_user_created_id (user_id, create_time, id)");
     assertThat(v9).contains("KEY idx_checkin_session_activity_status_close_id");
   }
+
+  @Test
+  void stage5MigrationAddsLeasedOutboxAndConsumerIdempotency() throws IOException {
+    String sql = stage5Sql();
+    assertThat(sql).contains(
+        "ALTER TABLE outbox_event",
+        "topic VARCHAR(160) NOT NULL", "message_key VARCHAR(160) NOT NULL",
+        "locked_by VARCHAR(128) NULL", "locked_until DATETIME(6) NULL",
+        "last_error VARCHAR(1000) NULL", "published_partition INT NULL",
+        "published_offset BIGINT NULL",
+        "KEY idx_outbox_event_status_retry_id (status, next_retry_at, id)",
+        "KEY idx_outbox_event_published_at_id (published_at, id)",
+        "CREATE TABLE consumed_event", "id BIGINT NOT NULL",
+        "consumer_name VARCHAR(128) NOT NULL", "event_id CHAR(36) NOT NULL",
+        "processed_at DATETIME(6) NOT NULL",
+        "UNIQUE KEY uk_consumed_event_consumer_event (consumer_name, event_id)");
+    assertThat(PHYSICAL_REFERENCE.matcher(sql).find()).isFalse();
+  }
+
+  @Test
+  void stage5MigrationAddsIndexedPromotionReconciliation() throws IOException {
+    String sql = stage5Sql();
+    assertThat(sql).contains(
+        "CREATE TABLE promotion_reconcile_task", "position_id BIGINT NOT NULL",
+        "organization_id BIGINT NOT NULL", "status VARCHAR(32) NOT NULL",
+        "request_version BIGINT NOT NULL", "processed_version BIGINT NOT NULL",
+        "next_run_at DATETIME(6) NOT NULL", "locked_by VARCHAR(128) NULL",
+        "locked_until DATETIME(6) NULL", "attempt_count INT NOT NULL",
+        "last_error VARCHAR(1000) NULL", "create_time DATETIME(6) NOT NULL",
+        "update_time DATETIME(6) NOT NULL", "PRIMARY KEY (position_id)",
+        "KEY idx_promotion_reconcile_status_run_position (status, next_run_at, position_id)");
+    assertThat(PHYSICAL_REFERENCE.matcher(sql).find()).isFalse();
+  }
+
+  private String stage5Sql() throws IOException {
+    Path path = MIGRATION_DIRECTORY.resolve("V10__add_stage5_event_pipeline.sql");
+    assertThat(path).exists();
+    return Files.readString(path, StandardCharsets.UTF_8);
+  }
 }

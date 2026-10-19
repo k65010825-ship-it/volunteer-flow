@@ -50,6 +50,20 @@ class LombokEntityContractTest {
     org.assertj.core.api.Assertions.assertThat(cycle.getAttendanceStatus()).isEqualTo("PENDING");
   }
 
+  @Test
+  void stage5PersistenceEntitiesKeepSafeIdentitySemantics() throws Exception {
+    for (String name : new String[] {
+        "com.volunteerflow.infrastructure.event.OutboxEvent",
+        "com.volunteerflow.infrastructure.event.ConsumedEvent",
+        "com.volunteerflow.registration.PromotionReconcileTask"}) {
+      Class<?> type = org.junit.jupiter.api.Assertions.assertDoesNotThrow(() -> Class.forName(name));
+      mutableDataClassesDoNotDeclareToString(type);
+      mutableDataClassesDoNotDeclareEqualsOrHashCode(type);
+      type.getDeclaredConstructor().newInstance();
+      type.getDeclaredMethod(name.endsWith("ConsumedEvent") ? "getConsumerName" : "getLockedBy");
+    }
+  }
+
   private static Stream<Class<?>> mutableDataClasses() {
     return Stream.of(
         Activity.class,
