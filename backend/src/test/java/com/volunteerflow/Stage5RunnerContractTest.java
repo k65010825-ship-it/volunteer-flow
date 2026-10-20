@@ -22,6 +22,27 @@ class Stage5RunnerContractTest {
   }
 
   @Test
+  void nativeExecutableDiscoverySelectsOneApplicationAndRejectsUnsafeCandidates() throws Exception {
+    Path ps = Path.of(System.getenv().getOrDefault("SystemRoot", "C:/Windows"),
+        "System32/WindowsPowerShell/v1.0/powershell.exe");
+    if (!Files.exists(ps)) { ps = Path.of("pwsh"); }
+    read("test-native-tools.ps1");
+    Process p = new ProcessBuilder(ps.toString(), "-NoProfile", "-NonInteractive", "-File",
+        DEPLOY.resolve("test-native-tools.ps1").toString()).redirectErrorStream(true).start();
+    String output = finish(p);
+    assertThat(p.exitValue()).as(output).isZero();
+    assertThat(output).contains("Native resolver offline PASS").doesNotContain("private-marker");
+    assertThat(read("run-stage5.ps1")).contains("../lib/native-tools.psm1",
+        "Resolve-ApprovedApplication -Name git", "Resolve-ApprovedApplication -Name python",
+        "Resolve-ApprovedApplication -Name ssh", "Resolve-ApprovedApplication -Name scp")
+        .doesNotContain("(Get-Command");
+    assertThat(Files.readString(DEPLOY.resolve("../stage4d/bootstrap-temporary-ssh.ps1")))
+        .contains("../lib/native-tools.psm1", "Resolve-ApprovedApplication -Name ssh",
+            "Resolve-ApprovedApplication -Name ssh-keygen")
+        .doesNotContain("(Get-Command");
+  }
+
+  @Test
   void offlineDriverTestsExerciseEnvironmentOwnershipAuditAndSecretBoundaries() throws Exception {
     read("test_acceptance.py");
     Process p = new ProcessBuilder("python", "-B", DEPLOY.resolve("test_acceptance.py").toString())

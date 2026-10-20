@@ -36,10 +36,11 @@ foreach ($required in @('DB_HOST','DB_PORT','DB_NAME','DB_USERNAME','DB_PASSWORD
   if (-not $names.ContainsKey($required) -or -not $names[$required]) { throw "Missing environment key: $required" }
 }
 if ($names['SPRING_FLYWAY_ENABLED'] -ne 'false' -or $names['STAGE5_MAINTENANCE_APPROVED'] -ne 'true') { throw 'Flyway false and explicitly approved maintenance window required' }
-$ssh = (Get-Command ssh -CommandType Application -ErrorAction Stop).Source
-$scp = (Get-Command scp -CommandType Application -ErrorAction Stop).Source
-$git = (Get-Command git -CommandType Application -ErrorAction Stop).Source
-$python = (Get-Command python -CommandType Application -ErrorAction Stop).Source
+Import-Module (Join-Path $PSScriptRoot '../lib/native-tools.psm1') -Force
+$ssh = Resolve-ApprovedApplication -Name ssh
+$scp = Resolve-ApprovedApplication -Name scp
+$git = Resolve-ApprovedApplication -Name git
+$python = Resolve-ApprovedApplication -Name python
 $branch = (& $git -C $repositoryRoot branch --show-current | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -ne 'feat/stage-5') { throw 'Expected feat/stage-5 branch' }
 $dirty = (& $git -C $repositoryRoot status --porcelain --untracked-files=all | Out-String).Trim()

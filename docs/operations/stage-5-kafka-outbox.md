@@ -6,6 +6,7 @@
 ## 范围与前置条件
 
 - 分支 `feat/stage-5`，Java 17，全部修改已提交且工作树干净；本地需要 Git、Windows PowerShell、OpenSSH 与 Python 3.8+。
+- 本地工具使用共享的 `deploy/lib/native-tools.psm1` 解析为单一绝对路径：显式提供且验证的路径优先；否则优先 Windows 自带 OpenSSH、标准 Program Files Git，再按 PATH 顺序选择兼容程序。Git 要求 2+，Python 要求 3.8+；OpenSSH 检查二进制版本元数据（不等同签名验证）。不拼接多个 `ApplicationInfo.Source`，拒绝脚本 shim、WindowsApps 别名、非 Application 候选、缺失文件及不兼容版本，版本探测有 10 秒上限。
 - Linux VM 需要 Bash、GNU timeout、Python 3.8+、Docker Engine / Compose v2、MySQL 8 的 `mysql` / `mysqldump` 客户端、`redis-cli`。不需要额外 Python 包。
 - VM 留出至少 5 GiB 磁盘空间与足够运行两个 640 MiB 后端及 1 GiB Kafka 的内存。单节点 KRaft 只是教学/验收，不是生产 HA。
 - 既有 MySQL、Redis 从 VM 客户端和后端容器均可访问。Compose 不声明、不创建、不重建、不停止这些服务；只读取其 ID、名称、镜像与运行状态。
@@ -138,5 +139,6 @@ cd backend
 ```
 
 仓库根目录可执行 `python -B deploy/stage5/test_acceptance.py`、Bash `-n`、PowerShell AST parse、`git diff --check`。
+`powershell -NoProfile -NonInteractive -File deploy/stage5/test-native-tools.ps1` 可离线验证同名 Git/Python 多候选、优先顺序及安全拒绝，不启动 bootstrap 或连接 VM。
 有本地 Compose 解析器时只运行 `docker compose -f deploy/stage5/docker-compose.yml config --no-interpolate`。
 没有 Docker binary 时只能报告“未执行 Compose 官方解析/运行”，不能把 YAML 结构契约等同于 Docker runtime 验证。

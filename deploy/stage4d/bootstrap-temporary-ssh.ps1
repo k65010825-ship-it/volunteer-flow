@@ -25,19 +25,14 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Resolve-NativeCommand([string]$Candidate, [string]$DefaultName) {
-  if (-not [string]::IsNullOrWhiteSpace($Candidate)) {
-    return (Resolve-Path -LiteralPath $Candidate).Path
-  }
-  return (Get-Command $DefaultName -CommandType Application -ErrorAction Stop).Source
-}
+Import-Module (Join-Path $PSScriptRoot '../lib/native-tools.psm1') -Force
 
 if ($VmHost -notmatch '^[A-Za-z0-9.-]+$' -or $SshUser -notmatch '^[A-Za-z0-9._-]+$') {
   throw 'VmHost or SshUser contains unsupported characters'
 }
 
-$ssh = Resolve-NativeCommand $SshCommand 'ssh'
-$sshKeygen = Resolve-NativeCommand $SshKeygenCommand 'ssh-keygen'
+$ssh = Resolve-ApprovedApplication -Name ssh -ExplicitPath $SshCommand
+$sshKeygen = Resolve-ApprovedApplication -Name ssh-keygen -ExplicitPath $SshKeygenCommand
 if ([string]::IsNullOrWhiteSpace($TemporaryRoot)) {
   $TemporaryRoot = [IO.Path]::GetTempPath()
 }
