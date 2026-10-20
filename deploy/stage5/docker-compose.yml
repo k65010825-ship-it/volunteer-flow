@@ -1,0 +1,89 @@
+# Educational single-broker KRaft; existing stores stay external and unowned.
+name: "vf5${STAGE5_RUN_COMPACT:?set STAGE5_RUN_COMPACT}"
+x-backend: &backend
+  build:
+    context: ../../backend
+  mem_limit: 640m
+  environment: &environment
+    DB_HOST: "${DB_HOST:?set DB_HOST}"
+    DB_PORT: "${DB_PORT:?set DB_PORT}"
+    DB_NAME: "${DB_NAME:?set DB_NAME}"
+    DB_USERNAME: "${DB_USERNAME:?set DB_USERNAME}"
+    DB_PASSWORD: "${DB_PASSWORD:?set DB_PASSWORD}"
+    JWT_SECRET: "${JWT_SECRET:?set JWT_SECRET}"
+    REDIS_HOST: "${REDIS_HOST:?set REDIS_HOST}"
+    REDIS_PORT: "${REDIS_PORT:?set REDIS_PORT}"
+    REDIS_PASSWORD: "${REDIS_PASSWORD:-}"
+    REDIS_DATABASE: "${REDIS_DATABASE:-2}"
+    RATE_LIMIT_KEY_SECRET: "${RATE_LIMIT_KEY_SECRET:?set RATE_LIMIT_KEY_SECRET}"
+    APP_ENV: "vf5${STAGE5_RUN_COMPACT:?set STAGE5_RUN_COMPACT}"
+    SPRING_FLYWAY_ENABLED: "false"
+    JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m"
+    MANAGEMENT_ENDPOINT_HEALTH_GROUP_READINESS_INCLUDE: "readinessState,db"
+    KAFKA_BOOTSTRAP_SERVERS: "kafka:9092"
+    KAFKA_CONSUMER_GROUP: "vf5${STAGE5_RUN_COMPACT:?set STAGE5_RUN_COMPACT}-notification"
+    KAFKA_ACTIVITY_TOPIC: "vf5${STAGE5_RUN_COMPACT:?set STAGE5_RUN_COMPACT}.activity-events.v1"
+    KAFKA_REGISTRATION_TOPIC: "vf5${STAGE5_RUN_COMPACT:?set STAGE5_RUN_COMPACT}.registration-events.v1"
+    KAFKA_CHECKIN_TOPIC: "vf5${STAGE5_RUN_COMPACT:?set STAGE5_RUN_COMPACT}.checkin-events.v1"
+    OUTBOX_POLL_INTERVAL: "${OUTBOX_POLL_INTERVAL:-1s}"
+    OUTBOX_BATCH_SIZE: "${OUTBOX_BATCH_SIZE:-100}"
+    OUTBOX_LEASE: "${OUTBOX_LEASE:-60s}"
+    OUTBOX_SEND_TIMEOUT: "${OUTBOX_SEND_TIMEOUT:-10s}"
+    OUTBOX_RETRY_INITIAL: "${OUTBOX_RETRY_INITIAL:-5s}"
+    OUTBOX_RETRY_MAX: "${OUTBOX_RETRY_MAX:-5m}"
+    OUTBOX_RETENTION: "${OUTBOX_RETENTION:-7d}"
+    OUTBOX_RETENTION_INTERVAL: "${OUTBOX_RETENTION_INTERVAL:-1h}"
+    OUTBOX_RETENTION_BATCH_SIZE: "${OUTBOX_RETENTION_BATCH_SIZE:-100}"
+    PROMOTION_RECONCILIATION_SCAN_DELAY: "${PROMOTION_RECONCILIATION_SCAN_DELAY:-2s}"
+    PROMOTION_RECONCILIATION_BATCH_SIZE: "${PROMOTION_RECONCILIATION_BATCH_SIZE:-100}"
+    PROMOTION_RECONCILIATION_LEASE: "${PROMOTION_RECONCILIATION_LEASE:-60s}"
+    PROMOTION_RECONCILIATION_RETRY_INITIAL: "${PROMOTION_RECONCILIATION_RETRY_INITIAL:-5s}"
+    PROMOTION_RECONCILIATION_RETRY_MAX: "${PROMOTION_RECONCILIATION_RETRY_MAX:-5m}"
+  healthcheck:
+    test: ["CMD", "curl", "--fail", "--max-time", "4", "http://localhost:8080/actuator/health/readiness"]
+    interval: 5s
+    timeout: 5s
+    retries: 24
+    start_period: 30s
+  restart: "no"
+
+services:
+  kafka:
+    image: apache/kafka:3.9.1
+    mem_limit: 1g
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: "broker,controller"
+      KAFKA_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      KAFKA_CONTROLLER_QUORUM_VOTERS: "1@kafka:9093"
+      KAFKA_INTER_BROKER_LISTENER_NAME: "PLAINTEXT"
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_HEAP_OPTS: "-Xms256m -Xmx512m"
+      KAFKA_LOG_DIRS: "/tmp/kraft-combined-logs"
+      CLUSTER_ID: "MkU3OEVBNTcwNTJENDM2Qk"
+    volumes: ["kafka-data:/tmp/kraft-combined-logs"]
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-broker-api-versions.sh", "--bootstrap-server", "kafka:9092"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: "no"
+  backend-a:
+    <<: *backend
+    environment:
+      <<: *environment
+      KAFKA_CLIENT_ID: "vf5${STAGE5_RUN_COMPACT:?set STAGE5_RUN_COMPACT}-a"
+  backend-b:
+    <<: *backend
+    environment:
+      <<: *environment
+      KAFKA_CLIENT_ID: "vf5${STAGE5_RUN_COMPACT:?set STAGE5_RUN_COMPACT}-b"
+
+volumes:
+  kafka-data: {}

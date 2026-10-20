@@ -398,6 +398,7 @@ Redis 故障时的报名正确性、登录本机降级、动态签到 503，以�
 
 ## 文档
 
+- [阶段 5 Kafka / Outbox 操作手册（静态工具链，真实迁移/故障恢复尚未验收）](docs/operations/stage-5-kafka-outbox.md)
 - [阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)
 - [阶段 4B–4C Redis 动态签到与限流操作手册](docs/operations/stage-4-redis.md)
 - [阶段 4D 真实部署与压测操作手册](docs/operations/stage-4d-live-load-test.md)
