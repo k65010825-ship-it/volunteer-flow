@@ -23,6 +23,9 @@ class RuntimeTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / 'private').mkdir()
         (self.root / 'evidence').mkdir()
+        (self.root / 'host-private').mkdir()
+        (self.root / 'host-private/mysql.cnf').write_text('[client]\n')
+        (self.root / 'container.env').write_text('safe\n')
         (self.root / 'stage5.env').write_text('DB_PASSWORD=private-marker\n')
         (self.root / 'acceptance.py').write_text('print("safe")\n')
         self.digest = hashlib.sha256((self.root / 'acceptance.py').read_bytes()).hexdigest()
@@ -39,16 +42,22 @@ docker() {
     'compose version') printf 'v2.29\\n' ;;
     'image inspect') [[ ${FAIL_IMAGE:-0} == 1 ]] && return 1; printf 'sha256:%064d|["python@sha256:abc"]\\n' 1 ;;
     'pull --quiet') [[ ${FAIL_PULL:-0} == 1 ]] && return 1 ;;
-    'run --rm') return "${FAIL_RUN:-0}" ;;
+    'run --rm') printf 'VF5|1|00000001|done|0||\\n'; return "${FAIL_RUN:-0}" ;;
   esac
 }
 python3() { printf 'HOST_PYTHON_CALLED' >&2; return 127; }
 export -f docker python3
 timeout() { printf '%s\\0' "$@" >> "$TEST_ROOT/timeouts"; while [[ $1 == --* ]]; do shift; done; shift; "$@"; }
 export -f timeout
+id() { [[ $1 != -u ]] || { printf '%s\\n' "${FAKE_UID:-0}"; return; }; command id "$@"; }
+export -f id
+chmod() { printf '%s\\n' "$*" >> "$TEST_ROOT/modes"; }
+export -f chmod
+ulimit() { return 0; }
+export -f ulimit
 '''
         return subprocess.run([BASH, '-c', f'source "{runtime.as_posix()}"\n' + fake + body],
-            capture_output=True, text=True, timeout=15,
+            capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=15,
             env={**os.environ, 'TEST_ROOT': self.root.as_posix(), 'EXPECTED_HASH': self.digest, **env})
 
     def invoke(self):
@@ -69,13 +78,12 @@ export -f timeout
         mounts = [argv[i+1] for i, arg in enumerate(argv[:-1]) if arg == '--mount']
         self.assertEqual(4, len(mounts), 'mount only source, dotenv, private state and evidence')
         self.assertTrue(any('acceptance.py' in m and 'readonly' in m for m in mounts))
-        self.assertTrue(any('stage5.env' in m and 'readonly' in m for m in mounts))
+        self.assertTrue(any('container.env' in m and 'readonly' in m for m in mounts))
+        self.assertFalse(any('/host-private,' in m or '/host-private/mysql.cnf' in m for m in mounts))
         recorded = (self.root / 'evidence/python-runtime.txt').read_text()
         self.assertIn('sha256:', recorded)
-        self.assertIn('uid=', recorded)
-        uid = self.shell('id -u').stdout.strip()
-        gid = self.shell('id -g').stdout.strip()
-        self.assertEqual(uid + ':' + gid, argv[argv.index('--user') + 1])
+        self.assertIn('hostUid=0 containerUid=65534 containerGid=65534', recorded)
+        self.assertEqual('65534:65534', argv[argv.index('--user') + 1])
         cidfile = argv[argv.index('--cidfile') + 1]
         self.assertNotIn('/private/', cidfile, 'container ID must not be container-writable')
         timeouts = (self.root / 'timeouts').read_bytes()
@@ -109,57 +117,60 @@ export -f timeout
         spec = importlib.util.spec_from_file_location('acceptance_deadline_test', HERE / 'acceptance.py')
         acceptance = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(acceptance)
-        driver = acceptance.Driver.__new__(acceptance.Driver)
-        driver.bridge = self.root / 'private/bridge'
-        driver.bridge.mkdir()
-        with patch.object(acceptance.time, 'monotonic', side_effect=[0, 20]):
+        def stalled_read(*args):
+            time.sleep(0.1)
+            return b''
+        with patch.object(acceptance.os, 'write', return_value=1), patch.object(acceptance.os, 'read', side_effect=stalled_read):
             with self.assertRaisesRegex(ValueError, 'deadline exceeded'):
-                driver.execute(['mysql', '--version'], timeout=1)
+                acceptance.pipe_exchange(b'x', 0.01)
 
-    def test_real_client_and_host_bridge_keep_sql_and_redis_secrets_off_argv_and_output(self):
-        spec = importlib.util.spec_from_file_location('acceptance_runtime_test', HERE / 'acceptance.py')
-        acceptance = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(acceptance)
-        driver = acceptance.Driver.__new__(acceptance.Driver)
-        driver.bridge = self.root / 'private/bridge'
-        driver.bridge.mkdir()
-        (self.root / 'stage5.env').write_text('DB_NAME=demo\nREDIS_HOST=127.0.0.1\nREDIS_PORT=6379\n')
-        # A real Bash bridge services the real Python client's protected request files.
-        body = f'''source "{(HERE / 'python-runtime.sh').as_posix()}"
-mysql() {{ [[ $(cat) == private-marker ]] || return 9; printf '42'; }}
-redis-cli() {{ [[ $REDISCLI_AUTH == redis-private-marker ]] || return 9; printf 'PONG'; }}
-timeout() {{ printf '%s\\n' "$3" >> "$TEST_ROOT/request-budgets"; while [[ $1 == --* ]]; do shift; done; shift; "$@"; }}
-export -f mysql redis-cli timeout
-for request in 1 2; do
-  for attempt in {{1..300}}; do [[ -f "$TEST_ROOT/private/bridge/request.ready" ]] && break; sleep 0.01; done
-  stage5_bridge_request "$TEST_ROOT" vf5test "$TEST_ROOT/private/bridge" 1 || exit 9
-done
-'''
-        process = subprocess.Popen([BASH, '-c', body], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            env={**os.environ, 'TEST_ROOT': self.root.as_posix()})
-        try:
-            result = driver.execute(['mysql', '--defaults-extra-file=' + self.root.as_posix() + '/private/mysql-private.cnf',
-                '--connect-timeout=5', '--batch', '--raw', '--skip-column-names', 'demo'], b'private-marker', timeout=3)
-            self.assertEqual('42', result)
-            self.assertNotIn('private-marker', (driver.bridge / 'argv').read_text())
-            result = driver.execute(['redis-cli', '--raw', '-h', '127.0.0.1', '-p', '6379', '-n', '2', 'PING'],
-                timeout=3, extra_env={'REDISCLI_AUTH': 'redis-private-marker'})
-            self.assertEqual('PONG', result)
-            self.assertNotIn('redis-private-marker', (driver.bridge / 'argv').read_text())
-            stdout, stderr = process.communicate(timeout=10)
-            self.assertEqual(0, process.returncode, stderr)
-            self.assertNotIn(b'private-marker', stdout + stderr)
-            self.assertEqual(['1', '1'], (self.root / 'request-budgets').read_text().splitlines(),
-                             'host command deadline must not outlive remaining action budget')
-        except Exception as error:
-            if process.poll() is None:
-                process.kill()
-            stdout, stderr = process.communicate()
-            self.fail('Protected local bridge request failed: ' + type(error).__name__)
-        finally:
-            if process.poll() is None:
-                process.kill()
-                process.communicate()
+    def test_non_root_runtime_is_refused_before_any_docker_call(self):
+        result = self.shell(self.invoke(), FAKE_UID='1000')
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn('root', result.stderr)
+        self.assertFalse((self.root / 'argv').exists())
+
+    def test_host_evidence_publication_replaces_leaf_without_truncating_hardlink_target(self):
+        outside = self.root / 'outside'
+        outside.write_bytes(b'untouched')
+        os.link(outside, self.root / 'evidence/acceptance.sha256')
+        result = self.shell(self.invoke())
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(b'untouched', outside.read_bytes())
+        self.assertIn(self.digest, (self.root / 'evidence/acceptance.sha256').read_text())
+
+    def test_host_configuration_and_state_ownership_are_distinct_and_explicit(self):
+        (self.root / 'host-private/mysql.cnf').unlink()
+        (self.root / 'container.env').unlink()
+        (self.root / 'host-private').rmdir()
+        (self.root / 'stage5.env').write_text('DB_HOST=127.0.0.1\nDB_PORT=3307\nDB_USERNAME=demo\nDB_PASSWORD=private-marker\nSPRING_FLYWAY_ENABLED=false\nSTAGE5_MAINTENANCE_APPROVED=true\n')
+        result = self.shell('''
+chown() { printf '%s\\n' "$*" >> "$TEST_ROOT/ownership"; }
+mkdir() { [[ $1 != -m ]] || shift 2; command mkdir "$@"; }
+chmod() { printf '%s\\n' "$*" >> "$TEST_ROOT/modes"; }
+stage5_host_prepare "$TEST_ROOT"
+''')
+        self.addCleanup(lambda: (self.root / 'container.env').chmod(0o600) if (self.root / 'container.env').exists() else None)
+        self.assertEqual(0, result.returncode, result.stderr)
+        operations = (self.root / 'ownership').read_text()
+        self.assertIn('0:0 ' + self.root.as_posix() + '/host-private', operations)
+        self.assertIn('65534:65534 ' + self.root.as_posix() + '/private', operations)
+        self.assertNotIn('private-marker', result.stdout + result.stderr)
+        self.assertNotIn('init-command', (self.root / 'host-private/mysql.cnf').read_text())
+
+    def test_all_host_evidence_capture_uses_private_then_atomic_replace(self):
+        outside = self.root / 'outside'
+        outside.write_bytes(b'untouched')
+        os.link(outside, self.root / 'evidence/kafka-stop.txt')
+        result = self.shell('stage5_capture_evidence "$TEST_ROOT" kafka-stop.txt printf safe')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertEqual(b'untouched', outside.read_bytes())
+        self.assertEqual(b'safe', (self.root / 'evidence/kafka-stop.txt').read_bytes())
+
+    def test_sql_validation_read_error_is_not_treated_as_no_match(self):
+        (self.root / 'query').write_bytes(b'SELECT 1;')
+        result = self.shell('grep() { return 2; }; stage5_sql_safe "$TEST_ROOT/query"')
+        self.assertNotEqual(0, result.returncode)
 
     def test_bridge_refuses_arbitrary_commands_foreign_keys_and_foreign_projects(self):
         (self.root / 'stage5.env').write_text('DB_NAME=demo\nREDIS_HOST=127.0.0.1\nREDIS_PORT=6379\n')

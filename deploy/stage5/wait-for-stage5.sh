@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
+umask 077
+ulimit -f 1024
 [[ $# == 5 ]] || { printf 'Usage: PROJECT COMPOSE ENV OUTPUT api|kafka\n' >&2; exit 2; }
 project=$1 compose_file=$2 compose_env=$3 output=$4 mode=$5
 [[ $project =~ ^vf5[0-9a-f]{32}$ && $mode =~ ^(api|kafka)$ ]] || exit 2

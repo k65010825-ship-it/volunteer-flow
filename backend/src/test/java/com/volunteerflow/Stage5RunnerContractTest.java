@@ -22,6 +22,25 @@ class Stage5RunnerContractTest {
   }
 
   @Test
+  void pipeBridgeRejectsHostFileAndMysqlClientCommandAttacksOffline() throws Exception {
+    read("test_pipe_bridge.py");
+    Process p = new ProcessBuilder("python", "-B", DEPLOY.resolve("test_pipe_bridge.py").toString())
+        .redirectErrorStream(true).start();
+    boolean done = p.waitFor(120, TimeUnit.SECONDS);
+    if (!done) { p.destroyForcibly(); }
+    assertThat(done).as("adversarial pipe tests have a total deadline").isTrue();
+    String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    assertThat(p.exitValue()).as(output).isZero();
+    assertThat(output).contains("OK").doesNotContain("FAILED");
+    assertThat(read("python-runtime.sh")).contains("--user 65534:65534", "--pipe", "stage5_require_root",
+        "--network none", "--read-only", "--log-driver none")
+        .doesNotContain("request.ready", "stage5_bridge_request", "--bridge");
+    assertThat(read("pipe-bridge.sh")).contains("--binary-mode=1", "--defaults-file=", "65534:65534",
+        "stage5_sql_safe", "stage5_pipe_read_frame")
+        .doesNotContain("--commands=OFF", "eval ", "source \"$root/stage5.env\"");
+  }
+
+  @Test
   void remotePythonRuntimeNeedsNoHostPythonAndFailsClosedOffline() throws Exception {
     read("test_runtime.py");
     Process p = new ProcessBuilder("python", "-B", DEPLOY.resolve("test_runtime.py").toString())
@@ -106,6 +125,12 @@ class Stage5RunnerContractTest {
     String output = finish(p);
     assertThat(p.exitValue()).as(output).isNotZero();
     assertThat(output).contains("AuthorizeLiveRun").doesNotContain("Could not resolve hostname");
+    Process nonRoot = new ProcessBuilder(ps.toString(), "-NoProfile", "-NonInteractive", "-File",
+        DEPLOY.resolve("run-stage5.ps1").toString(), "-VmHost", "vm.invalid", "-IdentityFile",
+        "missing-key", "-ComposeEnvFile", "missing.env", "-SshUser", "other", "-AuthorizeLiveRun")
+        .redirectErrorStream(true).start();
+    assertThat(finish(nonRoot)).contains("requires SSH root").doesNotContain("Could not resolve hostname");
+    assertThat(nonRoot.exitValue()).isNotZero();
   }
 
   @Test

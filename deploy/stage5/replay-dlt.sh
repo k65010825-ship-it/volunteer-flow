@@ -53,13 +53,16 @@ compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-serve
   --topic "$topic" --partition "$partition" --offset "$start" --max-messages "$((end-start))" \
   --timeout-ms 15000 --consumer-property enable.auto.commit=false \
   --property print.offset=true --property print.key=true --property key.separator=$'\t' > "$scratch/raw"
+chmod 444 "$scratch/raw"
+(
+ulimit -f 16384
 timeout --signal=TERM --kill-after=10 60 docker run --rm -i --pull never --cidfile "$cidfile" \
   --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
-  --cpus 1 --memory 256m --pids-limit 32 --user "$(id -u):$(id -g)" --log-driver none \
-  --mount "type=bind,src=$scratch,dst=/replay" \
-  "$STAGE5_PYTHON_IMAGE" python -B - /replay/raw /replay/records "$start" "$end" <<'PY'
+  --cpus 1 --memory 256m --pids-limit 32 --user 65534:65534 --log-driver none \
+  --mount "type=bind,src=$scratch/raw,dst=/replay/raw,readonly" \
+  "$STAGE5_PYTHON_IMAGE" python -B - /replay/raw "$start" "$end" > "$scratch/records" <<'PY'
 import json, pathlib, sys, uuid
-source, dest, start, end = sys.argv[1:]
+source, start, end = sys.argv[1:]
 rows = pathlib.Path(source).read_text().splitlines()
 if len(rows) != int(end)-int(start): raise SystemExit('Incomplete replay range')
 safe=[]
@@ -71,8 +74,9 @@ for offset, row in enumerate(rows, int(start)):
     uuid.UUID(event['eventId'])
     if key != str(event['organizationId'])+':'+str(event['activityId']): raise SystemExit('Invalid original key')
     safe.append(key+'\t'+payload)
-pathlib.Path(dest).write_text('\n'.join(safe)+'\n')
+sys.stdout.write('\n'.join(safe)+'\n')
 PY
+)
 compose exec -T kafka /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka:9092 \
   --topic "$target" --property parse.key=true --property key.separator=$'\t' \
   --producer-property acks=all --producer-property delivery.timeout.ms=30000 \

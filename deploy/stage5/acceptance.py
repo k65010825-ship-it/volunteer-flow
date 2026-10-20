@@ -5,17 +5,20 @@ Called only after remote-stage5.sh's explicit live gate. Credentials, tokens and
 raw dumps stay outside evidence; subprocesses receive SQL/HTTP secrets on stdin.
 """
 import argparse
+import base64
 import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
+import queue
 import secrets
 import shutil
 import subprocess
 import sys
 import time
+import threading
 import uuid
 
 
@@ -76,6 +79,44 @@ def safe_scope(run_id, root, project):
     require(Path(root).resolve() == Path(root) and not Path(root).is_symlink(), "invalid run scope")
 
 
+def pipe_exchange(frame, seconds, response=True):
+    """Bound both write and partial reads; daemon uses raw FDs, no buffered shutdown locks."""
+    result = queue.Queue(maxsize=1)
+    def worker():
+        try:
+            remaining = memoryview(frame)
+            while remaining:
+                written = os.write(1, remaining)
+                require(written > 0, 'Pipe write failed')
+                remaining = remaining[written:]
+            data = bytearray()
+            while response:
+                chunk = os.read(0, min(65536, 90*1024*1024 + 1 - len(data)))
+                require(chunk and len(data) + len(chunk) <= 90*1024*1024, 'Invalid pipe response size/EOF')
+                data.extend(chunk)
+                if b'\n' in chunk:
+                    require(data.endswith(b'\n') and data.count(b'\n') == 1, 'Multiple response frames')
+                    break
+            result.put(bytes(data))
+        except Exception as error:
+            result.put(error)
+    threading.Thread(target=worker, daemon=True).start()
+    try:
+        answer = result.get(timeout=seconds)
+    except queue.Empty:
+        raise ValueError('Pipe operation deadline exceeded') from None
+    require(isinstance(answer, bytes), 'Pipe operation failed')
+    return answer
+
+
+def strict_base64(value, cap):
+    require(len(value) <= ((cap+2)//3)*4, 'Encoded response exceeds cap')
+    decoded = base64.b64decode(value, validate=True)
+    require(len(decoded) <= cap and base64.b64encode(decoded).decode('ascii') == value,
+            'Invalid response encoding')
+    return decoded
+
+
 class Driver:
     def __init__(self, args):
         safe_scope(args.run_id, args.root, args.project)
@@ -86,45 +127,37 @@ class Driver:
         self.evidence = self.root / "evidence"
         require(self.evidence.is_dir() and not self.evidence.is_symlink(), "Missing protected evidence directory")
         self.state_file = self.root / "private/manifest-private.json"
-        self.bridge = Path(args.bridge) if args.bridge else None
+        self.pipe = args.pipe
+        self.request_id = 0
         self.state = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
         self.child_env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
         self.child_env["STAGE5_RUN_COMPACT"] = args.run_id.replace("-", "")
         self.compose = ["docker", "compose", "-p", args.project, "-f",
                         str(self.root / "repo/deploy/stage5/docker-compose.yml"), "--env-file", args.env_file]
-        config = "[client]\n" + "".join(k + '=\"' + self.env[v] + '\"\n' for k, v in
-                   (("host", "DB_HOST"), ("port", "DB_PORT"), ("user", "DB_USERNAME"), ("password", "DB_PASSWORD")))
-        self.cnf = self.root / "private/mysql-private.cnf"
-        self.cnf.write_text(config)
-        self.cnf.chmod(0o600)
+        # Host constructs this private file; it is never mounted into Python.
+        self.cnf = self.root / "host-private/mysql.cnf"
 
     def execute(self, command, data=None, timeout=60, extra_env=None):
-        if getattr(self, 'bridge', None) is not None:
+        if getattr(self, 'pipe', False):
             require(1 <= timeout <= 300 and (extra_env is None or set(extra_env) <= {'REDISCLI_AUTH'}),
-                    'Invalid bridge request')
-            require(not (self.bridge / 'request.ready').exists() and
-                    not (self.bridge / 'response.ready').exists(), 'Bridge request overlap')
-            for name, content in {'argv': ('\0'.join(command) + '\0').encode(), 'stdin': data or b'',
-                    'auth': (extra_env or {}).get('REDISCLI_AUTH', '').encode(),
-                    'deadline': str(timeout).encode()}.items():
-                (self.bridge / name).write_bytes(content)
-                (self.bridge / name).chmod(0o600)
-            (self.bridge / 'request.ready').write_text('ready\n')
-            deadline = time.monotonic() + timeout + 10
-            while not (self.bridge / 'response.ready').exists():
-                require(time.monotonic() < deadline, 'Host bridge deadline exceeded')
-                time.sleep(0.05)
-            code = int((self.bridge / 'response.ready').read_text())
-            (self.bridge / 'response.ready').unlink()
-            require(code == 0, 'Host bridge command failed')
-            return (self.bridge / 'stdout').read_text(encoding='utf-8')
+                    'Invalid pipe request')
+            argv = ('\0'.join(command) + '\0').encode()
+            require(len(argv) <= 8192 and len(data or b'') <= 131072, 'Request byte cap exceeded')
+            self.request_id += 1
+            identity = f'{self.request_id:08d}'
+            frame = ('VF5|1|' + identity + '|exec|' + str(timeout) + '|' +
+                     base64.b64encode(argv).decode() + '|' + base64.b64encode(data or b'').decode() + '\n').encode()
+            fields = pipe_exchange(frame, timeout+30).decode('ascii').rstrip('\n').split('|')
+            require(len(fields) == 7 and fields[:5] == ['VF5','1',identity,'result','0'], 'Invalid response correlation/schema')
+            strict_base64(fields[6], 65536)
+            return strict_base64(fields[5], 64*1024*1024).decode('utf-8')
         result = subprocess.run(command, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env={**self.child_env, **(extra_env or {})}, timeout=timeout, check=False)
         require(result.returncode == 0, "External command failed (details retained only by operator)")
         return result.stdout.decode("utf-8")
 
     def sql(self, statement):
-        return self.execute(["mysql", "--defaults-extra-file=" + str(self.cnf), "--connect-timeout=5",
+        return self.execute(["mysql", "--defaults-file=" + str(self.cnf), "--connect-timeout=5", "--binary-mode=1", "--local-infile=0",
                              "--batch", "--raw", "--skip-column-names", self.env["DB_NAME"]],
                             statement.encode(), timeout=60).strip()
 
@@ -179,7 +212,7 @@ class Driver:
         raise ValueError(message)
 
     def fingerprint(self):
-        raw = self.execute(["mysqldump", "--defaults-extra-file=" + str(self.cnf), "--single-transaction",
+        raw = self.execute(["mysqldump", "--defaults-file=" + str(self.cnf), "--single-transaction",
             "--skip-comments", "--no-tablespaces", "--set-gtid-purged=OFF", "--hex-blob", "--order-by-primary",
             "--skip-extended-insert", "--no-create-info", "--skip-add-locks", "--skip-disable-keys",
             self.env["DB_NAME"]], timeout=300)
@@ -219,7 +252,7 @@ class Driver:
             for key, value in sorted(self.env.items())) + '\n')
 
     def backup(self):
-        backup = self.execute(["mysqldump", "--defaults-extra-file=" + str(self.cnf), "--single-transaction",
+        backup = self.execute(["mysqldump", "--defaults-file=" + str(self.cnf), "--single-transaction",
             "--skip-comments", "--no-tablespaces", "--set-gtid-purged=OFF", "--hex-blob",
             "--routines", "--triggers", self.env["DB_NAME"]], timeout=300)
         require(len(backup) > 100, "Empty database backup")
@@ -514,7 +547,7 @@ def main():
     parser.add_argument('--root', required=True)
     parser.add_argument('--env-file', required=True)
     parser.add_argument('--project', required=True)
-    parser.add_argument('--bridge', default='')
+    parser.add_argument('--pipe', action='store_true')
     parser.add_argument('action', choices=['preflight','backup','migration-check','topics','seed','normal','outage',
         'recover','duplicate','reconcile','metrics-before','metrics-after','cleanup','assert-clean','scan'])
     args = parser.parse_args()
@@ -525,6 +558,8 @@ def main():
             driver.metrics(args.action.split('-')[1])
         else:
             getattr(driver, args.action.replace('-', '_'))()
+        if driver.pipe:
+            pipe_exchange(f'VF5|1|{driver.request_id+1:08d}|done|0||\n'.encode(), 5, response=False)
     except Exception as error:
         # Never expose subprocess output, SQL, tokens, passwords or payloads in failure text.
         print('Stage5 action failed: ' + ('invalid run scope' if str(error) == 'invalid run scope' else type(error).__name__), file=sys.stderr)

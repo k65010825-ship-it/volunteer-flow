@@ -12,6 +12,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if (-not $AuthorizeLiveRun) { throw 'AuthorizeLiveRun is required; static checks do not authorize a live run.' }
+if ($SshUser -cne 'root') { throw 'This approved Stage5 deployment requires SSH root; other operators need separate review.' }
 if ($VmHost -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*$' -or $SshUser -notmatch '^[A-Za-z0-9_][A-Za-z0-9._-]*$') {
   throw 'Invalid SSH target'
 }
@@ -98,7 +99,7 @@ try {
     # Keep protected backup and failed-run files for recovery; remove only exact credential paths.
     try {
       if ($null -ne $remoteStatus -and $remoteStatus.cleanupStatus -eq 'success') {
-        & $ssh @sshArgs $target "test '$remoteRoot' = '/opt/volunteerflow-stage5/$RunId' && rm -f -- '$remoteRoot/stage5.env' '$remoteRoot/private/mysql-private.cnf' '$remoteRoot/private/manifest-private.json'"
+        & $ssh @sshArgs $target "test '$remoteRoot' = '/opt/volunteerflow-stage5/$RunId' && rm -f -- '$remoteRoot/stage5.env' '$remoteRoot/container.env' '$remoteRoot/host-private/mysql.cnf' '$remoteRoot/private/manifest-private.json'"
         if ($LASTEXITCODE -ne 0) { throw 'Exact credential cleanup failed' }
         $secretRemovalStatus = 'success'
       } else { $secretRemovalStatus = 'retained-protected-for-recovery' }

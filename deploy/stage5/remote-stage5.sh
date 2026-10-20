@@ -30,9 +30,19 @@ source "$repo/deploy/stage5/python-runtime.sh"
 runtime_ready=false
 driver() { current_step=$1; [[ $runtime_ready == true ]] || return 1; stage5_python_driver "$remote_root" "$repo/deploy/stage5/acceptance.py" "$driver_sha256" "$run_id" "$compose_project" "$1"; }
 backup_database() { driver backup; }
+wait_evidence() {
+  local name=$1 mode=$2 slot rc=0 service
+  slot=$(mktemp "$remote_root/host-private/readiness.XXXXXXXX") || return 1
+  if bash "$repo/deploy/stage5/wait-for-stage5.sh" "$compose_project" "$compose_file" "$compose_env" "$slot" "$mode"; then rc=0; else rc=$?; fi
+  stage5_publish_evidence "$remote_root" "$name" "$slot" || return 1
+  for service in backend-a backend-b; do
+    if [[ -f $slot-$service.json ]]; then stage5_publish_evidence "$remote_root" "$name-$service.json" "$slot-$service.json" || return 1; fi
+  done
+  return "$rc"
+}
 verify_migration_gate() {
-  cp "$repo/backend/src/main/resources/db/migration/V10__add_stage5_event_pipeline.sql" "$evidence/V10-review-only.sql"
-  sha256sum "$evidence/V10-review-only.sql" > "$evidence/V10-review-only.sha256"
+  stage5_capture_evidence "$remote_root" V10-review-only.sql cat "$repo/backend/src/main/resources/db/migration/V10__add_stage5_event_pipeline.sql"
+  stage5_capture_evidence "$remote_root" V10-review-only.sha256 sha256sum "$repo/backend/src/main/resources/db/migration/V10__add_stage5_event_pipeline.sql"
   [[ $migration == true ]] || { printf 'Backup saved; separate V10 review/application required; no migration was applied\n' >&2; return 78; }
   driver migration-check
 }
@@ -41,7 +51,7 @@ finish() {
   rc=$?; primary_step=$current_step; trap - EXIT; set +e
   if [[ $started == true ]]; then
     compose start kafka > "$remote_root/recovery.log" 2>&1
-    if bash "$repo/deploy/stage5/wait-for-stage5.sh" "$compose_project" "$compose_file" "$compose_env" "$evidence/readiness-final-kafka.txt" kafka; then recovery=success; else recovery=failed; fi
+    if wait_evidence readiness-final-kafka.txt kafka; then recovery=success; else recovery=failed; fi
     # Quiesce only our backends before removing their exact fixture IDs.
     if compose stop backend-a backend-b > "$remote_root/quiesce.log" 2>&1; then
       if [[ $seeded == true ]]; then
@@ -56,37 +66,41 @@ finish() {
     fi
   fi
   if driver scan; then scan=success; else scan=failed; fi
-  printf '{"runId":"%s","commit":"%s","primaryStatus":"%s","primaryExitCode":%s,"primaryStep":"%s","recoveryStatus":"%s","cleanupStatus":"%s","secretScanStatus":"%s"}\n' "$run_id" "$commit" "$primary" "$rc" "$primary_step" "$recovery" "$cleanup" "$scan" > "$evidence/run-status.json"
+  stage5_capture_evidence "$remote_root" run-status.json printf '{"runId":"%s","commit":"%s","primaryStatus":"%s","primaryExitCode":%s,"primaryStep":"%s","recoveryStatus":"%s","cleanupStatus":"%s","secretScanStatus":"%s"}\n' "$run_id" "$commit" "$primary" "$rc" "$primary_step" "$recovery" "$cleanup" "$scan"
   if ((rc != 0)); then exit "$rc"; fi
   [[ $primary == success && $recovery == success && $cleanup == success && $scan == success && $rc == 0 ]] || exit 1
 }
 trap finish EXIT
 ((BASH_VERSINFO[0]>4 || (BASH_VERSINFO[0]==4 && BASH_VERSINFO[1]>=4))) || { printf 'Bash 4.4+ required\n' >&2; exit 1; }
-for tool in bash timeout docker mysql mysqldump redis-cli sha256sum realpath tar id; do
+for tool in bash timeout docker mysql mysqldump redis-cli sha256sum realpath tar id base64 head cmp chown; do
   command -v "$tool" >/dev/null || { printf 'Missing deploy-essential tool: %s\n' "$tool" >&2; exit 1; }
 done
 current_step=python-runtime-preflight
+stage5_host_prepare "$remote_root"
 stage5_python_preflight "$evidence"
 runtime_ready=true
 driver preflight
-compose config --no-interpolate > "$evidence/compose-config.yml"
+current_step=compose:config
+stage5_capture_evidence "$remote_root" compose-config.yml compose config --no-interpolate
 backup_database
 verify_migration_gate
 compose build backend-a backend-b > "$remote_root/build.log" 2>&1
 started=true
 compose up -d kafka backend-a backend-b > "$remote_root/stack-up.log" 2>&1
-bash "$repo/deploy/stage5/wait-for-stage5.sh" "$compose_project" "$compose_file" "$compose_env" "$evidence/readiness-initial.json" api
-bash "$repo/deploy/stage5/wait-for-stage5.sh" "$compose_project" "$compose_file" "$compose_env" "$evidence/readiness-kafka.txt" kafka
+wait_evidence readiness-initial.json api
+wait_evidence readiness-kafka.txt kafka
 driver topics
 seeded=true
 driver seed
 driver normal
 driver metrics-before
-compose stop kafka > "$evidence/kafka-stop.txt" 2>&1
-bash "$repo/deploy/stage5/wait-for-stage5.sh" "$compose_project" "$compose_file" "$compose_env" "$evidence/readiness-outage.json" api
+current_step=compose:stop
+stage5_capture_evidence "$remote_root" kafka-stop.txt compose stop kafka
+wait_evidence readiness-outage.json api
 driver outage
-compose start kafka > "$evidence/kafka-start.txt" 2>&1
-bash "$repo/deploy/stage5/wait-for-stage5.sh" "$compose_project" "$compose_file" "$compose_env" "$evidence/readiness-recovered.txt" kafka
+current_step=compose:start
+stage5_capture_evidence "$remote_root" kafka-start.txt compose start kafka
+wait_evidence readiness-recovered.txt kafka
 driver recover
 driver duplicate
 driver reconcile
