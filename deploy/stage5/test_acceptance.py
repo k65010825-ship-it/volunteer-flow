@@ -68,6 +68,42 @@ class DriverTest(unittest.TestCase):
     def base(self):
         return 4_000_000_000_000_000 + (uuid.UUID(RUN).int % 1_000_000_000_000) * 100
 
+    def test_topics_only_verifies_host_created_names_via_typed_list(self):
+        driver = self.driver()
+        driver.project = 'vf5' + RUN.replace('-', '')
+        names = [driver.project+'.'+suffix+ending for suffix in
+                 ('activity-events.v1', 'registration-events.v1', 'checkin-events.v1') for ending in ('', '.DLT')]
+        calls = []
+        def rpc(action, values, **kwargs):
+            calls.append((action, values, kwargs))
+            return '\n'.join(names)
+        driver.rpc = rpc
+        driver.execute = lambda *args, **kwargs: self.fail('Generic Kafka command attempted')
+        driver.topics()
+        self.assertEqual([('kafka-list-topics', [], {'timeout': 30})], calls)
+        names.pop()
+        with self.assertRaisesRegex(ValueError, 'Host-prepared'):
+            driver.topics()
+
+    def test_duplicate_uses_one_typed_topic_and_stdin_not_argv(self):
+        driver = self.driver()
+        driver.project = 'vf5' + RUN.replace('-', '')
+        event = '00000000-0000-0000-0000-000000000001'
+        driver.state = {'1': {'event': event}}
+        value = json.dumps({'eventId': event})
+        driver.sql = lambda query: '313a32\t'+value.encode().hex()+'\t'+driver.project+'.registration-events.v1'
+        samples = iter((1, 2))
+        driver.metric = lambda name: next(samples)
+        driver.wait = lambda predicate, message: self.assertTrue(predicate())
+        driver.terminal = lambda index: [1, 1, 1]
+        driver.snapshot = lambda *args: None
+        driver.execute = lambda *args, **kwargs: self.fail('Generic Kafka command attempted')
+        calls = []
+        driver.rpc = lambda *args, **kwargs: calls.append((args, kwargs))
+        driver.duplicate()
+        self.assertEqual([(('kafka-produce-duplicate', [driver.project+'.registration-events.v1'],
+                           ('1:2\t'+value+'\n').encode()), {'timeout': 45})], calls)
+
     def test_each_orphan_scope_blocks_seed_before_accounts_and_cleanup_preserves_it(self):
         # No FK: every child table can hold historical rows for an absent organization.
         for table, key in ORG_TABLE_KEYS.items():

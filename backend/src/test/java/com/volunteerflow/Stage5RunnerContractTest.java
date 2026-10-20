@@ -26,7 +26,7 @@ class Stage5RunnerContractTest {
     read("test_pipe_bridge.py");
     Process p = new ProcessBuilder("python", "-B", DEPLOY.resolve("test_pipe_bridge.py").toString())
         .redirectErrorStream(true).start();
-    boolean done = p.waitFor(120, TimeUnit.SECONDS);
+    boolean done = p.waitFor(180, TimeUnit.SECONDS);
     if (!done) { p.destroyForcibly(); }
     assertThat(done).as("adversarial pipe tests have a total deadline").isTrue();
     String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
@@ -36,8 +36,17 @@ class Stage5RunnerContractTest {
         "--network none", "--read-only", "--log-driver none")
         .doesNotContain("request.ready", "stage5_bridge_request", "--bridge");
     assertThat(read("pipe-bridge.sh")).contains("--binary-mode=1", "--defaults-file=", "65534:65534",
-        "stage5_sql_safe", "stage5_pipe_read_frame")
+        "stage5_sql_safe", "stage5_pipe_read_frame", "stage5_kafka_action", "stage5_project_safe",
+        "kafka-list-topics", "kafka-produce-duplicate", "kafka-describe-group",
+        "delivery.timeout.ms=30000", "STAGE5_KAFKA_LIMIT=45")
         .doesNotContain("--commands=OFF", "eval ", "source \"$root/stage5.env\"");
+    String broker = read("pipe-bridge.sh");
+    assertThat(broker.substring(broker.indexOf("stage5_bridge_allowed()"),
+        broker.indexOf("stage5_project_safe()"))).doesNotContain("/opt/kafka/bin/", "--topic", "--group");
+    String remote = read("remote-stage5.sh");
+    assertThat(remote).contains("stage5_prepare_topics \"$remote_root\" \"$compose_project\"");
+    assertThat(remote.indexOf("stage5_prepare_topics \"$remote_root\""))
+        .isLessThan(remote.indexOf("driver topics"));
   }
 
   @Test

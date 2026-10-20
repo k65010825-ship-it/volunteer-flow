@@ -10,17 +10,18 @@ import unittest
 
 HERE = Path(__file__).resolve().parent
 BASH = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else 'bash'
-PROJECT = 'vf5test'
+PROJECT = 'vf5' + 'a'*32
 
 
 def encoded(value):
     return base64.b64encode(value).decode('ascii')
 
 
-def request(argv=None, data=b'SELECT 1;', identity='00000001', seconds='3'):
-    argv = argv or ['mysql', '--version']
-    return ('VF5|1|' + identity + '|exec|' + seconds + '|' +
-            encoded(('\0'.join(argv) + '\0').encode()) + '|' + encoded(data) + '\n').encode()
+def request(argv=None, data=b'SELECT 1;', identity='00000001', seconds='3', action='exec'):
+    argv = ['mysql', '--version'] if argv is None else argv
+    fields = ('\0'.join(argv) + '\0').encode() if argv else b''
+    return ('VF5|1|' + identity + '|' + action + '|' + seconds + '|' +
+            encoded(fields) + '|' + encoded(data) + '\n').encode()
 
 
 def done(identity='00000002'):
@@ -50,12 +51,15 @@ esac
         self.fake = fake.replace('$TEST_ROOT', self.root.as_posix())
         (self.root / 'bin/mysql').write_bytes(self.fake.encode())
         (self.root / 'bin/mysql').chmod(0o755)
+        (self.root / 'bin/docker').write_bytes(self.fake.encode())
+        (self.root / 'bin/docker').chmod(0o755)
 
     def serve(self, frames, timeout=8, **env):
         bridge = HERE / 'pipe-bridge.sh'
         self.assertTrue(bridge.exists(), 'repo-owned bounded pipe bridge required')
         mode = env.get('FAKE_MODE', 'normal')
         (self.root / 'bin/mysql').write_bytes(self.fake.replace('${FAKE_MODE:-normal}', mode).encode())
+        (self.root / 'bin/docker').write_bytes(self.fake.replace('${FAKE_MODE:-normal}', mode).encode())
         body = self.server_body()
         return subprocess.run([BASH, '-c', body], input=frames, capture_output=True, timeout=timeout,
             env={**os.environ, 'TEST_ROOT': self.root.as_posix(), **env})
@@ -64,7 +68,7 @@ esac
         return f'''source "{(HERE / 'pipe-bridge.sh').as_posix()}"
 id() {{ if [[ $1 == -u ]]; then printf '%s\\n' "${{FAKE_UID:-0}}"; else command id "$@"; fi; }}
 bin_dir=$(cd "$TEST_ROOT/bin" && pwd); export PATH="$bin_dir:$PATH"
-stage5_pipe_serve "$TEST_ROOT" vf5test 0 1 "$((SECONDS+${{FAKE_BUDGET:-5}}))"
+stage5_pipe_serve "$TEST_ROOT" "${{TEST_PROJECT:-{PROJECT}}}" 0 1 "$((SECONDS+${{FAKE_BUDGET:-5}}))"
 '''
 
     def sql_argv(self):
@@ -82,6 +86,103 @@ stage5_pipe_serve "$TEST_ROOT" vf5test 0 1 "$((SECONDS+${{FAKE_BUDGET:-5}}))"
         argv = (self.root / 'called.argv').read_bytes()
         self.assertIn(b'--binary-mode=1\0', argv)
         self.assertNotIn(b'/private/mysql', argv)
+
+    def docker_prefix(self):
+        return ['docker', 'compose', '-p', PROJECT, '-f', self.root.as_posix() + '/repo/deploy/stage5/docker-compose.yml',
+                '--env-file', self.root.as_posix() + '/stage5.env', 'exec', '-T', 'kafka']
+
+    def test_generic_kafka_argv_counterexamples_never_reach_docker(self):
+        variants = [
+            ['kafka-topics.sh', '--bootstrap-server', 'foreign.example:9092', '--delete', '--topic=unrelated'],
+            ['kafka-topics.sh', '--bootstrap-server', 'kafka:9092', '--delete', '--topic', PROJECT+'.safe|.*'],
+            ['kafka-consumer-groups.sh', '--bootstrap-server', 'kafka:9092', '--reset-offsets', '--group='+PROJECT+'-notification', '--execute'],
+            ['kafka-console-producer.sh', '--bootstrap-server=foreign.example:9092', '--topic='+PROJECT+'.registration-events.v1'],
+        ]
+        for suffix in variants:
+            with self.subTest(suffix=suffix):
+                (self.root / 'called.argv').unlink(missing_ok=True)
+                argv = self.docker_prefix() + ['/opt/kafka/bin/'+suffix[0]] + suffix[1:]
+                result = self.serve(request(argv, data=b'') + done())
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse((self.root / 'called.argv').exists(), 'generic Kafka argv must never be executed')
+
+    def test_only_typed_kafka_actions_construct_fixed_argv(self):
+        topic = PROJECT+'.registration-events.v1'
+        group = PROJECT+'-notification'
+        cases = [
+            ('kafka-list-topics', [], b'', ['kafka-topics.sh','--bootstrap-server','kafka:9092','--list']),
+            ('kafka-produce-duplicate', [topic], b'1:2\t{"eventId":"00000000-0000-0000-0000-000000000001"}\n',
+             ['kafka-console-producer.sh','--bootstrap-server','kafka:9092','--topic',topic,'--property','parse.key=true',
+              '--property','key.separator=\t','--producer-property','acks=all','--producer-property','delivery.timeout.ms=30000']),
+            ('kafka-describe-group', [group], b'', ['kafka-consumer-groups.sh','--bootstrap-server','kafka:9092','--group',group,'--describe']),
+        ]
+        for action, fields, data, suffix in cases:
+            with self.subTest(action=action):
+                result = self.serve(request(fields, data=data, action=action) + done())
+                self.assertEqual(0, result.returncode, result.stderr)
+                actual = (self.root / 'called.argv').read_bytes().decode().split('\0')[:-1]
+                self.assertEqual(self.docker_prefix()[1:] + ['/opt/kafka/bin/'+suffix[0]] + suffix[1:], actual)
+
+    def test_typed_kafka_fields_options_and_regex_scopes_fail_before_execution(self):
+        cases = [
+            ('kafka-list-topics', ['--delete'], b'', PROJECT),
+            ('kafka-list-topics', [], b'nonempty', PROJECT),
+            ('kafka-produce-duplicate', ['--topic='+PROJECT+'.registration-events.v1'], b'1:2\t{}\n', PROJECT),
+            ('kafka-produce-duplicate', [PROJECT+'.registration-events.v1|.*'], b'1:2\t{}\n', PROJECT),
+            ('kafka-produce-duplicate', ['foreign.registration-events.v1'], b'1:2\t{}\n', PROJECT),
+            ('kafka-produce-duplicate', [PROJECT+'.registration-events.v1','--bootstrap-server','foreign:9092'], b'1:2\t{}\n', PROJECT),
+            ('kafka-produce-duplicate', [PROJECT+'.registration-events.v1'], b'1:2\t{}\n3:4\t{}\n', PROJECT),
+            ('kafka-describe-group', [PROJECT+'-notification','--delete'], b'', PROJECT),
+            ('kafka-describe-group', [PROJECT+'-notification.*'], b'', PROJECT),
+            ('kafka-describe-group', ['--group='+PROJECT+'-notification'], b'', PROJECT),
+            ('kafka-describe-group', ['--delete'], b'', PROJECT),
+            ('kafka-create-topic', [PROJECT+'.registration-events.v1'], b'', PROJECT),
+            ('kafka-describe-group', [PROJECT+'-notification'], b'', PROJECT+'.*'),
+        ]
+        for action, fields, data, project in cases:
+            with self.subTest(action=action, fields=fields):
+                (self.root / 'called.argv').unlink(missing_ok=True)
+                result = self.serve(request(fields, data=data, action=action) + done(), TEST_PROJECT=project)
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse((self.root / 'called.argv').exists())
+
+    def test_topic_creation_is_host_only_and_has_six_exact_fixed_commands(self):
+        docker = self.root / 'bin/docker'
+        docker.write_bytes(('''#!/usr/bin/env bash
+printf '%s\\0' "$@" >> "ROOT/created.argv"
+printf '\\0' >> "ROOT/created.argv"
+printf '%s' "$STAGE5_RUN_COMPACT" > "ROOT/created.compact"
+[[ -z ${PRIVATE_TEST_SECRET:-} ]]
+'''.replace('ROOT', self.root.as_posix())).encode())
+        body = self.server_body().split('stage5_pipe_serve', 1)[0] + '\nstage5_prepare_topics "$TEST_ROOT" "$TEST_PROJECT"\n'
+        env = {**os.environ, 'TEST_ROOT': self.root.as_posix(), 'TEST_PROJECT': PROJECT,
+               'PRIVATE_TEST_SECRET': 'private-marker'}
+        result = subprocess.run([BASH, '-c', body], capture_output=True, env=env, timeout=15)
+        self.assertEqual(0, result.returncode, result.stderr)
+        actual = (self.root / 'created.argv').read_bytes().decode().split('\0\0')[:-1]
+        names = [PROJECT+'.'+suffix+ending for suffix in
+                 ('activity-events.v1', 'registration-events.v1', 'checkin-events.v1') for ending in ('', '.DLT')]
+        self.assertEqual(6, len(actual))
+        for command, name in zip(actual, names):
+            self.assertEqual(self.docker_prefix()[1:] + ['/opt/kafka/bin/kafka-topics.sh', '--bootstrap-server',
+                'kafka:9092', '--create', '--if-not-exists', '--topic', name, '--partitions', '1', '--replication-factor', '1'], command.split('\0'))
+        self.assertEqual(PROJECT[3:], (self.root / 'created.compact').read_text())
+        (self.root / 'created.argv').unlink()
+        result = subprocess.run([BASH, '-c', body], capture_output=True, env={**env, 'TEST_PROJECT': PROJECT+'.*'}, timeout=5)
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse((self.root / 'created.argv').exists())
+
+    def test_bom_delimiter_prefix_and_comment_client_forms_are_rejected(self):
+        cases = [b'\xef\xbb\xbfDELIMITER $$\n', b' \t\xef\xbb\xbfDeLiMiTeRsuffix $$\r\n',
+                 b'  dElImItErSuffix $$\r\n', b'/*prefix*/ DELIMITERsuffix $$\n',
+                 b'\r\n /*comment*/ charset utf8mb4\n', b'/*x*/system touch target\n',
+                 b'--prefix\r\n\tSOURCE target\r\n', b'/*x*/ tee target\n', b'/*x*/pager cat\n']
+        for data in cases:
+            with self.subTest(data=data):
+                (self.root / 'called.argv').unlink(missing_ok=True)
+                result = self.serve(request(self.sql_argv(), data=data) + done())
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse((self.root / 'called.argv').exists())
 
     def test_mysql_client_commands_nul_and_oversize_never_reach_client(self):
         for data in (b'\\! touch target\n', b' \t\\. /host/target\n', b'system touch target\n',
@@ -146,11 +247,11 @@ stage5_pipe_serve "$TEST_ROOT" vf5test 0 1 "$((SECONDS+${{FAKE_BUDGET:-5}}))"
         to_host_read, to_host_write = os.pipe()
         to_client_read, to_client_write = os.pipe()
         host = subprocess.Popen([BASH, '-c', self.server_body()], stdin=to_host_read, stdout=to_client_write,
-            stderr=subprocess.PIPE, env={**os.environ, 'TEST_ROOT': self.root.as_posix()})
+            stderr=subprocess.PIPE, env={**os.environ, 'TEST_ROOT': self.root.as_posix(), 'FAKE_BUDGET': '15'})
         client_code = r'''import importlib.util,pathlib,sys
 spec=importlib.util.spec_from_file_location('driver',sys.argv[1]); m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 d=m.Driver.__new__(m.Driver); d.pipe=True; d.request_id=0; d.cnf=pathlib.PurePosixPath(pathlib.Path(sys.argv[2]).as_posix())/'host-private/mysql.cnf'; d.env={'DB_NAME':'demo'}
-answer=d.sql('SELECT 1;'); m.pipe_exchange(b'VF5|1|00000002|done|0||\n',5,response=False)
+answer=d.sql('SELECT 1;')+'/'+d.rpc('kafka-list-topics',[],timeout=3); m.pipe_exchange(b'VF5|1|00000003|done|0||\n',5,response=False)
 (pathlib.Path(sys.argv[2])/'client-result').write_text(answer)
 '''
         client = subprocess.Popen([os.sys.executable, '-B', '-c', client_code,
@@ -163,7 +264,7 @@ answer=d.sql('SELECT 1;'); m.pipe_exchange(b'VF5|1|00000002|done|0||\n',5,respon
             _, host_error = host.communicate(timeout=12)
             self.assertEqual(0, client.returncode, client_error)
             self.assertEqual(0, host.returncode, host_error)
-            self.assertEqual('42', (self.root / 'client-result').read_text())
+            self.assertEqual('42/42', (self.root / 'client-result').read_text())
             self.assertNotIn(b'private-marker', client_error + host_error)
         finally:
             for process in (client, host):

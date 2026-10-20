@@ -89,6 +89,8 @@ started=true
 compose up -d kafka backend-a backend-b > "$remote_root/stack-up.log" 2>&1
 wait_evidence readiness-initial.json api
 wait_evidence readiness-kafka.txt kafka
+current_step=topics-create
+stage5_capture_evidence "$remote_root" topics-create.txt stage5_prepare_topics "$remote_root" "$compose_project"
 driver topics
 seeded=true
 driver seed

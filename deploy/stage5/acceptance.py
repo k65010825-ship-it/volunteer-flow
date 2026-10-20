@@ -137,20 +137,24 @@ class Driver:
         # Host constructs this private file; it is never mounted into Python.
         self.cnf = self.root / "host-private/mysql.cnf"
 
+    def rpc(self, action, values, data=None, timeout=60):
+        require(1 <= timeout <= 300 and action in ('exec', 'kafka-list-topics',
+                'kafka-produce-duplicate', 'kafka-describe-group'), 'Invalid pipe request')
+        encoded = ('\0'.join(values) + '\0').encode() if values else b''
+        require(len(encoded) <= 8192 and len(data or b'') <= 131072, 'Request byte cap exceeded')
+        self.request_id += 1
+        identity = f'{self.request_id:08d}'
+        frame = ('VF5|1|' + identity + '|' + action + '|' + str(timeout) + '|' +
+                 base64.b64encode(encoded).decode() + '|' + base64.b64encode(data or b'').decode() + '\n').encode()
+        fields = pipe_exchange(frame, timeout+30).decode('ascii').rstrip('\n').split('|')
+        require(len(fields) == 7 and fields[:5] == ['VF5','1',identity,'result','0'], 'Invalid response correlation/schema')
+        strict_base64(fields[6], 65536)
+        return strict_base64(fields[5], 64*1024*1024).decode('utf-8')
+
     def execute(self, command, data=None, timeout=60, extra_env=None):
         if getattr(self, 'pipe', False):
-            require(1 <= timeout <= 300 and (extra_env is None or set(extra_env) <= {'REDISCLI_AUTH'}),
-                    'Invalid pipe request')
-            argv = ('\0'.join(command) + '\0').encode()
-            require(len(argv) <= 8192 and len(data or b'') <= 131072, 'Request byte cap exceeded')
-            self.request_id += 1
-            identity = f'{self.request_id:08d}'
-            frame = ('VF5|1|' + identity + '|exec|' + str(timeout) + '|' +
-                     base64.b64encode(argv).decode() + '|' + base64.b64encode(data or b'').decode() + '\n').encode()
-            fields = pipe_exchange(frame, timeout+30).decode('ascii').rstrip('\n').split('|')
-            require(len(fields) == 7 and fields[:5] == ['VF5','1',identity,'result','0'], 'Invalid response correlation/schema')
-            strict_base64(fields[6], 65536)
-            return strict_base64(fields[5], 64*1024*1024).decode('utf-8')
+            require(extra_env is None or set(extra_env) <= {'REDISCLI_AUTH'}, 'Invalid pipe request')
+            return self.rpc('exec', command, data, timeout)
         result = subprocess.run(command, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env={**self.child_env, **(extra_env or {})}, timeout=timeout, check=False)
         require(result.returncode == 0, "External command failed (details retained only by operator)")
@@ -279,12 +283,11 @@ class Driver:
         self.evidence_json("migration-gate.json", {"reviewed": True, "schemaVerified": True, "appliedByRunner": False})
 
     def topics(self):
+        listed = set(self.rpc('kafka-list-topics', [], timeout=30).splitlines())
         for suffix in ("activity-events.v1", "registration-events.v1", "checkin-events.v1"):
             topic = self.project + '.' + suffix
             for name in (topic, topic + '.DLT'):
-                self.execute(self.compose + ["exec", "-T", "kafka", "/opt/kafka/bin/kafka-topics.sh",
-                    "--bootstrap-server", "kafka:9092", "--create", "--if-not-exists", "--topic", name,
-                    "--partitions", "1", "--replication-factor", "1"], timeout=30)
+                require(name in listed, 'Host-prepared run topic missing')
 
     def seed(self):
         base = 4_000_000_000_000_000 + (uuid.UUID(self.run_id).int % 1_000_000_000_000) * 100
@@ -389,9 +392,7 @@ class Driver:
         require(len(raw) == 3 and raw[2] == self.project + '.registration-events.v1', 'Unexpected event routing')
         key, value = bytes.fromhex(raw[0]).decode(), bytes.fromhex(raw[1]).decode()
         require(json.loads(value)['eventId'] == event and '\n' not in key and '\t' not in key, 'Invalid duplicate payload')
-        self.execute(self.compose + ['exec','-T','kafka','/opt/kafka/bin/kafka-console-producer.sh',
-            '--bootstrap-server','kafka:9092','--topic',raw[2],'--property','parse.key=true',
-            '--property','key.separator=\t','--producer-property','acks=all'], (key+'\t'+value+'\n').encode(), timeout=45)
+        self.rpc('kafka-produce-duplicate', [raw[2]], (key+'\t'+value+'\n').encode(), timeout=45)
         self.wait(lambda: self.metric('kafka.consumer.duplicate') > before, 'Duplicate not observed')
         require(self.terminal(1) == [1, 1, 1], 'Duplicate changed notification cardinality')
         self.snapshot('duplicate', 1)
@@ -457,8 +458,7 @@ class Driver:
         self.evidence_json('database-' + phase + '.json', {'eventId': event, 'outbox': rows, 'terminalCounts': self.terminal(index),
             'registration': self.state[str(index)], 'positionId': self.state['positions'][index]})
         if phase != 'outage':
-            text = self.execute(self.compose + ['exec','-T','kafka','/opt/kafka/bin/kafka-consumer-groups.sh',
-                '--bootstrap-server','kafka:9092','--group',self.project+'-notification','--describe'], timeout=30)
+            text = self.rpc('kafka-describe-group', [self.project+'-notification'], timeout=30)
             (self.evidence / ('offsets-' + phase + '.txt')).write_text(text)
 
     def cleanup_rows(self):

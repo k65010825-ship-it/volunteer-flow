@@ -89,13 +89,52 @@ stage5_bridge_allowed() {
       fi
       [[ ${args[*]:0:8} == "docker compose -p $project -f $root/repo/deploy/stage5/docker-compose.yml --env-file $root/stage5.env" && ${args[8]:-} == exec && ${args[9]:-} == -T ]] || return 1
       case "${args[10]:-}" in backend-a|backend-b) [[ ${args[*]:11} == 'curl --config -' ]] ;;
-        kafka)
-          case "${args[11]:-}" in /opt/kafka/bin/kafka-topics.sh|/opt/kafka/bin/kafka-console-producer.sh|/opt/kafka/bin/kafka-consumer-groups.sh) ;; *) return 1 ;; esac
-          for ((index=12; index<${#args[@]}; index++)); do case "${args[index]}" in --topic|--group) ((index+=1)); [[ ${args[index]:-} == "$project."* || ${args[index]:-} == "$project-"* ]] || return 1 ;; esac; done ;;
         *) return 1 ;; esac ;;
     *) return 1 ;;
   esac
 }
+
+# Format validation is separate from scope: every topic/group comparison below is
+# literal equality, NEVER a Kafka regex selector or a caller-supplied CLI option.
+stage5_project_safe() { [[ $1 =~ ^vf5[0-9a-f]{32}$ ]]; }
+
+stage5_kafka_action() {
+  local root=$1 project=$2 action=$3 input=$4 record key value; shift 4
+  STAGE5_KAFKA_ARGS=(); STAGE5_KAFKA_LIMIT=30
+  stage5_project_safe "$project" || return 1
+  local -a prefix=(docker compose -p "$project" -f "$root/repo/deploy/stage5/docker-compose.yml" --env-file "$root/stage5.env" exec -T kafka)
+  case "$action" in
+    kafka-list-topics)
+      (($#==0)) && [[ ! -s $input ]] || return 1
+      STAGE5_KAFKA_ARGS=("${prefix[@]}" /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --list) ;;
+    kafka-describe-group)
+      (($#==1)) && [[ $1 == "$project-notification" && ! -s $input ]] || return 1
+      STAGE5_KAFKA_ARGS=("${prefix[@]}" /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server kafka:9092 --group "$project-notification" --describe) ;;
+    kafka-produce-duplicate)
+      (($#==1)) && [[ $1 == "$project.registration-events.v1" && $(wc -c < "$input") -le 131072 && $(wc -l < "$input") == 1 ]] || return 1
+      LC_ALL=C tr -d '\000' < "$input" | cmp -s -- "$input" - || return 1
+      record=$(< "$input")
+      [[ $record != *$'\n'* && $record != *$'\r'* && $record == *$'\t'* ]] || return 1
+      key=${record%%$'\t'*}; value=${record#*$'\t'}
+      [[ $key =~ ^[0-9]{1,20}:[0-9]{1,20}$ && $value == \{*\} && $value != *$'\t'* ]] || return 1
+      STAGE5_KAFKA_LIMIT=45
+      STAGE5_KAFKA_ARGS=("${prefix[@]}" /opt/kafka/bin/kafka-console-producer.sh --bootstrap-server kafka:9092 --topic "$project.registration-events.v1" --property parse.key=true --property $'key.separator=\t' --producer-property acks=all --producer-property delivery.timeout.ms=30000) ;;
+    *) return 1 ;;
+  esac
+}
+
+# Trusted orchestration only. No pipe action permits create/delete/alter/config.
+stage5_prepare_topics() (
+  stage5_require_root && stage5_project_safe "$2" || return 1
+  local root=$1 project=$2 suffix topic key
+  while IFS= read -r key; do export -n "$key"; done < <(compgen -e)
+  export PATH LANG=C.UTF-8 HOME="$root/host-private/empty-home" STAGE5_RUN_COMPACT="${project#vf5}"
+  for suffix in activity-events.v1 registration-events.v1 checkin-events.v1; do
+    for topic in "$project.$suffix" "$project.$suffix.DLT"; do
+      timeout --signal=TERM --kill-after=1 30 docker compose -p "$project" -f "$root/repo/deploy/stage5/docker-compose.yml" --env-file "$root/stage5.env" exec -T kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic "$topic" --partitions 1 --replication-factor 1 || return 1
+    done
+  done
+)
 
 stage5_pipe_read_frame() {
   local fd=$1 deadline=$2 char remaining count=0
@@ -129,7 +168,12 @@ stage5_sql_safe() {
   # Driver SQL needs no backslash escapes; reject them anywhere, not only line start.
   if LC_ALL=C grep -q '\\' "$input"; then return 1; else code=$?; fi
   ((code==1)) || return 1
-  if LC_ALL=C grep -Eiq '(^|;)[[:space:]]*(source|system|tee|pager|nopager|notee|edit|connect|charset|delimiter|use)([[:space:];]|$)|into[[:space:]]+(out|dump)file|load[[:space:]_]+(data|file)|install[[:space:]]+plugin' "$input"; then return 1; else code=$?; fi
+  # Reject BOM outright: mysql can strip it before recognizing client commands.
+  if LC_ALL=C grep -Fq $'\xef\xbb\xbf' "$input"; then return 1; else code=$?; fi
+  ((code==1)) || return 1
+  # Conservatively reject client-command tokens even after comments, and the
+  # DELIMITER prefix regardless of suffix (mysql recognizes its first 9 bytes).
+  if LC_ALL=C grep -Eiq '(^|[^A-Za-z0-9_])(delimiter|((source|system|tee|pager|nopager|notee|edit|connect|charset|use)([^A-Za-z0-9_]|$)))|into[[:space:]]+(out|dump)file|load[[:space:]_]+(data|file)|install[[:space:]]+plugin' "$input"; then return 1; else code=$?; fi
   ((code==1))
 }
 
@@ -159,7 +203,7 @@ stage5_pipe_command() {
 stage5_pipe_serve() (
   umask 077
   stage5_require_root || return 1
-  local root=$1 project=$2 read_fd=$3 write_fd=$4 deadline=$5 sequence=1 expected read_deadline work request_work remaining output_cap
+  local root=$1 project=$2 read_fd=$3 write_fd=$4 deadline=$5 sequence=1 expected read_deadline work request_work remaining output_cap requested
   local -a fields=() args=()
   work=$(mktemp -d "$root/host-private/pipe.XXXXXXXX") || return 1
   # Nothing under this directory is mounted or writable/readable by the container.
@@ -176,17 +220,26 @@ stage5_pipe_serve() (
       rmdir -- "$work" || return 1
       return 0
     fi
-    [[ ${fields[3]} == exec && ${fields[4]} =~ ^[1-9][0-9]{0,2}$ ]] && ((fields[4]<=300)) || return 1
+    [[ ${fields[4]} =~ ^[1-9][0-9]{0,2}$ ]] && ((fields[4]<=300)) || return 1
     request_work="$work/$expected"; mkdir -m 700 -- "$request_work" || return 1
     stage5_pipe_decode "${fields[5]}" "$request_work/argv" 8192 &&
       stage5_pipe_decode "${fields[6]}" "$request_work/stdin" 131072 || return 1
     mapfile -d '' -t args < "$request_work/argv"
-    ((${#args[@]}>=1 && ${#args[@]}<=128)) || return 1
-    printf '%s\0' "${args[@]}" | cmp -s -- "$request_work/argv" - || return 1
-    stage5_bridge_allowed "$root" "$project" "${args[@]}" || return 1
+    ((${#args[@]}<=128)) || return 1
+    if ((${#args[@]})); then printf '%s\0' "${args[@]}" | cmp -s -- "$request_work/argv" - || return 1
+    else [[ ! -s $request_work/argv ]] || return 1; fi
+    requested=${fields[4]}
+    case "${fields[3]}" in
+      exec) ((${#args[@]}>=1)) && stage5_bridge_allowed "$root" "$project" "${args[@]}" || return 1 ;;
+      kafka-list-topics|kafka-produce-duplicate|kafka-describe-group)
+        stage5_kafka_action "$root" "$project" "${fields[3]}" "$request_work/stdin" "${args[@]}" || return 1
+        ((requested<=STAGE5_KAFKA_LIMIT)) || requested=$STAGE5_KAFKA_LIMIT
+        args=("${STAGE5_KAFKA_ARGS[@]}") ;;
+      *) return 1 ;;
+    esac
     [[ ${args[0]} != mysql ]] || stage5_sql_safe "$request_work/stdin" || return 1
     output_cap=16777216; [[ ${args[0]} != mysqldump ]] || output_cap=67108864
-    stage5_pipe_command "$root" "$project" "$request_work" "$deadline" "${fields[4]}" "$output_cap" "${args[@]}" || return 1
+    stage5_pipe_command "$root" "$project" "$request_work" "$deadline" "$requested" "$output_cap" "${args[@]}" || return 1
     printf 'VF5|1|%s|result|0|' "$expected" > "$request_work/response"
     base64 --wrap=0 "$request_work/stdout" >> "$request_work/response" || return 1
     printf '|\n' >> "$request_work/response"
