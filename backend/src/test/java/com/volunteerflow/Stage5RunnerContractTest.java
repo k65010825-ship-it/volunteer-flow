@@ -60,6 +60,24 @@ class Stage5RunnerContractTest {
   }
 
   @Test
+  void windowsPowerShell51RunsStrictLocalPreflightWithoutNetworkOrCredentialSideEffects() throws Exception {
+    read("test-powershell51-compatibility.ps1");
+    Path ps = Path.of(System.getenv().getOrDefault("SystemRoot", "C:/Windows"),
+        "System32/WindowsPowerShell/v1.0/powershell.exe");
+    org.junit.jupiter.api.Assumptions.assumeTrue(Files.exists(ps),
+        "Actual Windows PowerShell 5.1 is required; pwsh is not substitute evidence");
+    Process p = new ProcessBuilder(ps.toString(), "-Version", "5.1", "-NoProfile", "-NonInteractive",
+        "-File", DEPLOY.resolve("test-powershell51-compatibility.ps1").toString())
+        .redirectErrorStream(true).start();
+    boolean done = p.waitFor(180, TimeUnit.SECONDS);
+    if (!done) { p.destroyForcibly(); }
+    assertThat(done).as("PowerShell 5.1 offline suite has a total deadline").isTrue();
+    String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    assertThat(p.exitValue()).as(output).isZero();
+    assertThat(output).contains("PowerShell 5.1 compatibility offline PASS").doesNotContain("private-marker");
+  }
+
+  @Test
   void nativeExecutableDiscoverySelectsOneApplicationAndRejectsUnsafeCandidates() throws Exception {
     Path ps = Path.of(System.getenv().getOrDefault("SystemRoot", "C:/Windows"),
         "System32/WindowsPowerShell/v1.0/powershell.exe");

@@ -5,7 +5,7 @@
 
 ## 范围与前置条件
 
-- 分支 `feat/stage-5`，Java 17，全部修改已提交且工作树干净；本地需要 Git、Windows PowerShell、OpenSSH 与 Python 3.8+。
+- 分支 `feat/stage-5`，Java 17，全部修改已提交且工作树干净；本地需要 Git、Windows PowerShell 5.1（也可用 PowerShell 7）、OpenSSH 与 Python 3.8+。
 - 本地工具使用共享的 `deploy/lib/native-tools.psm1` 解析为单一绝对路径：显式提供且验证的路径优先；否则优先 Windows 自带 OpenSSH、标准 Program Files Git，再按 PATH 顺序选择兼容程序。Git 要求 2+，Python 要求 3.8+；OpenSSH 检查二进制版本元数据（不等同签名验证）。不拼接多个 `ApplicationInfo.Source`，拒绝脚本 shim、WindowsApps 别名、非 Application 候选、缺失文件及不兼容版本，版本探测有 10 秒上限。
 - Linux VM 需要 Bash 4.4+、GNU coreutils（timeout/sha256sum/realpath 等）、tar、Docker Engine / Compose v2、MySQL 8 的 `mysql` / `mysqldump` 客户端、`redis-cli`。不要求、不安装宿主 Python 或额外软件包。
 - 此工具链只支持已批准的 root 运维方式：Windows runner 要求 `-SshUser root`，VM 门禁要求 `id -u=0`，其他账号直接拒绝，不能自行放宽。Python 容器固定 `65534:65534`；宿主只对精确的 private/evidence 目录设置该 UID/GID，run root 与未挂载的 `host-private/` 仍为 root/700。Linux DAC/容器权限效果必须在获批的 live 预检核实，Windows 离线合同不等同内核隔离实测。
@@ -33,6 +33,7 @@ KRaft 日志目录与卷挂载统一为镜像准备的 `/var/lib/kafka/data`；�
 从 `deploy/stage5/.env.example` 复制为被 Git 忽略的 `.env`，替换全部占位符。
 设置 `STAGE5_MAINTENANCE_APPROVED=true` 必须代表维护窗口已经获得实际批准。
 值采用严格的未引用 dotenv 子集：每行一个 `KEY=value`，不允许重复键、未知键、空必填项、空白、引号、反斜杠、`$`、`#`。密码若含这些字符，应走单独审核的配置适配，不应猜测转义或 `source` 环境文件。
+输入只接受严格 UTF-8，可带文件开头的 UTF-8 BOM，支持 LF / CRLF；拒绝 UTF-16、无效 UTF-8 与值中的控制字符。只按第一个字面 `=` 分隔，后续 `=` 原样保留（包括 Base64 padding）。本地 JSON evidence 统一写为显式 UTF-8、无 BOM，不依赖 PowerShell 5.1/7 的默认编码。
 `JWT_SECRET` 使用现有应用要求的标准 Base64 密钥；`RATE_LIMIT_KEY_SECRET` 使用足够强的随机值。
 
 Stage 5 复用已审计的 Stage 4D 一次性 Ed25519 密钥安装脚本；移除由本轮有界 helper 完成：
@@ -45,6 +46,16 @@ Stage 5 复用已审计的 Stage 4D 一次性 Ed25519 密钥安装脚本；移�
 本地预检失败时不会连接 VM，也不会自动移除密钥；需要显式调用 `deploy/stage5/remove-temporary-key.py`，提供 `--host/--user/--port/--identity/--status-file`（状态文件的父目录须已存在）。该 helper 只移除这一条公钥，SSH 使用 connect timeout 10 秒、server-alive 15 秒/3 次及整体 60 秒 deadline。超时返回 124、保留本地密钥并写入失败状态；其他非零码也不能记作成功。
 
 ## 2. 备份与独立 V10 审核门禁
+
+经授权、密钥安装完成且工作树干净后，先执行仅本地预检：
+
+```powershell
+.\deploy\stage5\run-stage5.ps1 `
+  -VmHost '<VM_HOST>' -IdentityFile '<TEMP_IDENTITY_FILE>' `
+  -ComposeEnvFile '.\deploy\stage5\.env' -AuthorizeLiveRun -LocalPreflightOnly
+```
+
+它仍要求显式授权、root/目标/runId、临时 OpenSSH 私钥封装与公钥格式、严格配置、确定性工具/版本、正确分支与干净已提交 HEAD，并真实执行 `git archive` 和精确 driver hash。本地使用独立临时目录，在成功/失败的 `finally` 清理后才输出固定成功类别 `STAGE5_LOCAL_PREFLIGHT_PASS`。不创建 `deploy/stage5/output`，不启动 SSH/scp、不连接 VM、不移除密钥，也不输出配置值；不能同时传 `-MigrationReviewed`。通过只证明本地门禁，不证明密钥配对/远程认证、VM 前置条件或实际验收。
 
 首次经批准的 live 准备运行不传 `-MigrationReviewed`：
 
@@ -151,5 +162,6 @@ cd backend
 
 仓库根目录可执行 `python -B deploy/stage5/test_acceptance.py`、`python -B deploy/stage5/test_runtime.py`、`python -B deploy/stage5/test_pipe_bridge.py`、Bash `-n`、PowerShell AST parse、`git diff --check`。本地离线测试使用 Windows Python，不表示 VM 必须安装 Python；Docker/主机 UID 与权限操作在边界使用 double，真实 pipe、FIFO、硬链接与原子替换可本地验证，不连接 daemon。Windows 若无创建原生符号链接权限会明确打印限制，不把这些用例宣称为 Linux 内核实测。
 `powershell -NoProfile -NonInteractive -File deploy/stage5/test-native-tools.ps1` 可离线验证同名 Git/Python 多候选、优先顺序及安全拒绝，不启动 bootstrap 或连接 VM。
+`powershell.exe -Version 5.1 -NoProfile -NonInteractive -File deploy/stage5/test-powershell51-compatibility.ps1` 必须使用实际 Windows PowerShell 5.1，不能用 pwsh parse 冒充。套件在独立本地 Git 仓库验证 dotenv/BOM/CRLF、全部本地门禁、archive/hash 失败清理和无网络/输出目录/密钥移除，网络边界使用失败关闭 double；还检查正常失败路径 JSON 的无 BOM UTF-8 写入。存在 pwsh 时追加 PowerShell 7 交叉验证。它不使用真实配置或密钥，不是 live 预检结果。
 有本地 Compose 解析器时只运行 `docker compose -f deploy/stage5/docker-compose.yml config --no-interpolate`。
 没有 Docker binary 时只能报告“未执行 Compose 官方解析/运行”，不能把 YAML 结构契约等同于 Docker runtime 验证。

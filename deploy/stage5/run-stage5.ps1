@@ -7,11 +7,13 @@ param(
   [string]$SshUser = 'root',
   [string]$RunId = '',
   [switch]$AuthorizeLiveRun,
+  [switch]$LocalPreflightOnly,
   [switch]$MigrationReviewed
 )
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if (-not $AuthorizeLiveRun) { throw 'AuthorizeLiveRun is required; static checks do not authorize a live run.' }
+if ($LocalPreflightOnly -and $MigrationReviewed) { throw 'LocalPreflightOnly refuses MigrationReviewed; migration approval is a separate live gate.' }
 if ($SshUser -cne 'root') { throw 'This approved Stage5 deployment requires SSH root; other operators need separate review.' }
 if ($VmHost -notmatch '^[A-Za-z0-9][A-Za-z0-9.-]*$' -or $SshUser -notmatch '^[A-Za-z0-9_][A-Za-z0-9._-]*$') {
   throw 'Invalid SSH target'
@@ -21,18 +23,47 @@ if ($RunId -cnotmatch '^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$') { throw 'Ru
 $repositoryRoot = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '../..')).Path
 $identity = (Resolve-Path -LiteralPath $IdentityFile).Path
 $envFile = (Resolve-Path -LiteralPath $ComposeEnvFile).Path
+if ([IO.File]::ReadAllText($identity) -cnotmatch '\A-----BEGIN OPENSSH PRIVATE KEY-----\r?\n[A-Za-z0-9+/=\r\n]+\r?\n-----END OPENSSH PRIVATE KEY-----(\r?\n)?\z') {
+  throw 'A dedicated temporary OpenSSH private key format is required'
+}
 $publicKey = [IO.File]::ReadAllText($identity + '.pub').Trim()
 # Reuse the audited Stage4D bootstrap/removal lifecycle; never accept a personal key.
 if ($publicKey -notmatch '^ssh-ed25519 [A-Za-z0-9+/=]+ volunteerflow-stage4d-[0-9a-f-]+$') { throw 'A dedicated temporary Stage4D-format Ed25519 key is required' }
-$lines = [IO.File]::ReadAllLines($envFile, [Text.Encoding]::UTF8)
-$names = @{}
-foreach ($line in $lines) {
-  if (-not $line -or $line.StartsWith('#')) { continue }
-  $pair = $line.Split(@('='), 2)
-  if ($pair.Length -ne 2 -or $pair[0] -notmatch '^[A-Z][A-Z0-9_]*$' -or $names.ContainsKey($pair[0]) -or
-      $pair[1] -match '[\s$''"\\#]' -or $pair[1] -match '(?i)replace-with|placeholder|change-me') { throw 'Invalid or unresolved environment; values suppressed' }
-  $names[$pair[0]] = $pair[1]
+function Read-Stage5Environment([string]$Path) {
+  $result = @{}
+  try {
+    # Read bytes explicitly: accept only UTF-8, with optional UTF-8 BOM (not UTF-16).
+    $bytes = [IO.File]::ReadAllBytes($Path)
+    $offset = 0
+    if ($bytes.Length -ge 3 -and $bytes[0] -eq 239 -and $bytes[1] -eq 187 -and $bytes[2] -eq 191) { $offset = 3 }
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString($bytes, $offset, $bytes.Length - $offset)
+    $allowed = @('DB_HOST','DB_PORT','DB_NAME','DB_USERNAME','DB_PASSWORD','JWT_SECRET','REDIS_HOST','REDIS_PORT',
+      'RATE_LIMIT_KEY_SECRET','SPRING_FLYWAY_ENABLED','STAGE5_MYSQL_CONTAINER','STAGE5_REDIS_CONTAINER',
+      'STAGE5_MAINTENANCE_APPROVED','REDIS_PASSWORD','REDIS_DATABASE','OUTBOX_POLL_INTERVAL','OUTBOX_BATCH_SIZE',
+      'OUTBOX_LEASE','OUTBOX_SEND_TIMEOUT','OUTBOX_RETRY_INITIAL','OUTBOX_RETRY_MAX','OUTBOX_RETENTION',
+      'OUTBOX_RETENTION_INTERVAL','OUTBOX_RETENTION_BATCH_SIZE','PROMOTION_RECONCILIATION_SCAN_DELAY',
+      'PROMOTION_RECONCILIATION_BATCH_SIZE','PROMOTION_RECONCILIATION_LEASE',
+      'PROMOTION_RECONCILIATION_RETRY_INITIAL','PROMOTION_RECONCILIATION_RETRY_MAX')
+    foreach ($line in [regex]::Split($text, '\r?\n')) {
+      if (-not $line -or $line.StartsWith('#')) { continue }
+      # IndexOf(char)/Substring have the same overload behavior in .NET Framework and .NET.
+      $separator = $line.IndexOf([char]'=')
+      if ($separator -lt 1) { throw 'Invalid entry' }
+      $key = $line.Substring(0, $separator)
+      $value = $line.Substring($separator + 1)
+      if ($key -cnotmatch '^[A-Z][A-Z0-9_]*$' -or $allowed -cnotcontains $key -or $result.ContainsKey($key) -or
+          $value -match '[\s\x00-\x1f$''"\\#]' -or $value -match '(?i)replace-with|placeholder|change-me') { throw 'Invalid entry' }
+      $result[$key] = $value
+    }
+    return $result
+  } catch { $result.Clear(); throw 'Invalid or unresolved environment; values suppressed' }
 }
+$names = @{}
+$temporaryDirectory = $null
+$archive = $null
+$localPreflightPassed = $false
+try {
+$names = Read-Stage5Environment $envFile
 foreach ($required in @('DB_HOST','DB_PORT','DB_NAME','DB_USERNAME','DB_PASSWORD','JWT_SECRET','REDIS_HOST','REDIS_PORT','RATE_LIMIT_KEY_SECRET','STAGE5_MYSQL_CONTAINER','STAGE5_REDIS_CONTAINER')) {
   if (-not $names.ContainsKey($required) -or -not $names[$required]) { throw "Missing environment key: $required" }
 }
@@ -50,13 +81,23 @@ $commit = (& $git -C $repositoryRoot rev-parse HEAD | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $commit -notmatch '^[a-f0-9]{40}$') { throw 'Invalid revision' }
 $output = Join-Path $PSScriptRoot "output/$RunId"
 if (Test-Path -LiteralPath $output) { throw 'Run ID already used; preserve prior evidence' }
-New-Item -ItemType Directory -Path $output -Force | Out-Null
-$archive = Join-Path $output 'source.tar'
+# Both paths use the same local gates, but never stage an archive inside evidence.
+$temporaryRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\','/')
+$temporaryCandidate = [IO.Path]::GetFullPath((Join-Path $temporaryRoot ('volunteerflow-stage5-preflight-' + [Guid]::NewGuid().ToString('N'))))
+if ([IO.Path]::GetDirectoryName($temporaryCandidate) -ne $temporaryRoot -or
+    [IO.Path]::GetFileName($temporaryCandidate) -notmatch '^volunteerflow-stage5-preflight-[a-f0-9]{32}$') { throw 'Invalid local temporary directory' }
+New-Item -ItemType Directory -Path $temporaryCandidate -ErrorAction Stop | Out-Null
+$temporaryDirectory = $temporaryCandidate
+if (((Get-Item -LiteralPath $temporaryDirectory).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Invalid local temporary directory' }
+$archive = Join-Path $temporaryDirectory 'source.tar'
 & $git -C $repositoryRoot archive --format=tar -o $archive HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Git archive failed' }
 # Hash exact archive LF bytes, never checkout CRLF or decoded PowerShell stdout.
-$driverSha256 = (& $python -B (Join-Path $PSScriptRoot 'archive-driver-hash.py') $archive | Out-String).Trim()
+try { $driverSha256 = (& $python -B (Join-Path $PSScriptRoot 'archive-driver-hash.py') $archive | Out-String).Trim() }
+catch { throw 'Committed driver hash failed' }
 if ($LASTEXITCODE -ne 0 -or $driverSha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Committed driver hash failed' }
+if ($LocalPreflightOnly) { $localPreflightPassed = $true; return }
+New-Item -ItemType Directory -Path $output -Force | Out-Null
 $remoteRoot = "/opt/volunteerflow-stage5/$RunId"
 $project = 'vf5' + $RunId.Replace('-', '')
 $target = "$SshUser@$VmHost"
@@ -93,7 +134,7 @@ try {
       if ($LASTEXITCODE -ne 0) { throw 'Evidence download failed' }
       $evidenceDownloadStatus = 'success'
       $remoteStatusPath = Join-Path $output 'run-status.json'
-      $remoteStatus = Get-Content -LiteralPath $remoteStatusPath -Raw | ConvertFrom-Json
+      $remoteStatus = [IO.File]::ReadAllText($remoteStatusPath, [Text.UTF8Encoding]::new($false, $true)) | ConvertFrom-Json
       Move-Item -LiteralPath $remoteStatusPath -Destination (Join-Path $output 'remote-run-status.json')
     } catch { $evidenceDownloadStatus = 'failed' }
     # Keep protected backup and failed-run files for recovery; remove only exact credential paths.
@@ -111,14 +152,20 @@ try {
       $keyRemovalStatus = 'success'
     } catch { $keyRemovalStatus = 'failed' }
   }
-  [ordered]@{runId=$RunId;commit=$commit;remoteExit=$remoteExit;evidenceDownloadStatus=$evidenceDownloadStatus;
+  $statusJson = [ordered]@{runId=$RunId;commit=$commit;remoteExit=$remoteExit;evidenceDownloadStatus=$evidenceDownloadStatus;
     keyRemovalStatus=$keyRemovalStatus;keyRemovalExitCode=$keyRemovalExitCode;secretRemovalStatus=$secretRemovalStatus;remote=$remoteStatus} |
-    ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $output 'run-status.json') -Encoding UTF8
-  if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
-  $names.Clear()
+    ConvertTo-Json -Depth 8
+  [IO.File]::WriteAllText((Join-Path $output 'run-status.json'), $statusJson, [Text.UTF8Encoding]::new($false, $true))
 }
 if ($remoteExit -ne 0) { Write-Output "Stage5 failed; protected run evidence: $output"; exit $remoteExit }
 if ($evidenceDownloadStatus -ne 'success' -or $keyRemovalStatus -ne 'success' -or $secretRemovalStatus -ne 'success' -or
     $null -eq $remoteStatus -or $remoteStatus.primaryStatus -ne 'success' -or $remoteStatus.recoveryStatus -ne 'success' -or
     $remoteStatus.cleanupStatus -ne 'success' -or $remoteStatus.secretScanStatus -ne 'success') { throw 'Stage5 final gates failed' }
 Write-Output "Stage5 evidence downloaded: $output"
+} finally {
+  $names.Clear()
+  if ($archive -and (Test-Path -LiteralPath $archive)) { Remove-Item -LiteralPath $archive -Force }
+  # No recursion: only this invocation's exact archive and now-empty directory are removed.
+  if ($temporaryDirectory -and (Test-Path -LiteralPath $temporaryDirectory)) { Remove-Item -LiteralPath $temporaryDirectory -Force }
+  if ($localPreflightPassed) { Write-Output 'STAGE5_LOCAL_PREFLIGHT_PASS' }
+}
