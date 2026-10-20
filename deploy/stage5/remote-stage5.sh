@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 umask 077
-run_id='' remote_root='' compose_project='' compose_env='' commit='' live=false migration=false
+run_id='' remote_root='' compose_project='' compose_env='' commit='' driver_sha256='' live=false migration=false
 while (($#)); do
   case "$1" in
     --authorize-live-run) live=true; shift ;; --migration-reviewed) migration=true; shift ;;
-    --run-id|--remote-root|--compose-project|--compose-env|--commit)
+    --run-id|--remote-root|--compose-project|--compose-env|--commit|--driver-sha256)
       (($#>=2)) || exit 2
-      case "$1" in --run-id) run_id=$2 ;; --remote-root) remote_root=$2 ;; --compose-project) compose_project=$2 ;; --compose-env) compose_env=$2 ;; --commit) commit=$2 ;; esac
+      case "$1" in --run-id) run_id=$2 ;; --remote-root) remote_root=$2 ;; --compose-project) compose_project=$2 ;; --compose-env) compose_env=$2 ;; --commit) commit=$2 ;; --driver-sha256) driver_sha256=$2 ;; esac
       shift 2 ;;
     *) exit 2 ;;
   esac
@@ -16,15 +16,19 @@ done
 [[ $run_id =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || exit 2
 [[ $remote_root == "/opt/volunteerflow-stage5/$run_id" && $compose_project == "vf5${run_id//-/}" ]] || exit 2
 [[ $compose_env == "$remote_root/stage5.env" && $commit =~ ^[a-f0-9]{40}$ ]] || exit 2
+[[ $driver_sha256 =~ ^[a-f0-9]{64}$ ]] || exit 2
 [[ $(realpath -m "$remote_root") == "$remote_root" && ! -L $remote_root && -f $compose_env ]] || exit 2
 repo="$remote_root/repo" evidence="$remote_root/evidence"
 compose_file="$repo/deploy/stage5/docker-compose.yml"
 mkdir -p "$evidence"
+mkdir -m 700 "$remote_root/private"
 chmod 700 "$remote_root" "$evidence"
 chmod 600 "$compose_env"
 export STAGE5_RUN_COMPACT=${run_id//-/}
 compose() { current_step="compose:$1"; env -i PATH="$PATH" STAGE5_RUN_COMPACT="$STAGE5_RUN_COMPACT" timeout 900 docker compose -p "$compose_project" -f "$compose_file" --env-file "$compose_env" "$@"; }
-driver() { current_step=$1; timeout 600 python3 "$repo/deploy/stage5/acceptance.py" --run-id "$run_id" --root "$remote_root" --env-file "$compose_env" --project "$compose_project" "$@"; }
+source "$repo/deploy/stage5/python-runtime.sh"
+runtime_ready=false
+driver() { current_step=$1; [[ $runtime_ready == true ]] || return 1; stage5_python_driver "$remote_root" "$repo/deploy/stage5/acceptance.py" "$driver_sha256" "$run_id" "$compose_project" "$1"; }
 backup_database() { driver backup; }
 verify_migration_gate() {
   cp "$repo/backend/src/main/resources/db/migration/V10__add_stage5_event_pipeline.sql" "$evidence/V10-review-only.sql"
@@ -57,6 +61,13 @@ finish() {
   [[ $primary == success && $recovery == success && $cleanup == success && $scan == success && $rc == 0 ]] || exit 1
 }
 trap finish EXIT
+((BASH_VERSINFO[0]>4 || (BASH_VERSINFO[0]==4 && BASH_VERSINFO[1]>=4))) || { printf 'Bash 4.4+ required\n' >&2; exit 1; }
+for tool in bash timeout docker mysql mysqldump redis-cli sha256sum realpath tar id; do
+  command -v "$tool" >/dev/null || { printf 'Missing deploy-essential tool: %s\n' "$tool" >&2; exit 1; }
+done
+current_step=python-runtime-preflight
+stage5_python_preflight "$evidence"
+runtime_ready=true
 driver preflight
 compose config --no-interpolate > "$evidence/compose-config.yml"
 backup_database

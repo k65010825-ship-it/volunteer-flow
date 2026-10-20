@@ -22,6 +22,16 @@ class Stage5RunnerContractTest {
   }
 
   @Test
+  void remotePythonRuntimeNeedsNoHostPythonAndFailsClosedOffline() throws Exception {
+    read("test_runtime.py");
+    Process p = new ProcessBuilder("python", "-B", DEPLOY.resolve("test_runtime.py").toString())
+        .redirectErrorStream(true).start();
+    String output = finish(p);
+    assertThat(p.exitValue()).as(output).isZero();
+    assertThat(output).contains("OK").doesNotContain("FAILED");
+  }
+
+  @Test
   void nativeExecutableDiscoverySelectsOneApplicationAndRejectsUnsafeCandidates() throws Exception {
     Path ps = Path.of(System.getenv().getOrDefault("SystemRoot", "C:/Windows"),
         "System32/WindowsPowerShell/v1.0/powershell.exe");

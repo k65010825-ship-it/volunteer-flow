@@ -26,13 +26,38 @@ expected="${topic}:${partition}:${start}:${end}"
 [[ -f $compose_file && -f $env_file ]] || exit 2
 compose() { timeout 60 docker compose -p "$project" -f "$compose_file" --env-file "$env_file" "$@"; }
 scratch=$(mktemp -d)
-trap 'rm -f -- "$scratch/raw" "$scratch/records"; rmdir -- "$scratch"' EXIT
+cidfile="$scratch.container.cid"
+source "$(dirname "${BASH_SOURCE[0]}")/python-runtime.sh"
+replay_cleanup() {
+  rc=$?; trap - EXIT; set +e
+  cleanup_status=success
+  if [[ -f $cidfile && ! -L $cidfile ]]; then
+    cid=$(< "$cidfile")
+    if [[ $cid =~ ^[a-f0-9]{64}$ ]]; then
+      if timeout 15 docker container inspect "$cid" >/dev/null 2>&1; then
+        timeout 20 docker rm -f "$cid" >/dev/null 2>&1 || cleanup_status=failed
+      elif ! timeout 15 docker version --format '{{.Server.Version}}' >/dev/null 2>&1; then cleanup_status=failed; fi
+    else cleanup_status=failed; fi
+  fi
+  rm -f -- "$scratch/raw" "$scratch/records" "$scratch/python-runtime.txt" "$scratch/container.cid"
+  rmdir -- "$scratch" || cleanup_status=failed
+  [[ $cleanup_status != success ]] || rm -f -- "$cidfile"
+  [[ $cleanup_status == success ]] || { printf 'Replay runtime cleanup failed\n' >&2; exit 1; }
+  exit "$rc"
+}
+trap replay_cleanup EXIT
+stage5_python_preflight "$scratch"
+cat "$scratch/python-runtime.txt"
 # No group offsets are reset or committed. Sparse/compacted ranges fail closed.
 compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 \
   --topic "$topic" --partition "$partition" --offset "$start" --max-messages "$((end-start))" \
   --timeout-ms 15000 --consumer-property enable.auto.commit=false \
   --property print.offset=true --property print.key=true --property key.separator=$'\t' > "$scratch/raw"
-python3 - "$scratch/raw" "$scratch/records" "$start" "$end" <<'PY'
+timeout --signal=TERM --kill-after=10 60 docker run --rm -i --pull never --cidfile "$cidfile" \
+  --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
+  --cpus 1 --memory 256m --pids-limit 32 --user "$(id -u):$(id -g)" --log-driver none \
+  --mount "type=bind,src=$scratch,dst=/replay" \
+  "$STAGE5_PYTHON_IMAGE" python -B - /replay/raw /replay/records "$start" "$end" <<'PY'
 import json, pathlib, sys, uuid
 source, dest, start, end = sys.argv[1:]
 rows = pathlib.Path(source).read_text().splitlines()

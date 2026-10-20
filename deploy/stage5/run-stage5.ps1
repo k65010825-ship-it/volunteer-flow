@@ -53,6 +53,9 @@ New-Item -ItemType Directory -Path $output -Force | Out-Null
 $archive = Join-Path $output 'source.tar'
 & $git -C $repositoryRoot archive --format=tar -o $archive HEAD
 if ($LASTEXITCODE -ne 0) { throw 'Git archive failed' }
+# Hash exact archive LF bytes, never checkout CRLF or decoded PowerShell stdout.
+$driverSha256 = (& $python -B (Join-Path $PSScriptRoot 'archive-driver-hash.py') $archive | Out-String).Trim()
+if ($LASTEXITCODE -ne 0 -or $driverSha256 -cnotmatch '^[a-f0-9]{64}$') { throw 'Committed driver hash failed' }
 $remoteRoot = "/opt/volunteerflow-stage5/$RunId"
 $project = 'vf5' + $RunId.Replace('-', '')
 $target = "$SshUser@$VmHost"
@@ -77,7 +80,7 @@ try {
   if ($LASTEXITCODE -ne 0) { throw 'Protected environment upload failed' }
   $migrationFlag = ''
   if ($MigrationReviewed) { $migrationFlag = '--migration-reviewed' }
-  $command = "umask 077; mkdir '$remoteRoot/repo' && tar -xf '$remoteRoot/source.tar' -C '$remoteRoot/repo' && bash '$remoteRoot/repo/deploy/stage5/remote-stage5.sh' --run-id '$RunId' --remote-root '$remoteRoot' --compose-project '$project' --compose-env '$remoteRoot/stage5.env' --commit '$commit' --authorize-live-run $migrationFlag"
+  $command = "umask 077; mkdir '$remoteRoot/repo' && tar -xf '$remoteRoot/source.tar' -C '$remoteRoot/repo' && bash '$remoteRoot/repo/deploy/stage5/remote-stage5.sh' --run-id '$RunId' --remote-root '$remoteRoot' --compose-project '$project' --compose-env '$remoteRoot/stage5.env' --commit '$commit' --driver-sha256 '$driverSha256' --authorize-live-run $migrationFlag"
   & $ssh @sshArgs $target $command
   $remoteExit = $LASTEXITCODE
 } catch {
@@ -95,7 +98,7 @@ try {
     # Keep protected backup and failed-run files for recovery; remove only exact credential paths.
     try {
       if ($null -ne $remoteStatus -and $remoteStatus.cleanupStatus -eq 'success') {
-        & $ssh @sshArgs $target "test '$remoteRoot' = '/opt/volunteerflow-stage5/$RunId' && rm -f -- '$remoteRoot/stage5.env' '$remoteRoot/mysql-private.cnf' '$remoteRoot/manifest-private.json'"
+        & $ssh @sshArgs $target "test '$remoteRoot' = '/opt/volunteerflow-stage5/$RunId' && rm -f -- '$remoteRoot/stage5.env' '$remoteRoot/private/mysql-private.cnf' '$remoteRoot/private/manifest-private.json'"
         if ($LASTEXITCODE -ne 0) { throw 'Exact credential cleanup failed' }
         $secretRemovalStatus = 'success'
       } else { $secretRemovalStatus = 'retained-protected-for-recovery' }

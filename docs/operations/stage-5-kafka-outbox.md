@@ -7,7 +7,10 @@
 
 - 分支 `feat/stage-5`，Java 17，全部修改已提交且工作树干净；本地需要 Git、Windows PowerShell、OpenSSH 与 Python 3.8+。
 - 本地工具使用共享的 `deploy/lib/native-tools.psm1` 解析为单一绝对路径：显式提供且验证的路径优先；否则优先 Windows 自带 OpenSSH、标准 Program Files Git，再按 PATH 顺序选择兼容程序。Git 要求 2+，Python 要求 3.8+；OpenSSH 检查二进制版本元数据（不等同签名验证）。不拼接多个 `ApplicationInfo.Source`，拒绝脚本 shim、WindowsApps 别名、非 Application 候选、缺失文件及不兼容版本，版本探测有 10 秒上限。
-- Linux VM 需要 Bash、GNU timeout、Python 3.8+、Docker Engine / Compose v2、MySQL 8 的 `mysql` / `mysqldump` 客户端、`redis-cli`。不需要额外 Python 包。
+- Linux VM 需要 Bash 4.4+、GNU coreutils（timeout/sha256sum/realpath 等）、tar、Docker Engine / Compose v2、MySQL 8 的 `mysql` / `mysqldump` 客户端、`redis-cli`。不要求、不安装宿主 Python 或额外软件包。
+- Python 驱动固定使用官方 `python:3.13.12-slim-bookworm` 对应不可变 index digest `sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6`（2026-10-20 从 Docker 官方 registry HEAD 验证）。先检查 Docker/Compose，再检查该 digest 的本地镜像；缺失时最多 180 秒拉取，失败明确停止，可由获批运维预先导入完全相同的 digest，不能临时换标签。
+- 每次 Python 操作 deadline 为 600 秒（TERM/KILL 宽限 10 秒，精确容器检查/清理另有 15/20 秒上限），宿主工具的 1..300 秒期限也会裁剪到本次操作剩余预算。独立容器 `--network none`、只读根文件系统、drop ALL capabilities、no-new-privileges、1 CPU / 768 MiB / 64 PID。显式使用当前操作者 UID/GID 与 umask 077，镜像 ID/RepoDigests/UID/GID 记入 `python-runtime.txt`、驱动哈希记入 `acceptance.sha256`；每次运行记录自己的精确容器清理状态。容器 ID 回执保存在挂载目录之外，只用于精确清理本次容器。没有 Docker socket、宿主网络、特权模式或全仓库挂载。
+- 恰好 4 个挂载：已核对 SHA-256 的 `acceptance.py`（只读）、本轮 dotenv（只读）、本轮 private（含私有桥）与 evidence。Windows runner 对 `git archive HEAD` 内唯一 driver 文件的原始 LF 字节计算哈希，每次远端启动前复核。Python 容器没有 Docker/MySQL/Redis 客户端；通过私有文件握手向 Bash 白名单请求固定动作，Bash 校验本轮 Compose scope、工具/子命令/参数、Redis 前缀与 1..300 秒期限，不执行任意 shell、不 source dotenv，并清除继承的外部 Compose 环境。SQL/HTTP 身份验证只进 stdin，Redis 密码只由 redis-cli 继承环境；请求、响应、manifest 和备份不进入 evidence、argv 或镜像层。无需往宿主或镜像安装客户端。
 - VM 留出至少 5 GiB 磁盘空间与足够运行两个 640 MiB 后端及 1 GiB Kafka 的内存。单节点 KRaft 只是教学/验收，不是生产 HA。
 - 既有 MySQL、Redis 从 VM 客户端和后端容器均可访问。Compose 不声明、不创建、不重建、不停止这些服务；只读取其 ID、名称、镜像与运行状态。
 - 预先安排无业务写入、无其他应用实例/作业运行的维护窗口。工具不会停止用户的其他应用。指纹覆盖整库，其他写入也会让验收失败，不能把失败归因成“可忽略噪声”。
@@ -46,7 +49,7 @@ Stage 5 复用已审计的 Stage 4D 一次性 Ed25519 密钥安装脚本；移�
 ```
 
 它在任何本轮容器启动前检查外部服务、生成保护的整库备份和数据指纹，然后复制 V10 候选 SQL 及 SHA-256 到 evidence 并失败关闭。此轮不是通过的验收。
-备份为远端 `/opt/volunteerflow-stage5/<runId>/backup-private.sql`，目录 `700`、文件 `600`；备份包含敏感业务数据，不进入 evidence、不自动下载、不提交仓库。
+备份为远端 `/opt/volunteerflow-stage5/<runId>/private/backup-private.sql`，目录 `700`、文件 `600`；备份包含敏感业务数据，不进入 evidence、不自动下载、不提交仓库。客户端配置与 token manifest 也只位于本轮 `private/`。
 `backup.sha256` 是原始备份的哈希，`fingerprint-before.sha256` 是排序、逐行、无结构/时间注释的数据转储哈希。
 需按既有安全备份策略另行验证恢复能力；生成文件和哈希并不等于完成恢复演练。
 
@@ -123,6 +126,8 @@ dry-run 不连接 Docker/Kafka；执行时改成 `--confirm '<TOPIC>:0:12:15'`�
 自动 finish 会尝试恢复本轮 Kafka、停止本轮后端、清理精确夹具，再移除本轮 Compose 栈；如果停止后端失败，禁止删除夹具数据。
 数据库清理或指纹校验失败时不删除本轮 Kafka 卷，保留现场用于恢复。`primaryExitCode` 保留原始失败码，恢复/清理失败也会使最终退出非零。
 失败时保护的环境、manifest、备份可能仍需保留，目录不可当成“清理全部完成”。再次登录应申请新的临时密钥，先检查失败 step、status、当前容器和精确 runId，不启动其他轮次的清理。
+
+历史失败轮次不会自动重用或递归删除。例如缺少宿主 Python 而停在 preflight 的旧版轮次，可能只有旧路径下的受保护 dotenv/source 文件，并没有新版 `private/` 或数据库备份。后续必须先获批、按该 runId 只读盘点，再单独审核精确文件的保留/清理；本轮静态修复不登录或清理这些目录。
 如果清理报告未记录行，先保留所有数据和原始/创建 ID 清单并单独审查来源；不要调用检查点命令自动把未知行认领为本轮所有，也不要改成按组织批量删除来通过指纹校验。
 确认本轮后端已停止后，可按远端 driver 的固定 `cleanup` / `assert-clean` 动作恢复，并使用精确 `-p vf5<runId>` / 本轮 Compose/env 路径移除该项目；不得使用 system prune、全局 stop/down、`FLUSHALL`、`TRUNCATE`、模糊数据库前缀删除或递归删工作区。
 若原数据指纹不一致，先保存证据并调查，不自动恢复/覆盖用户数据。备份恢复是新的高风险授权事项。
@@ -138,7 +143,7 @@ cd backend
 .\mvnw.cmd test
 ```
 
-仓库根目录可执行 `python -B deploy/stage5/test_acceptance.py`、Bash `-n`、PowerShell AST parse、`git diff --check`。
+仓库根目录可执行 `python -B deploy/stage5/test_acceptance.py`、`python -B deploy/stage5/test_runtime.py`、Bash `-n`、PowerShell AST parse、`git diff --check`。本地离线测试使用 Windows Python，不表示 VM 必须安装 Python；Docker 只被进程边界 double 替代，不连接 daemon。
 `powershell -NoProfile -NonInteractive -File deploy/stage5/test-native-tools.ps1` 可离线验证同名 Git/Python 多候选、优先顺序及安全拒绝，不启动 bootstrap 或连接 VM。
 有本地 Compose 解析器时只运行 `docker compose -f deploy/stage5/docker-compose.yml config --no-interpolate`。
 没有 Docker binary 时只能报告“未执行 Compose 官方解析/运行”，不能把 YAML 结构契约等同于 Docker runtime 验证。

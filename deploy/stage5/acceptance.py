@@ -85,7 +85,8 @@ class Driver:
         self.env = read_env(args.env_file)
         self.evidence = self.root / "evidence"
         require(self.evidence.is_dir() and not self.evidence.is_symlink(), "Missing protected evidence directory")
-        self.state_file = self.root / "manifest-private.json"
+        self.state_file = self.root / "private/manifest-private.json"
+        self.bridge = Path(args.bridge) if args.bridge else None
         self.state = json.loads(self.state_file.read_text()) if self.state_file.exists() else {}
         self.child_env = {k: v for k, v in os.environ.items() if k in ("PATH", "HOME", "LANG", "LC_ALL")}
         self.child_env["STAGE5_RUN_COMPACT"] = args.run_id.replace("-", "")
@@ -93,11 +94,30 @@ class Driver:
                         str(self.root / "repo/deploy/stage5/docker-compose.yml"), "--env-file", args.env_file]
         config = "[client]\n" + "".join(k + '=\"' + self.env[v] + '\"\n' for k, v in
                    (("host", "DB_HOST"), ("port", "DB_PORT"), ("user", "DB_USERNAME"), ("password", "DB_PASSWORD")))
-        self.cnf = self.root / "mysql-private.cnf"
+        self.cnf = self.root / "private/mysql-private.cnf"
         self.cnf.write_text(config)
         self.cnf.chmod(0o600)
 
     def execute(self, command, data=None, timeout=60, extra_env=None):
+        if getattr(self, 'bridge', None) is not None:
+            require(1 <= timeout <= 300 and (extra_env is None or set(extra_env) <= {'REDISCLI_AUTH'}),
+                    'Invalid bridge request')
+            require(not (self.bridge / 'request.ready').exists() and
+                    not (self.bridge / 'response.ready').exists(), 'Bridge request overlap')
+            for name, content in {'argv': ('\0'.join(command) + '\0').encode(), 'stdin': data or b'',
+                    'auth': (extra_env or {}).get('REDISCLI_AUTH', '').encode(),
+                    'deadline': str(timeout).encode()}.items():
+                (self.bridge / name).write_bytes(content)
+                (self.bridge / name).chmod(0o600)
+            (self.bridge / 'request.ready').write_text('ready\n')
+            deadline = time.monotonic() + timeout + 10
+            while not (self.bridge / 'response.ready').exists():
+                require(time.monotonic() < deadline, 'Host bridge deadline exceeded')
+                time.sleep(0.05)
+            code = int((self.bridge / 'response.ready').read_text())
+            (self.bridge / 'response.ready').unlink()
+            require(code == 0, 'Host bridge command failed')
+            return (self.bridge / 'stdout').read_text(encoding='utf-8')
         result = subprocess.run(command, input=data, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 env={**self.child_env, **(extra_env or {})}, timeout=timeout, check=False)
         require(result.returncode == 0, "External command failed (details retained only by operator)")
@@ -182,7 +202,7 @@ class Driver:
         require(self.redis('PING').strip() == 'PONG', 'Existing Redis unavailable')
         require(not self.redis('--scan', '--pattern', 'volunteerflow:' + self.project + ':*').strip(), 'Redis namespace reused')
         containers = self.identities()
-        disk = shutil.disk_usage(self.root)
+        disk = shutil.disk_usage(self.root / 'private')
         require(disk.free >= 5 * 1024**3, 'Insufficient backup/build disk space')
         self.state["containers"] = containers
         self.save()
@@ -203,8 +223,8 @@ class Driver:
             "--skip-comments", "--no-tablespaces", "--set-gtid-purged=OFF", "--hex-blob",
             "--routines", "--triggers", self.env["DB_NAME"]], timeout=300)
         require(len(backup) > 100, "Empty database backup")
-        (self.root / "backup-private.sql").write_text(backup)
-        (self.root / "backup-private.sql").chmod(0o600)
+        (self.root / "private/backup-private.sql").write_text(backup)
+        (self.root / "private/backup-private.sql").chmod(0o600)
         (self.evidence / "backup.sha256").write_text(hashlib.sha256(backup.encode()).hexdigest() + '\n')
         fingerprint = self.fingerprint()
         self.state["fingerprint"] = fingerprint
@@ -488,11 +508,13 @@ class Driver:
 
 
 def main():
+    os.umask(0o077)
     parser = argparse.ArgumentParser()
     parser.add_argument('--run-id', required=True)
     parser.add_argument('--root', required=True)
     parser.add_argument('--env-file', required=True)
     parser.add_argument('--project', required=True)
+    parser.add_argument('--bridge', default='')
     parser.add_argument('action', choices=['preflight','backup','migration-check','topics','seed','normal','outage',
         'recover','duplicate','reconcile','metrics-before','metrics-after','cleanup','assert-clean','scan'])
     args = parser.parse_args()
