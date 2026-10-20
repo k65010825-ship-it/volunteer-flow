@@ -36,7 +36,9 @@ class Stage5RunnerContractTest {
     String remote = read("remote-stage5.sh");
     assertThat(local).contains("AuthorizeLiveRun", "MigrationReviewed",
         "feat/stage-5", "--porcelain", "archive", "evidenceDownloadStatus", "keyRemovalStatus",
-        "ConnectTimeout=10", "BatchMode=yes", "remove-temporary-ssh.ps1")
+        "ConnectTimeout=10", "BatchMode=yes", "remove-temporary-key.py",
+        "$keyRemovalExitCode = $LASTEXITCODE", "if ($keyRemovalExitCode -ne 0)",
+        "keyRemovalExitCode=$keyRemovalExitCode")
         .doesNotContain("StrictHostKeyChecking=no", "Invoke-Expression");
     assertThat(remote).contains("set -Eeuo pipefail", "umask 077", "--authorize-live-run",
         "--migration-reviewed",

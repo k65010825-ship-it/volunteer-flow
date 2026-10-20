@@ -39,6 +39,7 @@ if ($names['SPRING_FLYWAY_ENABLED'] -ne 'false' -or $names['STAGE5_MAINTENANCE_A
 $ssh = (Get-Command ssh -CommandType Application -ErrorAction Stop).Source
 $scp = (Get-Command scp -CommandType Application -ErrorAction Stop).Source
 $git = (Get-Command git -CommandType Application -ErrorAction Stop).Source
+$python = (Get-Command python -CommandType Application -ErrorAction Stop).Source
 $branch = (& $git -C $repositoryRoot branch --show-current | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $branch -ne 'feat/stage-5') { throw 'Expected feat/stage-5 branch' }
 $dirty = (& $git -C $repositoryRoot status --porcelain --untracked-files=all | Out-String).Trim()
@@ -61,6 +62,7 @@ $created = $false
 $remoteExit = 1
 $evidenceDownloadStatus = 'not-attempted'
 $keyRemovalStatus = 'not-attempted'
+$keyRemovalExitCode = $null
 $secretRemovalStatus = 'not-attempted'
 $remoteStatus = $null
 try {
@@ -98,12 +100,14 @@ try {
       } else { $secretRemovalStatus = 'retained-protected-for-recovery' }
     } catch { $secretRemovalStatus = 'failed' }
     try {
-      & (Join-Path $PSScriptRoot '../stage4d/remove-temporary-ssh.ps1') -VmHost $VmHost -SshPort $SshPort -SshUser $SshUser -IdentityFile $identity -SshCommand $ssh | Out-Null
+      & $python -B (Join-Path $PSScriptRoot 'remove-temporary-key.py') --host $VmHost --user $SshUser --port $SshPort --identity $identity --status-file (Join-Path $output 'key-removal-status.json') --ssh $ssh
+      $keyRemovalExitCode = $LASTEXITCODE
+      if ($keyRemovalExitCode -ne 0) { throw 'Bounded temporary-key removal failed' }
       $keyRemovalStatus = 'success'
     } catch { $keyRemovalStatus = 'failed' }
   }
   [ordered]@{runId=$RunId;commit=$commit;remoteExit=$remoteExit;evidenceDownloadStatus=$evidenceDownloadStatus;
-    keyRemovalStatus=$keyRemovalStatus;secretRemovalStatus=$secretRemovalStatus;remote=$remoteStatus} |
+    keyRemovalStatus=$keyRemovalStatus;keyRemovalExitCode=$keyRemovalExitCode;secretRemovalStatus=$secretRemovalStatus;remote=$remoteStatus} |
     ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $output 'run-status.json') -Encoding UTF8
   if (Test-Path -LiteralPath $archive) { Remove-Item -LiteralPath $archive -Force }
   $names.Clear()

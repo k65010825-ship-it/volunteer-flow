@@ -30,8 +30,9 @@ class Stage5DeploymentContractTest {
         .containsEntry("KAFKA_PROCESS_ROLES", "broker,controller")
         .containsEntry("KAFKA_CONTROLLER_QUORUM_VOTERS", "1@kafka:9093")
         .containsEntry("KAFKA_ADVERTISED_LISTENERS", "PLAINTEXT://kafka:9092")
-        .containsEntry("KAFKA_HEAP_OPTS", "-Xms256m -Xmx512m");
-    assertThat(kafka).containsKey("volumes");
+        .containsEntry("KAFKA_HEAP_OPTS", "-Xms256m -Xmx512m")
+        .containsEntry("KAFKA_LOG_DIRS", "/var/lib/kafka/data");
+    assertThat(kafka.get("volumes")).isEqualTo(java.util.List.of("kafka-data:/var/lib/kafka/data"));
     for (String name : new String[] {"backend-a", "backend-b"}) {
       Map<String, Object> backend = map(services.get(name));
       Map<String, Object> env = map(backend.get("environment"));

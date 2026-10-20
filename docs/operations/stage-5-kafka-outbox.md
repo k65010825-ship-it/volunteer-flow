@@ -5,7 +5,7 @@
 
 ## 范围与前置条件
 
-- 分支 `feat/stage-5`，Java 17，全部修改已提交且工作树干净；本地需要 Git、Windows PowerShell、OpenSSH。
+- 分支 `feat/stage-5`，Java 17，全部修改已提交且工作树干净；本地需要 Git、Windows PowerShell、OpenSSH 与 Python 3.8+。
 - Linux VM 需要 Bash、GNU timeout、Python 3.8+、Docker Engine / Compose v2、MySQL 8 的 `mysql` / `mysqldump` 客户端、`redis-cli`。不需要额外 Python 包。
 - VM 留出至少 5 GiB 磁盘空间与足够运行两个 640 MiB 后端及 1 GiB Kafka 的内存。单节点 KRaft 只是教学/验收，不是生产 HA。
 - 既有 MySQL、Redis 从 VM 客户端和后端容器均可访问。Compose 不声明、不创建、不重建、不停止这些服务；只读取其 ID、名称、镜像与运行状态。
@@ -15,6 +15,7 @@
 - 原库不能有未来 24 小时内到期的已发布活动/待处理递补邀请；否则现有自动作业会改变历史数据，启动前门禁直接拒绝。不要为通过门禁改动旧业务记录，应单独审核运行环境或使用获批的隔离恢复副本。
 
 Kafka 仅通过本轮 Compose 网络访问，端口不映射到宿主机。两个后端也不公开端口；验收驱动通过 `docker compose exec` 在各后端容器内请求 `localhost:8080`。
+KRaft 日志目录与卷挂载统一为镜像准备的 `/var/lib/kafka/data`；静态契约固定检查这个路径。新卷实际格式化/权限仍需 Docker-capable 主机上的独立 live 验证。
 后端不依赖 Kafka 容器健康才启动；readiness 只包含 `readinessState,db`，事件链路退化单独通过指标/health 观察。
 
 ## 1. 配置与临时密钥
@@ -24,14 +25,14 @@ Kafka 仅通过本轮 Compose 网络访问，端口不映射到宿主机。两�
 值采用严格的未引用 dotenv 子集：每行一个 `KEY=value`，不允许重复键、未知键、空必填项、空白、引号、反斜杠、`$`、`#`。密码若含这些字符，应走单独审核的配置适配，不应猜测转义或 `source` 环境文件。
 `JWT_SECRET` 使用现有应用要求的标准 Base64 密钥；`RATE_LIMIT_KEY_SECRET` 使用足够强的随机值。
 
-Stage 5 复用已审计的 Stage 4D 一次性 Ed25519 密钥安装/精确移除脚本：
+Stage 5 复用已审计的 Stage 4D 一次性 Ed25519 密钥安装脚本；移除由本轮有界 helper 完成：
 
 ```powershell
 .\deploy\stage4d\bootstrap-temporary-ssh.ps1 -VmHost '<VM_HOST>' -SshUser root
 ```
 
 使用输出的 `IdentityFile`，不要使用个人长期密钥。SSH host key 必须事先经可信渠道核实；不关闭 host-key 校验，不把 SSH 密码放入命令或环境文件。
-本地预检失败时不会连接 VM，也不会自动移除密钥；需要显式调用 `deploy/stage4d/remove-temporary-ssh.ps1` 精确移除这一条公钥。
+本地预检失败时不会连接 VM，也不会自动移除密钥；需要显式调用 `deploy/stage5/remove-temporary-key.py`，提供 `--host/--user/--port/--identity/--status-file`（状态文件的父目录须已存在）。该 helper 只移除这一条公钥，SSH 使用 connect timeout 10 秒、server-alive 15 秒/3 次及整体 60 秒 deadline。超时返回 124、保留本地密钥并写入失败状态；其他非零码也不能记作成功。
 
 ## 2. 备份与独立 V10 审核门禁
 
@@ -78,6 +79,10 @@ Kafka topic / group、Redis `APP_ENV` 命名空间、数据库夹具名称/ID �
 | metrics / offsets | before/after 指标、客户端 lag meter、消费组 offset、精确 Outbox/通知/consumed/岗位数据快照 |
 | finish | 恢复本轮 Kafka；停本轮后端成功后才清理夹具；精确清理本轮 Redis 前缀；验证整库指纹及原服务身份；仅 down 本轮 Compose 网络/容器/卷；秘密扫描；证据下载；精确移除临时 SSH 公钥 |
 
+seed 在任何账户/夹具写入前检查全部清理表的组织范围（包括无物理外键的孤立行）、所有计划 ID 与账户身份，并保存每个相关表的原始主键清单。主键预检最多每表 100000 条，本轮记录最多每表 1000 条，超界直接拒绝。
+私有 manifest 持久化 `original_keys/created`：seed 异常（含 HTTP 已提交但响应丢失）也会检查点记录已创建的精确 ID；历史 refresh-session/consumed 孤立记录即使引用后来新建的账户/事件也不会被认领。
+清理前先核对所有范围与记录清单，出现任何未记录行或身份歧义则在执行任何删除前整轮拒绝。删除语句同时约束记录的 ID 与明确身份，不再只按整个 `organization_id` 范围或用户名连接批量删除。
+
 `verify-stage5.sql` 是额外的只读诊断模板，变量必须从本轮 manifest 选取；未设置变量时不查询任意事件。
 驱动将 API token 和 MySQL client 配置保存在 evidence 外的受保护文件中，通过 stdin 传 SQL / HTTP credentials，不放进进程参数或日志。失败输出只包含安全类别，不包含原始 SQL/响应/密钥。
 等待、HTTP、MySQL、Kafka、构建均有超时；超时为失败，不输出成功状态。
@@ -88,6 +93,7 @@ Kafka topic / group、Redis `APP_ENV` 命名空间、数据库夹具名称/ID �
 
 - `remoteExit=0`；远端 `primaryStatus/recoveryStatus/cleanupStatus/secretScanStatus` 均 `success`。
 - 本地 `evidenceDownloadStatus/keyRemovalStatus/secretRemovalStatus` 均 `success`。
+- `key-removal-status.json` 为成功且 `keyRemovalExitCode=0`。超时/失败不阻塞本地最终状态文件写入，也不能被其他成功门禁覆盖。
 - `database-normal/recover/duplicate.json` 对目标事件终态三元组均为 `[1,1,1]`；`database-outage.json` 为 `[0,0,0]`，同时有已提交的报名/审计及 retry 事实。
 - reconciliation 第一次/第二次已处理且有效与总 offer 均为一；对应数据库快照和前后指标存在。
 - lag / offsets、故障与重复计数、backlog / DLT / reconciliation 指标全部可读取；数值必须来自该轮采样。`metrics-*.json` 保留 `perInstance` 原始值，只在 `counterSums` 汇总进程计数器；两个实例的 gauge 代表同一 DB，不能相加当作不同积压。
@@ -116,6 +122,7 @@ dry-run 不连接 Docker/Kafka；执行时改成 `--confirm '<TOPIC>:0:12:15'`�
 自动 finish 会尝试恢复本轮 Kafka、停止本轮后端、清理精确夹具，再移除本轮 Compose 栈；如果停止后端失败，禁止删除夹具数据。
 数据库清理或指纹校验失败时不删除本轮 Kafka 卷，保留现场用于恢复。`primaryExitCode` 保留原始失败码，恢复/清理失败也会使最终退出非零。
 失败时保护的环境、manifest、备份可能仍需保留，目录不可当成“清理全部完成”。再次登录应申请新的临时密钥，先检查失败 step、status、当前容器和精确 runId，不启动其他轮次的清理。
+如果清理报告未记录行，先保留所有数据和原始/创建 ID 清单并单独审查来源；不要调用检查点命令自动把未知行认领为本轮所有，也不要改成按组织批量删除来通过指纹校验。
 确认本轮后端已停止后，可按远端 driver 的固定 `cleanup` / `assert-clean` 动作恢复，并使用精确 `-p vf5<runId>` / 本轮 Compose/env 路径移除该项目；不得使用 system prune、全局 stop/down、`FLUSHALL`、`TRUNCATE`、模糊数据库前缀删除或递归删工作区。
 若原数据指纹不一致，先保存证据并调查，不自动恢复/覆盖用户数据。备份恢复是新的高风险授权事项。
 

@@ -33,6 +33,14 @@ METRICS = ("outbox.pending.count", "outbox.dead.count", "outbox.oldest.pending.a
            "outbox.publish.success", "outbox.publish.failure", "kafka.consumer.success",
            "kafka.consumer.duplicate", "kafka.consumer.dlt", "promotion.reconcile.pending",
            "promotion.reconcile.success", "promotion.reconcile.failure")
+# Closed, child-first cleanup inventory. Every scope is checked before any creation.
+ORG_TABLE_KEYS = {
+    'promotion_reconcile_task': 'position_id', 'outbox_event': 'id', 'promotion_offer': 'id',
+    'notification': 'id', 'registration_answer': 'id', 'registration_cycle': 'id',
+    'registration': 'id', 'activity_position': 'id', 'activity': 'id',
+    'organization_member': 'id', 'rbac_role_permission': 'id', 'rbac_role': 'id', 'audit_log': 'id'}
+TABLE_KEYS = {**ORG_TABLE_KEYS, 'organization': 'id', 'app_user': 'id',
+              'refresh_session': 'id', 'consumed_event': 'id'}
 
 
 def require(condition, message):
@@ -234,10 +242,28 @@ class Driver:
         names = ['s5-' + self.run_id + '-' + str(i) for i in range(3)]
         for name in names:
             require(self.count("SELECT COUNT(*) FROM app_user WHERE username='" + name + "' OR student_number='" + name + "'") == 0, "Fixture username collision")
+        for table in ORG_TABLE_KEYS:
+            require(self.count(f"SELECT COUNT(*) FROM `{table}` WHERE organization_id={base}") == 0,
+                    'Historical rows in cleanup scope')
+        original = {}
+        for table, key in TABLE_KEYS.items():
+            rows = self.sql(f"SELECT {key} FROM `{table}` ORDER BY {key} LIMIT 100001").splitlines()
+            require(len(rows) <= 100000, 'Original cleanup key inventory exceeds bound')
+            original[table] = [int(value) for value in rows]
         self.state.update({"org": base, "activity": base+1, "role": base+2,
                            "positions": [base+3, base+4, base+5], "users": [],
-                           "names": names})
+                           "names": names, "scope_preflight": True, "original_keys": original,
+                           "created": {table: [] for table in TABLE_KEYS}})
         self.save()  # persist planned exact names before the first account request
+        try:
+            self.seed_planned()
+        finally:
+            # A lost HTTP response can follow an already committed account/session.
+            # Recover only the names proven absent by this persisted pre-seed receipt.
+            self.checkpoint_created()
+
+    def seed_planned(self):
+        base = self.state['org']
         for index, name in enumerate(self.state["names"]):
             token = self.api('/api/v1/auth/register', {"username": name, "password": secrets.token_urlsafe(28),
                 "realName": "Stage5 isolated member", "studentNumber": name, "contact": "stage5-only"})['data']['accessToken']
@@ -272,6 +298,7 @@ class Driver:
                 'Registration audit must commit')
         self.state[str(index)] = {"event": event, "registration": int(result['registrationId']), "cycle": int(result['cycleId']), "status": result['status']}
         self.save()
+        self.checkpoint_created()
         return event
 
     def terminal(self, index):
@@ -328,6 +355,10 @@ class Driver:
         self.sql(f"UPDATE promotion_reconcile_task SET request_version=request_version+1,status='PENDING',next_run_at=NOW() WHERE position_id={position} AND organization_id={org}")
         self.wait(lambda: self.count(f"SELECT COUNT(*) FROM promotion_reconcile_task WHERE position_id={position} AND request_version=processed_version") == 1, 'Second reconciliation incomplete')
         require(self.count(offer_query) == 1 and self.count(f"SELECT COUNT(*) FROM promotion_offer WHERE position_id={position}") == 1, 'Reconciliation duplicated offer')
+        self.wait(lambda: self.count(f"SELECT COUNT(*) FROM outbox_event o LEFT JOIN consumed_event c "
+            f"ON c.event_id=o.event_id AND c.consumer_name='volunteerflow-notification-v1' "
+            f"WHERE o.organization_id={org} AND (o.status<>'PUBLISHED' OR c.id IS NULL)") == 0,
+            'Reconciliation events not fully drained')
         self.evidence_json('reconciliation.json', {'positionId': position, 'activeOffers': 1, 'totalOffers': 1, 'secondRunProcessed': True})
         self.snapshot('reconcile', 2)
 
@@ -367,6 +398,7 @@ class Driver:
         self.evidence_json('metrics-lag-' + phase + '.json', {name: self.metric_samples(name) for name in lag_names})
 
     def snapshot(self, phase, index):
+        self.checkpoint_created()
         event = self.state[str(index)]['event']
         rows = self.sql(f"SELECT event_id,status,retry_count,COALESCE(published_partition,-1),COALESCE(published_offset,-1) FROM outbox_event WHERE event_id='{event}'")
         self.evidence_json('database-' + phase + '.json', {'eventId': event, 'outbox': rows, 'terminalCounts': self.terminal(index),
@@ -376,25 +408,62 @@ class Driver:
                 '--bootstrap-server','kafka:9092','--group',self.project+'-notification','--describe'], timeout=30)
             (self.evidence / ('offsets-' + phase + '.txt')).write_text(text)
 
-    def cleanup(self):
-        # Backends must already be quiescent; exact run-derived org/name/id predicates only.
-        if 'org' not in self.state:
-            return
+    def cleanup_rows(self):
+        """Read current candidate identities; never infer ownership from organization alone."""
         org = int(self.state['org'])
         name = 's5-' + self.run_id
         require(self.count(f"SELECT COUNT(*) FROM organization WHERE id={org} AND name='{name}'") in (0,1), 'Ambiguous fixture')
         require(self.count(f"SELECT COUNT(*) FROM organization WHERE id={org} AND name<>'{name}'") == 0, 'Fixture ID collision')
-        statements = ['START TRANSACTION',
-            f"DELETE c FROM consumed_event c JOIN outbox_event o ON o.event_id=c.event_id WHERE o.organization_id={org}"]
-        for table in ('promotion_reconcile_task','outbox_event','promotion_offer','notification','registration_answer',
-                      'registration_cycle','registration','activity_position','activity','organization_member',
-                      'rbac_role_permission','rbac_role','audit_log'):
-            statements.append(f"DELETE FROM `{table}` WHERE organization_id={org}")
-        statements.append(f"DELETE FROM organization WHERE id={org} AND name='{name}'")
         for username in self.state['names']:
             require(re.fullmatch('s5-' + re.escape(self.run_id) + '-[012]', username), 'Unsafe cleanup username')
-            statements += [f"DELETE s FROM refresh_session s JOIN app_user u ON u.id=s.user_id WHERE u.username='{username}'",
-                           f"DELETE FROM app_user WHERE username='{username}' AND student_number='{username}'"]
+        names = ','.join("'" + value + "'" for value in self.state['names'])
+        require(names, 'Missing exact account ownership names')
+        predicates = {table: f'organization_id={org}' for table in ORG_TABLE_KEYS}
+        predicates['organization'] = f"id={org} AND name='{name}'"
+        predicates['app_user'] = f'username IN ({names}) AND student_number=username'
+        rows = {}
+        for table, predicate in predicates.items():
+            values = self.sql(f'SELECT {TABLE_KEYS[table]} FROM `{table}` WHERE {predicate} ORDER BY {TABLE_KEYS[table]} LIMIT 1001').splitlines()
+            require(len(values) <= 1000, 'Run cleanup key inventory exceeds bound')
+            rows[table] = sorted(int(value) for value in values)
+            require(not set(rows[table]) & set(self.state['original_keys'][table]), 'Original cleanup rows cannot be owned')
+        require(self.count(f'SELECT COUNT(*) FROM app_user WHERE username IN ({names}) OR student_number IN ({names})') == len(rows['app_user']),
+                'Ambiguous account cleanup identity')
+        users = ','.join(str(value) for value in rows['app_user']) or 'NULL'
+        outbox = ','.join(str(value) for value in rows['outbox_event']) or 'NULL'
+        events = self.sql(f'SELECT event_id FROM outbox_event WHERE id IN ({outbox}) AND organization_id={org}').splitlines()
+        events = [str(uuid.UUID(value)) for value in events]
+        event_sql = ','.join("'" + value + "'" for value in events) or 'NULL'
+        predicates['refresh_session'] = f'user_id IN ({users})'
+        predicates['consumed_event'] = f"consumer_name='volunteerflow-notification-v1' AND event_id IN ({event_sql})"
+        for table in ('refresh_session','consumed_event'):
+            values = self.sql(f'SELECT id FROM {table} WHERE {predicates[table]} ORDER BY id LIMIT 1001').splitlines()
+            require(len(values) <= 1000, 'Run cleanup key inventory exceeds bound')
+            # Historical orphan session/consumed keys are never claimed, even if they
+            # reference a later-created account/event. This baseline predates all HTTP.
+            rows[table] = sorted(set(int(value) for value in values) - set(self.state['original_keys'][table]))
+        return rows, predicates
+
+    def checkpoint_created(self):
+        if self.state.get('scope_preflight') is not True:
+            return
+        rows, _ = self.cleanup_rows()
+        for table in TABLE_KEYS:
+            require(set(self.state['created'][table]) <= set(rows[table]), 'Recorded cleanup rows unexpectedly disappeared')
+        self.state['created'] = rows
+        self.save()
+
+    def cleanup(self):
+        # No preflight receipt means seed never acquired any ownership; do nothing.
+        if self.state.get('scope_preflight') is not True:
+            return
+        rows, predicates = self.cleanup_rows()
+        require(rows == self.state['created'], 'Unrecorded cleanup rows; preserve all rows for review')
+        statements = ['START TRANSACTION']
+        for table in ('consumed_event', *ORG_TABLE_KEYS, 'organization', 'refresh_session', 'app_user'):
+            if rows[table]:
+                ids = ','.join(str(value) for value in rows[table])
+                statements.append(f'DELETE FROM `{table}` WHERE {TABLE_KEYS[table]} IN ({ids}) AND {predicates[table]}')
         self.sql(';'.join(statements + ['COMMIT']) + ';')
 
         self.cleanup_redis()
