@@ -71,10 +71,11 @@ finish() {
   [[ $primary == success && $recovery == success && $cleanup == success && $scan == success && $rc == 0 ]] || exit 1
 }
 trap finish EXIT
-((BASH_VERSINFO[0]>4 || (BASH_VERSINFO[0]==4 && BASH_VERSINFO[1]>=4))) || { printf 'Bash 4.4+ required\n' >&2; exit 1; }
+((BASH_VERSINFO[0]>4 || (BASH_VERSINFO[0]==4 && BASH_VERSINFO[1]>=2))) || { printf 'Bash 4.2+ required\n' >&2; exit 1; }
 for tool in bash timeout docker mysql mysqldump redis-cli sha256sum realpath tar id base64 head cmp chown; do
   command -v "$tool" >/dev/null || { printf 'Missing deploy-essential tool: %s\n' "$tool" >&2; exit 1; }
 done
+stage5_capture_evidence "$remote_root" bash-version.txt printf 'bashVersion=%s\n' "$BASH_VERSION"
 current_step=python-runtime-preflight
 stage5_host_prepare "$remote_root"
 stage5_python_preflight "$evidence"

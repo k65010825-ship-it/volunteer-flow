@@ -44,9 +44,24 @@ class Stage5RunnerContractTest {
     assertThat(broker.substring(broker.indexOf("stage5_bridge_allowed()"),
         broker.indexOf("stage5_project_safe()"))).doesNotContain("/opt/kafka/bin/", "--topic", "--group");
     String remote = read("remote-stage5.sh");
-    assertThat(remote).contains("stage5_prepare_topics \"$remote_root\" \"$compose_project\"");
+    assertThat(remote).contains("stage5_prepare_topics \"$remote_root\" \"$compose_project\"",
+        "Bash 4.2+ required", "bash-version.txt", "bashVersion=%s");
     assertThat(remote.indexOf("stage5_prepare_topics \"$remote_root\""))
         .isLessThan(remote.indexOf("driver topics"));
+  }
+
+  @Test
+  void nulDelimitedArgvCompatibilityContractPassesOnCurrentBash() throws Exception {
+    read("test-bash42-compatibility.sh");
+    Process p = new ProcessBuilder(bash(), DEPLOY.resolve("test-bash42-compatibility.sh").toString(),
+        DEPLOY.resolve("pipe-bridge.sh").toString()).redirectErrorStream(true).start();
+    String output = finish(p);
+    assertThat(p.exitValue()).as(output).isZero();
+    assertThat(output).contains(
+        "PASS bash42_nul_argv_preserves_empty_argument",
+        "PASS bash42_missing_terminal_nul_is_rejected",
+        "PASS bash42_more_than_128_arguments_is_rejected",
+        "TEST_RUNTIME_BASH=").doesNotContain("FAIL bash42_");
   }
 
   @Test

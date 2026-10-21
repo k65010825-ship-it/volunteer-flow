@@ -203,7 +203,7 @@ stage5_pipe_command() {
 stage5_pipe_serve() (
   umask 077
   stage5_require_root || return 1
-  local root=$1 project=$2 read_fd=$3 write_fd=$4 deadline=$5 sequence=1 expected read_deadline work request_work remaining output_cap requested
+  local root=$1 project=$2 read_fd=$3 write_fd=$4 deadline=$5 sequence=1 expected read_deadline work request_work remaining output_cap requested arg
   local -a fields=() args=()
   work=$(mktemp -d "$root/host-private/pipe.XXXXXXXX") || return 1
   # Nothing under this directory is mounted or writable/readable by the container.
@@ -224,8 +224,11 @@ stage5_pipe_serve() (
     request_work="$work/$expected"; mkdir -m 700 -- "$request_work" || return 1
     stage5_pipe_decode "${fields[5]}" "$request_work/argv" 8192 &&
       stage5_pipe_decode "${fields[6]}" "$request_work/stdin" 131072 || return 1
-    mapfile -d '' -t args < "$request_work/argv"
-    ((${#args[@]}<=128)) || return 1
+    args=()
+    while IFS= read -r -d '' arg; do
+      ((${#args[@]}<128)) || return 1
+      args+=("$arg")
+    done < "$request_work/argv"
     if ((${#args[@]})); then printf '%s\0' "${args[@]}" | cmp -s -- "$request_work/argv" - || return 1
     else [[ ! -s $request_work/argv ]] || return 1; fi
     requested=${fields[4]}
