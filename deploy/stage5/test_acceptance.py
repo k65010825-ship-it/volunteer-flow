@@ -10,6 +10,8 @@ import uuid
 import subprocess
 import os
 import shutil
+from types import SimpleNamespace
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_name('acceptance.py'))
 acceptance = importlib.util.module_from_spec(spec)
@@ -178,6 +180,121 @@ class DriverTest(unittest.TestCase):
             path.write_text(clean + suffix)
             with self.assertRaises(ValueError):
                 acceptance.read_env(path)
+
+    def preflight_driver(self):
+        index = getattr(self, '_preflight_index', 0)
+        self._preflight_index = index + 1
+        root = self.root / ('preflight-' + str(index))
+        (root / 'evidence').mkdir(parents=True)
+        (root / 'private').mkdir()
+        driver = acceptance.Driver.__new__(acceptance.Driver)
+        driver.run_id = RUN
+        driver.root = root
+        driver.evidence = root / 'evidence'
+        driver.state_file = root / 'state.json'
+        driver.state = {}
+        driver.project = 'vf5' + RUN.replace('-', '')
+        driver.pipe = False
+        driver.env = {
+            'REDIS_HOST': '192.168.40.144', 'REDIS_PORT': '6379', 'REDIS_DATABASE': '2',
+            'REDIS_PASSWORD': 'redis-private-marker', 'STAGE5_MYSQL_CONTAINER': 'mysql-web',
+            'STAGE5_REDIS_CONTAINER': 'redis-web'
+        }
+        driver.child_env = {}
+        return driver
+
+    def test_preflight_checks_both_existing_store_identities_before_redis_client(self):
+        for failure in ('missing', 'stopped', 'ambiguous'):
+            with self.subTest(failure=failure):
+                driver = self.preflight_driver()
+                calls = []
+                def execute(command, *args, **kwargs):
+                    calls.append(command)
+                    if command[:2] == ['docker', 'inspect']:
+                        if failure == 'missing':
+                            raise ValueError('container missing')
+                        value = {'id': 'a' * 64, 'name': '/' + command[-1], 'image': 'redis:7',
+                                 'running': failure != 'stopped'}
+                        text = json.dumps(value)
+                        return text + ('\n' + text if failure == 'ambiguous' else '')
+                    return 'safe-version\n'
+                driver.execute = execute
+                with self.assertRaises((ValueError, json.JSONDecodeError)):
+                    driver.preflight()
+                self.assertFalse(any(command and command[0] == 'redis-cli' for command in calls))
+
+    def test_preflight_preserves_configured_redis_endpoint_and_requires_version_ping_and_empty_namespace(self):
+        driver = self.preflight_driver()
+        calls = []
+        def execute(command, *args, **kwargs):
+            calls.append((command, kwargs.get('extra_env')))
+            if command[:2] == ['docker', 'inspect']:
+                return json.dumps({'id': 'a' * 64, 'name': '/' + command[-1],
+                                   'image': 'redis:7', 'running': True})
+            if command == ['redis-cli', '--version']:
+                return 'redis-cli 7.2.5\n'
+            if command[-1:] == ['PING']:
+                return 'PONG\n'
+            if '--scan' in command:
+                return ''
+            if command[:2] == ['docker', 'version']:
+                return '27.0\n'
+            return 'safe-version\n'
+        driver.execute = execute
+        with patch.object(acceptance.os, 'uname', create=True,
+                          return_value=SimpleNamespace(sysname='Linux', release='offline')), \
+             patch.object(acceptance.os, 'sysconf', create=True, return_value=1024):
+            driver.preflight()
+        redis_calls = [item for item in calls if item[0][0] == 'redis-cli']
+        self.assertEqual(['redis-cli', '--version'], redis_calls[0][0])
+        for command, environment in redis_calls[1:]:
+            self.assertEqual(['redis-cli', '--raw', '-h', '192.168.40.144', '-p', '6379', '-n', '2'],
+                             command[:8])
+            self.assertEqual({'REDISCLI_AUTH': 'redis-private-marker'}, environment)
+        self.assertEqual('PING', redis_calls[1][0][-1])
+        self.assertEqual(['--scan', '--pattern', 'volunteerflow:' + driver.project + ':*'],
+                         redis_calls[2][0][-3:])
+        evidence = json.loads((driver.evidence / 'environment.json').read_text())
+        self.assertEqual('redis-cli 7.2.5', evidence['redisVersion'])
+        redacted = (driver.evidence / 'environment-redacted.txt').read_text()
+        self.assertIn('REDIS_PASSWORD=[REDACTED]', redacted)
+        self.assertNotIn('redis-private-marker', redacted)
+
+    def test_missing_container_redis_cli_stops_before_ping_or_scan(self):
+        driver = self.preflight_driver()
+        calls = []
+        def execute(command, *args, **kwargs):
+            calls.append(command)
+            if command[:2] == ['docker', 'inspect']:
+                return json.dumps({'id': 'a' * 64, 'name': '/' + command[-1],
+                                   'image': 'redis:7', 'running': True})
+            if command == ['redis-cli', '--version']:
+                raise ValueError('redis-cli unavailable in configured container')
+            return 'safe-version\n'
+        driver.execute = execute
+        with self.assertRaisesRegex(ValueError, 'redis-cli unavailable'):
+            driver.preflight()
+        self.assertFalse(any(command[-1:] == ['PING'] or '--scan' in command for command in calls))
+
+    def test_redis_cleanup_is_exactly_bounded_to_run_namespace_and_batches_of_one_hundred(self):
+        driver = self.preflight_driver()
+        driver.project = 'vf5' + 'b' * 32
+        prefix = 'volunteerflow:' + driver.project + ':'
+        keys = [prefix + str(index) for index in range(1000)]
+        calls = []
+        scans = iter(('\n'.join(keys), ''))
+        def redis(*arguments):
+            calls.append(arguments)
+            return next(scans) if arguments[0] == '--scan' else str(len(arguments) - 1)
+        driver.redis = redis
+        driver.cleanup_redis()
+        deletes = [arguments for arguments in calls if arguments[0] == 'DEL']
+        self.assertEqual(10, len(deletes))
+        self.assertTrue(all(len(arguments) == 101 for arguments in deletes))
+        self.assertEqual(keys, [key for arguments in deletes for key in arguments[1:]])
+        driver.redis = lambda *arguments: '\n'.join(keys + [prefix + 'overflow'])
+        with self.assertRaisesRegex(ValueError, 'bound exceeded'):
+            driver.cleanup_redis()
 
     def test_submit_asserts_real_audit_schema_and_persists_exact_event(self):
         driver = self.driver()

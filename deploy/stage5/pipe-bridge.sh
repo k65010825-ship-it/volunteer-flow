@@ -2,6 +2,16 @@
 # Host-only broker. Transport is inherited kernel pipes, NEVER container paths.
 stage5_require_root() { [[ $(id -u) == 0 ]] || { printf 'Stage5 requires the approved root host operator\n' >&2; return 1; }; }
 
+stage5_require_host_tools() {
+  local tool
+  for tool in bash timeout docker mysql mysqldump sha256sum realpath tar id base64 head cmp chown; do
+    command -v "$tool" >/dev/null || {
+      printf 'Missing deploy-essential tool: %s\n' "$tool" >&2
+      return 1
+    }
+  done
+}
+
 stage5_publish_evidence() {
   local root=$1 name=$2 input=$3
   [[ $name =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,150}$ && ( $input == "$root/host-private/"* || $input == "$root/.evidence."* ) &&
@@ -73,6 +83,7 @@ stage5_bridge_allowed() {
         case "$arg" in --single-transaction|--skip-comments|--no-tablespaces|--set-gtid-purged=OFF|--hex-blob|--order-by-primary|--skip-extended-insert|--no-create-info|--skip-add-locks|--skip-disable-keys|--routines|--triggers) ;; *) return 1 ;; esac
       done ;;
     redis-cli)
+      [[ $redis_container =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,100}$ ]] || return 1
       [[ ${args[*]} == 'redis-cli --version' ]] && return 0
       [[ ${args[*]:0:8} == "redis-cli --raw -h $redis_host -p $redis_port -n $redis_db" ]] || return 1
       case "${args[8]:-}" in PING) ((${#args[@]}==9)) ;;
@@ -178,7 +189,7 @@ stage5_sql_safe() {
 }
 
 stage5_pipe_command() {
-  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' out_fd err_fd out_pid err_pid rc=0 remaining
+  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_container='' out_fd err_fd out_pid err_pid rc=0 remaining
   shift 6; local -a args=("$@")
   remaining=$((deadline-SECONDS)); ((remaining>0)) || return 1
   ((requested<=remaining)) || requested=$remaining
@@ -189,7 +200,13 @@ stage5_pipe_command() {
   err_pid=$!
   if ( while IFS= read -r key; do export -n "$key"; done < <(compgen -e)
        export PATH LANG=C.UTF-8 HOME="$root/host-private/empty-home" STAGE5_RUN_COMPACT="${project#vf5}"
-       if [[ ${args[0]} == redis-cli ]]; then auth=$(stage5_env_value "$root/stage5.env" REDIS_PASSWORD); export REDISCLI_AUTH="$auth"; fi
+       if [[ ${args[0]} == redis-cli ]]; then
+         auth=$(stage5_env_value "$root/stage5.env" REDIS_PASSWORD)
+         redis_container=$(stage5_env_value "$root/stage5.env" STAGE5_REDIS_CONTAINER)
+         [[ $redis_container =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,100}$ ]] || exit 1
+         export REDISCLI_AUTH="$auth"
+         args=(docker exec --env REDISCLI_AUTH "$redis_container" redis-cli "${args[@]:1}")
+       fi
        timeout --signal=TERM --kill-after=1 "$requested" "${args[@]}" < "$work/stdin" >&"$out_fd" 2>&"$err_fd" ); then rc=0; else rc=$?; fi
   exec {out_fd}>&-; exec {err_fd}>&-
   while kill -0 "$out_pid" 2>/dev/null || kill -0 "$err_pid" 2>/dev/null; do

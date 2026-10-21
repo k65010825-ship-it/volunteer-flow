@@ -35,7 +35,10 @@ class PipeBridgeTest(unittest.TestCase):
         self.root = Path(self.temp.name)
         for name in ('private', 'evidence', 'host-private', 'bin'):
             (self.root / name).mkdir()
-        (self.root / 'stage5.env').write_bytes(b'DB_NAME=demo\nREDIS_HOST=127.0.0.1\nREDIS_PORT=6379\n')
+        (self.root / 'stage5.env').write_bytes(
+            b'DB_NAME=demo\nREDIS_HOST=127.0.0.1\nREDIS_PORT=6379\nREDIS_DATABASE=2\n'
+            b'REDIS_PASSWORD=redis-private-marker\nSTAGE5_MYSQL_CONTAINER=mysql-web\n'
+            b'STAGE5_REDIS_CONTAINER=redis-web\n')
         (self.root / 'host-private/mysql.cnf').write_bytes(b'[client]\nhost=127.0.0.1\npassword=private-marker\n')
         fake = '''#!/usr/bin/env bash
 printf '%s\\0' "$@" > "$TEST_ROOT/called.argv"
@@ -59,7 +62,8 @@ esac
         self.assertTrue(bridge.exists(), 'repo-owned bounded pipe bridge required')
         mode = env.get('FAKE_MODE', 'normal')
         (self.root / 'bin/mysql').write_bytes(self.fake.replace('${FAKE_MODE:-normal}', mode).encode())
-        (self.root / 'bin/docker').write_bytes(self.fake.replace('${FAKE_MODE:-normal}', mode).encode())
+        if env.get('PRESERVE_DOCKER') != '1':
+            (self.root / 'bin/docker').write_bytes(self.fake.replace('${FAKE_MODE:-normal}', mode).encode())
         body = self.server_body()
         return subprocess.run([BASH, '-c', body], input=frames, capture_output=True, timeout=timeout,
             env={**os.environ, 'TEST_ROOT': self.root.as_posix(), **env})
@@ -67,7 +71,8 @@ esac
     def server_body(self):
         return f'''source "{(HERE / 'pipe-bridge.sh').as_posix()}"
 id() {{ if [[ $1 == -u ]]; then printf '%s\\n' "${{FAKE_UID:-0}}"; else command id "$@"; fi; }}
-bin_dir=$(cd "$TEST_ROOT/bin" && pwd); export PATH="$bin_dir:$PATH"
+bin_dir=$(cd "$TEST_ROOT/bin" && pwd)
+if [[ ${{ISOLATE_PATH:-0}} == 1 ]]; then export PATH="$bin_dir:/usr/bin:/bin"; else export PATH="$bin_dir:$PATH"; fi
 stage5_pipe_serve "$TEST_ROOT" "${{TEST_PROJECT:-{PROJECT}}}" 0 1 "$((SECONDS+${{FAKE_BUDGET:-5}}))"
 '''
 
@@ -75,6 +80,117 @@ stage5_pipe_serve "$TEST_ROOT" "${{TEST_PROJECT:-{PROJECT}}}" 0 1 "$((SECONDS+${
         return ['mysql', '--defaults-file=' + self.root.as_posix() + '/host-private/mysql.cnf',
                 '--connect-timeout=5', '--binary-mode=1', '--local-infile=0',
                 '--batch', '--raw', '--skip-column-names', 'demo']
+
+    def redis_argv(self, *suffix):
+        return ['redis-cli', '--raw', '-h', '127.0.0.1', '-p', '6379', '-n', '2', *suffix]
+
+    def install_redis_docker(self):
+        docker = self.root / 'bin/docker'
+        docker.write_bytes(('''#!/usr/bin/env bash
+printf '%s\\0' "$@" >> "ROOT/docker.argv"
+printf '\\0' >> "ROOT/docker.argv"
+if [[ $1 == exec ]]; then
+  [[ $2 == --env && $3 == REDISCLI_AUTH && $4 == redis-web && $5 == redis-cli ]] || exit 91
+  [[ ${REDISCLI_AUTH+x} == x && $REDISCLI_AUTH == redis-private-marker ]] || exit 92
+  printf 'auth-present' >> "ROOT/docker.auth"
+  case " ${*:6} " in
+    *' --version '*) printf 'redis-cli 7.2.5\\n' ;;
+    *' PING '*) printf 'PONG\\n' ;;
+    *' --scan '*) printf '' ;;
+    *' DEL '*) printf '1\\n' ;;
+    *) exit 93 ;;
+  esac
+else
+  exit 94
+fi
+'''.replace('ROOT', self.root.as_posix())).encode())
+        docker.chmod(0o755)
+
+    def test_redis_commands_use_only_exact_existing_container_client_without_host_cli(self):
+        self.install_redis_docker()
+        commands = [
+            ['redis-cli', '--version'],
+            self.redis_argv('PING'),
+            self.redis_argv('--scan', '--pattern', 'volunteerflow:' + PROJECT + ':*'),
+            self.redis_argv('DEL', 'volunteerflow:' + PROJECT + ':registration:1'),
+        ]
+        frames = b''.join(request(command, data=b'', identity=f'{index:08d}')
+                          for index, command in enumerate(commands, 1)) + done('00000005')
+        result = self.serve(frames, timeout=30, PRESERVE_DOCKER='1', FAKE_BUDGET='25', ISOLATE_PATH='1')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotIn(b'redis-private-marker', result.stdout + result.stderr)
+        calls = (self.root / 'docker.argv').read_bytes().decode().split('\0\0')[:-1]
+        self.assertEqual(4, len(calls))
+        for logical, call in zip(commands, calls):
+            actual = call.split('\0')
+            self.assertEqual(['exec', '--env', 'REDISCLI_AUTH', 'redis-web', 'redis-cli', *logical[1:]], actual)
+            self.assertFalse(set(actual) & {'run', 'rm', 'stop', 'start', 'restart', 'create'})
+            self.assertNotIn('redis-private-marker', actual)
+        self.assertEqual('auth-present' * 4, (self.root / 'docker.auth').read_text())
+
+    def test_empty_redis_password_is_passed_by_environment_name_without_secret_output(self):
+        self.install_redis_docker()
+        env_file = self.root / 'stage5.env'
+        env_file.write_text(env_file.read_text().replace('REDIS_PASSWORD=redis-private-marker', 'REDIS_PASSWORD='))
+        docker = self.root / 'bin/docker'
+        docker.write_text(docker.read_text().replace(
+            '[[ ${REDISCLI_AUTH+x} == x && $REDISCLI_AUTH == redis-private-marker ]]',
+            '[[ ${REDISCLI_AUTH+x} == x && -z $REDISCLI_AUTH ]]'))
+        result = self.serve(request(['redis-cli', '--version'], data=b'') + done(), PRESERVE_DOCKER='1')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotIn(b'redis-private-marker', result.stdout + result.stderr)
+        self.assertNotIn(b'redis-private-marker', (self.root / 'docker.argv').read_bytes())
+
+    def test_redis_scope_tls_and_generic_docker_exec_fail_before_docker(self):
+        self.install_redis_docker()
+        prefix = 'volunteerflow:' + PROJECT + ':'
+        invalid = [
+            ['redis-cli', '--raw', '-h', 'other', '-p', '6379', '-n', '2', 'PING'],
+            ['redis-cli', '--raw', '-h', '127.0.0.1', '-p', '6380', '-n', '2', 'PING'],
+            ['redis-cli', '--raw', '-h', '127.0.0.1', '-p', '6379', '-n', '3', 'PING'],
+            self.redis_argv('--tls', 'PING'), self.redis_argv('FLUSHDB'),
+            self.redis_argv('--scan', '--pattern', 'volunteerflow:*'),
+            self.redis_argv('DEL', 'volunteerflow:foreign:key'),
+            self.redis_argv('DEL', *[prefix + str(i) for i in range(101)]),
+            ['docker', 'exec', 'redis-web', 'redis-cli', 'PING'],
+        ]
+        for command in invalid:
+            with self.subTest(command=command[:10]):
+                (self.root / 'docker.argv').unlink(missing_ok=True)
+                result = self.serve(request(command, data=b'') + done(), PRESERVE_DOCKER='1')
+                self.assertNotEqual(0, result.returncode)
+                self.assertFalse((self.root / 'docker.argv').exists())
+
+    def test_invalid_redis_container_name_fails_before_docker(self):
+        self.install_redis_docker()
+        env_file = self.root / 'stage5.env'
+        env_file.write_text(env_file.read_text().replace('STAGE5_REDIS_CONTAINER=redis-web',
+                                                          'STAGE5_REDIS_CONTAINER=redis/web'))
+        result = self.serve(request(['redis-cli', '--version'], data=b'') + done(), PRESERVE_DOCKER='1')
+        self.assertNotEqual(0, result.returncode)
+        self.assertFalse((self.root / 'docker.argv').exists())
+
+    def test_host_tool_gate_does_not_require_redis_cli_but_still_requires_docker(self):
+        tools = ('bash', 'timeout', 'docker', 'mysql', 'mysqldump', 'sha256sum', 'realpath',
+                 'tar', 'id', 'base64', 'head', 'cmp', 'chown')
+        for tool in tools:
+            path = self.root / 'bin' / tool
+            if not path.exists():
+                path.write_text('#!/usr/bin/env bash\nexit 0\n')
+                path.chmod(0o755)
+        bridge = HERE / 'pipe-bridge.sh'
+        body = f'''source "{bridge.as_posix()}"
+bin_dir=$(cd "$TEST_ROOT/bin" && pwd)
+PATH="$bin_dir" stage5_require_host_tools
+'''
+        result = subprocess.run([BASH, '-c', body], capture_output=True, env={**os.environ,
+            'TEST_ROOT': self.root.as_posix()}, timeout=5)
+        self.assertEqual(0, result.returncode, result.stderr)
+        (self.root / 'bin/docker').unlink()
+        result = subprocess.run([BASH, '-c', body], capture_output=True, env={**os.environ,
+            'TEST_ROOT': self.root.as_posix()}, timeout=5)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(b'Missing deploy-essential tool: docker', result.stderr)
 
     def test_valid_framed_sql_has_private_configuration_and_binary_mode(self):
         result = self.serve(request(self.sql_argv()) + done())

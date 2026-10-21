@@ -234,11 +234,12 @@ class Driver:
 
     def preflight(self):
         require(not self.state_file.exists(), "Run ID was already used")
-        for command in (["mysql", "--version"], ["mysqldump", "--version"], ['redis-cli','--version'], ["docker", "compose", "version"]):
+        for command in (["mysql", "--version"], ["mysqldump", "--version"], ["docker", "compose", "version"]):
             self.execute(command)
+        containers = self.identities()
+        redis_version = self.execute(['redis-cli','--version']).strip()
         require(self.redis('PING').strip() == 'PONG', 'Existing Redis unavailable')
         require(not self.redis('--scan', '--pattern', 'volunteerflow:' + self.project + ':*').strip(), 'Redis namespace reused')
-        containers = self.identities()
         disk = shutil.disk_usage(self.root / 'private')
         require(disk.free >= 5 * 1024**3, 'Insufficient backup/build disk space')
         self.state["containers"] = containers
@@ -250,7 +251,7 @@ class Driver:
             "diskFreeBytes": disk.free,
             "dockerVersion": self.execute(['docker','version','--format','{{.Server.Version}}']).strip(),
             "mysqlVersion": self.execute(['mysql','--version']).strip(),
-            "redisVersion": self.execute(['redis-cli','--version']).strip()})
+            "redisVersion": redis_version})
         (self.evidence / "environment-redacted.txt").write_text('\n'.join(
             key + '=' + ('[REDACTED]' if key in SECRET_NAMES else value)
             for key, value in sorted(self.env.items())) + '\n')
