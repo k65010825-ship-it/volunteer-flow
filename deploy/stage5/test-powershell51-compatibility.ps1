@@ -58,6 +58,23 @@ try {
   $parsed = Read-Stage5Environment $envPath
   Assert-True ($parsed['REDIS_PASSWORD'] -ceq '') 'Optional empty value was not preserved'
   Assert-True ($parsed.Count -eq 2) 'LF/comment parsing changed'
+  # DEL and C1 controls must fail at key/value boundaries, without echoing the synthetic value.
+  foreach ($codePoint in @(127, 128, 159)) {
+    $control = [char]$codePoint
+    foreach ($invalid in @("${control}DB_PASSWORD=private-marker==", "DB_PASS${control}WORD=private-marker==",
+        "DB_PASSWORD${control}=private-marker==", "DB_PASSWORD=${control}private-marker==",
+        "DB_PASSWORD=private-marker${control}==", "DB_PASSWORD=private-marker==${control}")) {
+      foreach ($bom in @($false, $true)) {
+        [IO.File]::WriteAllText($envPath, ($invalid + "`r`n"), [Text.UTF8Encoding]::new($bom, $true))
+        $rejected = $false
+        try { Read-Stage5Environment $envPath | Out-Null } catch {
+          $rejected = $true
+          Assert-True ($_.Exception.Message -notmatch 'private-marker') 'Control-character rejection disclosed a secret'
+        }
+        Assert-True $rejected 'Control-character dotenv input was accepted'
+      }
+    }
+  }
   foreach ($invalid in @("DB_PASSWORD=private-marker`nDB_PASSWORD=duplicate", 'DB_PASSWORD=private-marker bad',
       'DB_PASSWORD=private-marker#bad', 'DB_PASSWORD=private-marker$bad', 'DB_PASSWORD=private-marker\bad',
       'DB_PASSWORD=private-marker"bad', 'DB_PASSWORD=private-marker''bad', 'DB_PASSWORD=change-me-private-marker',

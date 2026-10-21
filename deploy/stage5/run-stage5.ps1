@@ -52,7 +52,7 @@ function Read-Stage5Environment([string]$Path) {
       $key = $line.Substring(0, $separator)
       $value = $line.Substring($separator + 1)
       if ($key -cnotmatch '^[A-Z][A-Z0-9_]*$' -or $allowed -cnotcontains $key -or $result.ContainsKey($key) -or
-          $value -match '[\s\x00-\x1f$''"\\#]' -or $value -match '(?i)replace-with|placeholder|change-me') { throw 'Invalid entry' }
+          $value -match '[\s\p{Cc}$''"\\#]' -or $value -match '(?i)replace-with|placeholder|change-me') { throw 'Invalid entry' }
       $result[$key] = $value
     }
     return $result
