@@ -17,6 +17,8 @@ spec = importlib.util.spec_from_file_location('acceptance', Path(__file__).with_
 acceptance = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(acceptance)
 RUN = '00000000-0000-0000-0000-000000000001'
+MYSQL_ID = 'a' * 64
+REDIS_ID = 'b' * 64
 ORG_TABLE_KEYS = {
     'promotion_reconcile_task': 'position_id', 'outbox_event': 'id', 'promotion_offer': 'id',
     'notification': 'id', 'registration_answer': 'id', 'registration_cycle': 'id',
@@ -204,7 +206,7 @@ class DriverTest(unittest.TestCase):
         return driver
 
     def test_preflight_checks_both_existing_store_identities_before_redis_client(self):
-        for failure in ('missing', 'stopped', 'ambiguous'):
+        for failure in ('missing', 'stopped', 'ambiguous', 'wrong-name', 'short-id', 'duplicate-id'):
             with self.subTest(failure=failure):
                 driver = self.preflight_driver()
                 calls = []
@@ -213,7 +215,15 @@ class DriverTest(unittest.TestCase):
                     if command[:2] == ['docker', 'inspect']:
                         if failure == 'missing':
                             raise ValueError('container missing')
-                        value = {'id': 'a' * 64, 'name': '/' + command[-1], 'image': 'redis:7',
+                        identity = MYSQL_ID if command[-1] == 'mysql-web' else REDIS_ID
+                        if failure == 'short-id' and command[-1] == 'redis-web':
+                            identity = REDIS_ID[:12]
+                        if failure == 'duplicate-id' and command[-1] == 'redis-web':
+                            identity = MYSQL_ID
+                        name = '/' + command[-1]
+                        if failure == 'wrong-name' and command[-1] == 'redis-web':
+                            name = '/replacement'
+                        value = {'id': identity, 'name': name, 'image': 'redis:7',
                                  'running': failure != 'stopped'}
                         text = json.dumps(value)
                         return text + ('\n' + text if failure == 'ambiguous' else '')
@@ -229,9 +239,10 @@ class DriverTest(unittest.TestCase):
         def execute(command, *args, **kwargs):
             calls.append((command, kwargs.get('extra_env')))
             if command[:2] == ['docker', 'inspect']:
-                return json.dumps({'id': 'a' * 64, 'name': '/' + command[-1],
+                identity = MYSQL_ID if command[-1] == 'mysql-web' else REDIS_ID
+                return json.dumps({'id': identity, 'name': '/' + command[-1],
                                    'image': 'redis:7', 'running': True})
-            if command == ['redis-cli', '--version']:
+            if command == ['redis-cli', '--container-id', REDIS_ID, '--version']:
                 return 'redis-cli 7.2.5\n'
             if command[-1:] == ['PING']:
                 return 'PONG\n'
@@ -246,10 +257,10 @@ class DriverTest(unittest.TestCase):
              patch.object(acceptance.os, 'sysconf', create=True, return_value=1024):
             driver.preflight()
         redis_calls = [item for item in calls if item[0][0] == 'redis-cli']
-        self.assertEqual(['redis-cli', '--version'], redis_calls[0][0])
+        self.assertEqual(['redis-cli', '--container-id', REDIS_ID, '--version'], redis_calls[0][0])
         for command, environment in redis_calls[1:]:
-            self.assertEqual(['redis-cli', '--raw', '-h', '192.168.40.144', '-p', '6379', '-n', '2'],
-                             command[:8])
+            self.assertEqual(['redis-cli', '--container-id', REDIS_ID, '--raw', '-h',
+                              '192.168.40.144', '-p', '6379', '-n', '2'], command[:10])
             self.assertEqual({'REDISCLI_AUTH': 'redis-private-marker'}, environment)
         self.assertEqual('PING', redis_calls[1][0][-1])
         self.assertEqual(['--scan', '--pattern', 'volunteerflow:' + driver.project + ':*'],
@@ -266,15 +277,34 @@ class DriverTest(unittest.TestCase):
         def execute(command, *args, **kwargs):
             calls.append(command)
             if command[:2] == ['docker', 'inspect']:
-                return json.dumps({'id': 'a' * 64, 'name': '/' + command[-1],
+                identity = MYSQL_ID if command[-1] == 'mysql-web' else REDIS_ID
+                return json.dumps({'id': identity, 'name': '/' + command[-1],
                                    'image': 'redis:7', 'running': True})
-            if command == ['redis-cli', '--version']:
+            if command == ['redis-cli', '--container-id', REDIS_ID, '--version']:
                 raise ValueError('redis-cli unavailable in configured container')
             return 'safe-version\n'
         driver.execute = execute
         with self.assertRaisesRegex(ValueError, 'redis-cli unavailable'):
             driver.preflight()
         self.assertFalse(any(command[-1:] == ['PING'] or '--scan' in command for command in calls))
+
+    def test_redis_version_evidence_rejects_empty_arbitrary_and_multiline_output_before_ping(self):
+        for version in ('', 'safe-version', 'redis-cli 7.2.5\nsecond-line'):
+            with self.subTest(version=version):
+                driver = self.preflight_driver()
+                def execute(command, *args, **kwargs):
+                    if command[:2] == ['docker', 'inspect']:
+                        identity = MYSQL_ID if command[-1] == 'mysql-web' else REDIS_ID
+                        return json.dumps({'id': identity, 'name': '/' + command[-1],
+                                           'image': 'redis:7', 'running': True})
+                    if command[0] == 'redis-cli':
+                        if command[-1] == '--version':
+                            return version
+                        self.fail('PING/SCAN ran after invalid Redis version evidence')
+                    return 'safe-version\n'
+                driver.execute = execute
+                with self.assertRaisesRegex(ValueError, 'Redis client version'):
+                    driver.preflight()
 
     def test_redis_cleanup_is_exactly_bounded_to_run_namespace_and_batches_of_one_hundred(self):
         driver = self.preflight_driver()

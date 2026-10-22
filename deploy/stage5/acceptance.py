@@ -171,8 +171,14 @@ class Driver:
     def redis(self, *arguments):
         database = self.env.get('REDIS_DATABASE', '2')
         require(database.isdigit() and 0 <= int(database) <= 15, 'Invalid Redis database')
-        return self.execute(['redis-cli', '--raw', '-h', self.env['REDIS_HOST'], '-p', self.env['REDIS_PORT'],
-            '-n', database] + list(arguments), extra_env={'REDISCLI_AUTH': self.env.get('REDIS_PASSWORD', '')})
+        containers = self.state.get('containers')
+        require(isinstance(containers, list) and len(containers) == 2, 'Missing approved Redis identity')
+        container_id = containers[1].get('id') if isinstance(containers[1], dict) else None
+        require(isinstance(container_id, str) and re.fullmatch(r'[0-9a-f]{64}', container_id),
+                'Invalid approved Redis identity')
+        return self.execute(['redis-cli', '--container-id', container_id, '--raw', '-h',
+            self.env['REDIS_HOST'], '-p', self.env['REDIS_PORT'], '-n', database] + list(arguments),
+            extra_env={'REDISCLI_AUTH': self.env.get('REDIS_PASSWORD', '')})
 
     def cleanup_redis(self):
         prefix = 'volunteerflow:' + self.project + ':'
@@ -228,8 +234,16 @@ class Driver:
             text = self.execute(["docker", "inspect", "--format",
                 '{"id":"{{.Id}}","name":"{{.Name}}","image":"{{.Config.Image}}","running":{{.State.Running}}}', self.env[key]])
             value = json.loads(text)
+            require(isinstance(value, dict) and set(value) == {'id', 'name', 'image', 'running'},
+                    'Invalid existing store identity')
+            require(isinstance(value['id'], str) and re.fullmatch(r'[0-9a-f]{64}', value['id']),
+                    'Invalid existing store identity')
+            require(value['name'] == '/' + self.env[key], 'Existing store name mismatch')
+            require(isinstance(value['image'], str) and 0 < len(value['image']) <= 512 and
+                    not re.search(r'[\x00-\x1f\x7f]', value['image']), 'Invalid existing store identity')
             require(value["running"] is True, "Existing store not running")
             values.append(value)
+        require(values[0]['id'] != values[1]['id'], 'Existing store identities must be distinct')
         return values
 
     def preflight(self):
@@ -237,12 +251,16 @@ class Driver:
         for command in (["mysql", "--version"], ["mysqldump", "--version"], ["docker", "compose", "version"]):
             self.execute(command)
         containers = self.identities()
-        redis_version = self.execute(['redis-cli','--version']).strip()
+        self.state["containers"] = containers
+        redis_id = containers[1]['id']
+        redis_version = self.execute(['redis-cli', '--container-id', redis_id, '--version']).strip()
+        require(len(redis_version) <= 200 and re.fullmatch(
+            r'redis-cli [0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[ +()_.A-Za-z0-9-]+)?', redis_version),
+            'Invalid Redis client version evidence')
         require(self.redis('PING').strip() == 'PONG', 'Existing Redis unavailable')
         require(not self.redis('--scan', '--pattern', 'volunteerflow:' + self.project + ':*').strip(), 'Redis namespace reused')
         disk = shutil.disk_usage(self.root / 'private')
         require(disk.free >= 5 * 1024**3, 'Insufficient backup/build disk space')
-        self.state["containers"] = containers
         self.save()
         self.evidence_json("environment.json", {"runId": self.run_id, "containers": containers,
             "python": sys.version.split()[0], "platform": os.uname().sysname,

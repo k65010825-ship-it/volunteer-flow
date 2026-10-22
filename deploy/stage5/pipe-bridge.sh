@@ -2,6 +2,13 @@
 # Host-only broker. Transport is inherited kernel pipes, NEVER container paths.
 stage5_require_root() { [[ $(id -u) == 0 ]] || { printf 'Stage5 requires the approved root host operator\n' >&2; return 1; }; }
 
+stage5_validate_bash_version() {
+  local value=$1
+  ((${#value} <= 128)) && [[ $value != *$'\n'* && $value != *$'\r'* && $value != *$'\t'* &&
+    ! $value =~ [[:cntrl:]] &&
+    $value =~ ^[0-9]+\.[0-9]+\.[0-9]+\([0-9]+\)-[A-Za-z0-9._-]+$ ]]
+}
+
 stage5_require_host_tools() {
   local tool
   for tool in bash timeout docker mysql mysqldump sha256sum realpath tar id base64 head cmp chown; do
@@ -66,7 +73,7 @@ stage5_host_prepare() {
 stage5_bridge_allowed() {
   local root=$1 project=$2; shift 2
   local -a args=("$@")
-  local db redis_host redis_port redis_db mysql_container redis_container arg index
+  local db redis_host redis_port redis_db mysql_container redis_container redis_id arg index
   db=$(stage5_env_value "$root/stage5.env" DB_NAME)
   redis_host=$(stage5_env_value "$root/stage5.env" REDIS_HOST)
   redis_port=$(stage5_env_value "$root/stage5.env" REDIS_PORT)
@@ -84,12 +91,14 @@ stage5_bridge_allowed() {
       done ;;
     redis-cli)
       [[ $redis_container =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,100}$ ]] || return 1
-      [[ ${args[*]} == 'redis-cli --version' ]] && return 0
-      [[ ${args[*]:0:8} == "redis-cli --raw -h $redis_host -p $redis_port -n $redis_db" ]] || return 1
-      case "${args[8]:-}" in PING) ((${#args[@]}==9)) ;;
-        --scan) [[ ${args[*]:8} == "--scan --pattern volunteerflow:$project:*" ]] ;;
-        DEL) ((${#args[@]}>=10 && ${#args[@]}<=109)) || return 1
-          for arg in "${args[@]:9}"; do [[ $arg == "volunteerflow:$project:"* && ! $arg =~ [[:space:]] ]] || return 1; done ;;
+      [[ ${args[1]:-} == --container-id && ${args[2]:-} =~ ^[0-9a-f]{64}$ ]] || return 1
+      redis_id=${args[2]}
+      [[ ${args[*]} == "redis-cli --container-id $redis_id --version" ]] && return 0
+      [[ ${args[*]:0:10} == "redis-cli --container-id $redis_id --raw -h $redis_host -p $redis_port -n $redis_db" ]] || return 1
+      case "${args[10]:-}" in PING) ((${#args[@]}==11)) ;;
+        --scan) [[ ${args[*]:10} == "--scan --pattern volunteerflow:$project:*" ]] ;;
+        DEL) ((${#args[@]}>=12 && ${#args[@]}<=111)) || return 1
+          for arg in "${args[@]:11}"; do [[ $arg == "volunteerflow:$project:"* && ! $arg =~ [[:space:]] ]] || return 1; done ;;
         *) return 1 ;; esac ;;
     docker)
       [[ ${args[*]} == 'docker compose version' || ${args[*]} == 'docker version --format {{.Server.Version}}' ]] && return 0
@@ -189,7 +198,7 @@ stage5_sql_safe() {
 }
 
 stage5_pipe_command() {
-  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_container='' out_fd err_fd out_pid err_pid rc=0 remaining
+  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_id='' out_fd err_fd out_pid err_pid rc=0 remaining
   shift 6; local -a args=("$@")
   remaining=$((deadline-SECONDS)); ((remaining>0)) || return 1
   ((requested<=remaining)) || requested=$remaining
@@ -202,10 +211,10 @@ stage5_pipe_command() {
        export PATH LANG=C.UTF-8 HOME="$root/host-private/empty-home" STAGE5_RUN_COMPACT="${project#vf5}"
        if [[ ${args[0]} == redis-cli ]]; then
          auth=$(stage5_env_value "$root/stage5.env" REDIS_PASSWORD)
-         redis_container=$(stage5_env_value "$root/stage5.env" STAGE5_REDIS_CONTAINER)
-         [[ $redis_container =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,100}$ ]] || exit 1
+         redis_id=${args[2]}
+         [[ ${args[1]:-} == --container-id && $redis_id =~ ^[0-9a-f]{64}$ ]] || exit 1
          export REDISCLI_AUTH="$auth"
-         args=(docker exec --env REDISCLI_AUTH "$redis_container" redis-cli "${args[@]:1}")
+         args=(docker exec --env REDISCLI_AUTH "$redis_id" redis-cli "${args[@]:3}")
        fi
        timeout --signal=TERM --kill-after=1 "$requested" "${args[@]}" < "$work/stdin" >&"$out_fd" 2>&"$err_fd" ); then rc=0; else rc=$?; fi
   exec {out_fd}>&-; exec {err_fd}>&-

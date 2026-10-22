@@ -72,6 +72,7 @@ finish() {
 }
 trap finish EXIT
 ((BASH_VERSINFO[0]>4 || (BASH_VERSINFO[0]==4 && BASH_VERSINFO[1]>=2))) || { printf 'Bash 4.2+ required\n' >&2; exit 1; }
+stage5_validate_bash_version "$BASH_VERSION" || { printf 'Invalid Bash version evidence\n' >&2; exit 1; }
 stage5_require_host_tools
 stage5_capture_evidence "$remote_root" bash-version.txt printf 'bashVersion=%s\n' "$BASH_VERSION"
 current_step=python-runtime-preflight
