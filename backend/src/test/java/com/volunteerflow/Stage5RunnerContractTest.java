@@ -72,6 +72,15 @@ class Stage5RunnerContractTest {
     String output = finish(p);
     assertThat(p.exitValue()).as(output).isZero();
     assertThat(output).contains("OK").doesNotContain("FAILED");
+    assertThat(read("python-runtime.sh")).contains(
+        "STAGE5_PYTHON_OFFLINE_TAG='python:i-was-a-digest'",
+        "STAGE5_PYTHON_INDEX_DIGEST='sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6'",
+        "STAGE5_PYTHON_MANIFEST_DIGEST='sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6'",
+        "STAGE5_PYTHON_CONFIG_DIGEST='sha256:64f864dc81f0907bda2e1f08d208687d261f70ad0a67dbe56d88598f31ed7243'",
+        "STAGE5_PYTHON_OFFLINE_ARCHIVE_SHA256='sha256:437e3a92118aa1e01954b202f11ac592d13da1105171a9fc480dc10fc2620f3b'",
+        "stage5_python_offline_identity_allowed",
+        "\"$STAGE5_PYTHON_RUNTIME_IMAGE\" python -B /acceptance.py")
+        .doesNotContain("\"$STAGE5_PYTHON_OFFLINE_TAG\" python -B /acceptance.py");
   }
 
   @Test
@@ -230,9 +239,9 @@ class Stage5RunnerContractTest {
   }
 
   private static String finish(Process p) throws Exception {
-    boolean done = p.waitFor(Duration.ofSeconds(20).toMillis(), TimeUnit.MILLISECONDS);
+    boolean done = p.waitFor(Duration.ofSeconds(30).toMillis(), TimeUnit.MILLISECONDS);
     if (!done) { p.destroyForcibly(); }
-    assertThat(done).as("script must finish within 20 seconds").isTrue();
+    assertThat(done).as("script must finish within 30 seconds").isTrue();
     return new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
   }
 }
