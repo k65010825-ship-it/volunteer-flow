@@ -12,6 +12,7 @@ HERE = Path(__file__).resolve().parent
 BASH = 'C:/Program Files/Git/bin/bash.exe' if os.name == 'nt' else 'bash'
 PROJECT = 'vf5' + 'a'*32
 REDIS_ID = 'b' * 64
+OTHER_REDIS_ID = 'c' * 64
 
 
 def encoded(value):
@@ -101,7 +102,11 @@ stage5_pipe_serve "$TEST_ROOT" "${{TEST_PROJECT:-{PROJECT}}}" 0 1 "$((SECONDS+${
         docker.write_bytes(('''#!/bin/bash
 printf '%s\\0' "$@" >> "ROOT/docker.argv"
 printf '\\0' >> "ROOT/docker.argv"
-if [[ $1 == exec ]]; then
+if [[ $1 == inspect ]]; then
+  [[ $2 == --format && $3 == '{{.Id}}' && $4 == redis-web && $# == 4 ]] || exit 90
+  [[ ${REDISCLI_AUTH+x} != x ]] || exit 95
+  printf 'ID\n'
+elif [[ $1 == exec ]]; then
   [[ $2 == --env && $3 == REDISCLI_AUTH && $4 == ID && $5 == redis-cli ]] || exit 91
   [[ ${REDISCLI_AUTH+x} == x && $REDISCLI_AUTH == redis-private-marker ]] || exit 92
   printf 'auth-present' >> "ROOT/docker.auth"
@@ -133,9 +138,10 @@ fi
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertNotIn(b'redis-private-marker', result.stdout + result.stderr)
         calls = (self.root / 'docker.argv').read_bytes().decode().split('\0\0')[:-1]
-        self.assertEqual(4, len(calls))
-        for logical, call in zip(commands, calls):
-            actual = call.split('\0')
+        self.assertEqual(8, len(calls))
+        for logical, inspect_call, exec_call in zip(commands, calls[::2], calls[1::2]):
+            self.assertEqual(['inspect', '--format', '{{.Id}}', 'redis-web'], inspect_call.split('\0'))
+            actual = exec_call.split('\0')
             self.assertEqual(['exec', '--env', 'REDISCLI_AUTH', REDIS_ID, 'redis-cli', *logical[3:]], actual)
             self.assertFalse(set(actual) & {'run', 'rm', 'stop', 'start', 'restart', 'create'})
             self.assertNotIn('redis-private-marker', actual)
@@ -156,6 +162,16 @@ fi
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertNotIn(b'redis-private-marker', result.stdout + result.stderr)
         self.assertNotIn(b'redis-private-marker', (self.root / 'docker.argv').read_bytes())
+
+    def test_other_canonical_container_id_is_rejected_before_credential_bearing_exec(self):
+        self.install_redis_docker()
+        result = self.serve(request(['redis-cli', '--container-id', OTHER_REDIS_ID, '--version'], data=b'') + done(),
+                            PRESERVE_DOCKER='1')
+        self.assertNotEqual(0, result.returncode)
+        self.assertTrue((self.root / 'docker.argv').exists(), (result.stdout, result.stderr))
+        calls = (self.root / 'docker.argv').read_bytes().decode().split('\0\0')[:-1]
+        self.assertEqual([['inspect', '--format', '{{.Id}}', 'redis-web']],
+                         [call.split('\0') for call in calls])
 
     def test_redis_scope_tls_and_generic_docker_exec_fail_before_docker(self):
         self.install_redis_docker()
@@ -216,6 +232,8 @@ PATH="$bin_dir" stage5_require_host_tools
 stage5_validate_bash_version "$TEST_VERSION"
 '''
         for value, expected in (('', 1), ('not-a-version', 1), ('5.2.15(1)-release\nother', 1),
+                                ('\n5.2.15(1)-release', 1), ('5.2.15(1)-release\r', 1),
+                                ('\t5.2.15(1)-release', 1), (' ' * 129 + '5.2.15(1)-release', 1),
                                 ('5.2.15(1)-release', 0)):
             with self.subTest(value=value):
                 env = {**os.environ, 'TEST_VERSION': value}

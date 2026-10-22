@@ -289,7 +289,14 @@ class DriverTest(unittest.TestCase):
         self.assertFalse(any(command[-1:] == ['PING'] or '--scan' in command for command in calls))
 
     def test_redis_version_evidence_rejects_empty_arbitrary_and_multiline_output_before_ping(self):
-        for version in ('', 'safe-version', 'redis-cli 7.2.5\nsecond-line'):
+        invalid_versions = (
+            '', 'safe-version', 'redis-cli 7.2.5\nsecond-line',
+            '\nredis-cli 7.2.5\n', 'redis-cli 7.2.5\n\n',
+            '\tredis-cli 7.2.5\n', 'redis-cli 7.2.5\t\n',
+            'redis-cli 7.2.5\r', '\x1fredis-cli 7.2.5\n',
+            ' ' * 201 + 'redis-cli 7.2.5\n',
+        )
+        for version in invalid_versions:
             with self.subTest(version=version):
                 driver = self.preflight_driver()
                 def execute(command, *args, **kwargs):

@@ -198,7 +198,7 @@ stage5_sql_safe() {
 }
 
 stage5_pipe_command() {
-  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_id='' out_fd err_fd out_pid err_pid rc=0 remaining
+  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_id='' redis_container='' approved_id='' inspect_limit out_fd err_fd out_pid err_pid rc=0 remaining
   shift 6; local -a args=("$@")
   remaining=$((deadline-SECONDS)); ((remaining>0)) || return 1
   ((requested<=remaining)) || requested=$remaining
@@ -210,12 +210,20 @@ stage5_pipe_command() {
   if ( while IFS= read -r key; do export -n "$key"; done < <(compgen -e)
        export PATH LANG=C.UTF-8 HOME="$root/host-private/empty-home" STAGE5_RUN_COMPACT="${project#vf5}"
        if [[ ${args[0]} == redis-cli ]]; then
-         auth=$(stage5_env_value "$root/stage5.env" REDIS_PASSWORD)
          redis_id=${args[2]}
          [[ ${args[1]:-} == --container-id && $redis_id =~ ^[0-9a-f]{64}$ ]] || exit 1
+         redis_container=$(stage5_env_value "$root/stage5.env" STAGE5_REDIS_CONTAINER)
+         [[ $redis_container =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,100}$ ]] || exit 1
+         remaining=$((deadline-SECONDS)); ((remaining>0)) || exit 1
+         inspect_limit=$remaining; ((inspect_limit<=15)) || inspect_limit=15
+         approved_id=$(timeout --signal=TERM --kill-after=1 "$inspect_limit" docker inspect --format '{{.Id}}' "$redis_container" 2>/dev/null) || exit 1
+         [[ $approved_id =~ ^[0-9a-f]{64}$ && $approved_id == "$redis_id" ]] || exit 1
+         auth=$(stage5_env_value "$root/stage5.env" REDIS_PASSWORD)
          export REDISCLI_AUTH="$auth"
          args=(docker exec --env REDISCLI_AUTH "$redis_id" redis-cli "${args[@]:3}")
        fi
+       remaining=$((deadline-SECONDS)); ((remaining>0)) || exit 1
+       ((requested<=remaining)) || requested=$remaining
        timeout --signal=TERM --kill-after=1 "$requested" "${args[@]}" < "$work/stdin" >&"$out_fd" 2>&"$err_fd" ); then rc=0; else rc=$?; fi
   exec {out_fd}>&-; exec {err_fd}>&-
   while kill -0 "$out_pid" 2>/dev/null || kill -0 "$err_pid" 2>/dev/null; do

@@ -253,8 +253,18 @@ class Driver:
         containers = self.identities()
         self.state["containers"] = containers
         redis_id = containers[1]['id']
-        redis_version = self.execute(['redis-cli', '--container-id', redis_id, '--version']).strip()
-        require(len(redis_version) <= 200 and re.fullmatch(
+        redis_version_raw = self.execute(['redis-cli', '--container-id', redis_id, '--version'])
+        require(isinstance(redis_version_raw, str) and 0 < len(redis_version_raw) <= 202 and
+                not re.search(r'[\x00-\x09\x0b\x0c\x0e-\x1f\x7f]', redis_version_raw),
+                'Invalid Redis client version evidence')
+        if redis_version_raw.endswith('\r\n'):
+            redis_version = redis_version_raw[:-2]
+        elif redis_version_raw.endswith('\n'):
+            redis_version = redis_version_raw[:-1]
+        else:
+            redis_version = redis_version_raw
+        require(0 < len(redis_version) <= 200 and '\r' not in redis_version and '\n' not in redis_version and
+                redis_version == redis_version.strip() and re.fullmatch(
             r'redis-cli [0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[ +()_.A-Za-z0-9-]+)?', redis_version),
             'Invalid Redis client version evidence')
         require(self.redis('PING').strip() == 'PONG', 'Existing Redis unavailable')
