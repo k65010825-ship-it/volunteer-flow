@@ -65,6 +65,26 @@ class Stage5RunnerContractTest {
   }
 
   @Test
+  void collectorOwnershipContractPassesOnCurrentBash() throws Exception {
+    read("test-bash42-collector-wait.sh");
+    Process p = new ProcessBuilder(bash(), DEPLOY.resolve("test-bash42-collector-wait.sh").toString(),
+        DEPLOY.resolve("pipe-bridge.sh").toString()).redirectErrorStream(true).start();
+    boolean done = p.waitFor(45, TimeUnit.SECONDS);
+    if (!done) { p.destroyForcibly(); }
+    assertThat(done).as("collector ownership harness has a total deadline").isTrue();
+    String output = new String(p.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    assertThat(p.exitValue()).as(output).isZero();
+    assertThat(output).contains(
+        "PASS collector_fast_stdout_stderr_concurrent",
+        "PASS collector_stdout_cap_is_hard",
+        "PASS collector_stderr_cap_is_hard",
+        "PASS collector_deadline_fails_closed",
+        "PASS collector_early_rejection_is_bounded",
+        "TEST_RUNTIME_BASH=")
+        .doesNotContain("FAIL collector_", "collector-private-marker", "not a child of this shell");
+  }
+
+  @Test
   void remotePythonRuntimeNeedsNoHostPythonAndFailsClosedOffline() throws Exception {
     read("test_runtime.py");
     Process p = new ProcessBuilder("python", "-B", DEPLOY.resolve("test_runtime.py").toString())

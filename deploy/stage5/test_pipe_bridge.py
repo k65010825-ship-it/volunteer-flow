@@ -94,7 +94,7 @@ stage5_pipe_serve "$TEST_ROOT" "${{TEST_PROJECT:-{PROJECT}}}" 0 1 "$((SECONDS+${
 
     def install_redis_docker(self):
         for tool in ('timeout', 'head', 'base64', 'wc', 'cmp', 'mktemp', 'mkdir', 'cat',
-                     'rm', 'rmdir', 'sleep'):
+                     'rm', 'rmdir', 'sleep', 'mkfifo'):
             wrapper = self.root / 'bin' / tool
             wrapper.write_text('#!/bin/bash\nexec /usr/bin/' + tool + ' "$@"\n')
             wrapper.chmod(0o755)
@@ -206,7 +206,7 @@ fi
 
     def test_host_tool_gate_does_not_require_redis_cli_but_still_requires_docker(self):
         tools = ('bash', 'timeout', 'docker', 'mysql', 'mysqldump', 'sha256sum', 'realpath',
-                 'tar', 'id', 'base64', 'head', 'cmp', 'chown')
+                 'tar', 'id', 'base64', 'head', 'cmp', 'chown', 'mkfifo')
         for tool in tools:
             path = self.root / 'bin' / tool
             if not path.exists():

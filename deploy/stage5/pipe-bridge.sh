@@ -11,7 +11,7 @@ stage5_validate_bash_version() {
 
 stage5_require_host_tools() {
   local tool
-  for tool in bash timeout docker mysql mysqldump sha256sum realpath tar id base64 head cmp chown; do
+  for tool in bash timeout docker mysql mysqldump sha256sum realpath tar id base64 head cmp chown mkfifo; do
     command -v "$tool" >/dev/null || {
       printf 'Missing deploy-essential tool: %s\n' "$tool" >&2
       return 1
@@ -197,16 +197,38 @@ stage5_sql_safe() {
   ((code==1))
 }
 
-stage5_pipe_command() {
-  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_id='' redis_container='' approved_id='' inspect_limit out_fd err_fd out_pid err_pid rc=0 remaining
+stage5_pipe_command() (
+  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_id='' redis_container='' approved_id='' inspect_limit out_fifo err_fifo out_fd='' err_fd='' out_pid='' err_pid='' rc=0 remaining out_rc=1 err_rc=1
   shift 6; local -a args=("$@")
+  out_fifo="$work/.stdout.pipe"
+  err_fifo="$work/.stderr.pipe"
+  stage5_pipe_command_cleanup() {
+    local pid
+    if [[ $out_fd =~ ^[0-9]+$ ]]; then exec {out_fd}>&- 2>/dev/null || true; fi
+    if [[ $err_fd =~ ^[0-9]+$ ]]; then exec {err_fd}>&- 2>/dev/null || true; fi
+    out_fd=''; err_fd=''
+    for pid in "$out_pid" "$err_pid"; do
+      [[ $pid =~ ^[0-9]+$ ]] || continue
+      if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null || true; fi
+      wait "$pid" 2>/dev/null || true
+    done
+    rm -f -- "$out_fifo" "$err_fifo"
+  }
+  trap stage5_pipe_command_cleanup EXIT
+  trap 'exit 1' HUP INT TERM
   remaining=$((deadline-SECONDS)); ((remaining>0)) || return 1
   ((requested<=remaining)) || requested=$remaining
-  # Host-only files, collectors and pipe descriptors: no shared redirection target.
-  exec {out_fd}> >(head -c "$((output_cap+1))" > "$work/stdout")
+  # Private FIFOs make both collectors ordinary children that remain directly
+  # waitable by this shell on Bash 4.2 while still draining concurrently.
+  [[ ! -e $out_fifo && ! -L $out_fifo && ! -e $err_fifo && ! -L $err_fifo ]] || return 1
+  mkfifo -m 600 -- "$out_fifo" "$err_fifo" || return 1
+  remaining=$((deadline-SECONDS)); ((remaining>0)) || return 1
+  timeout --signal=TERM --kill-after=1 "$remaining" head -c "$((output_cap+1))" < "$out_fifo" > "$work/stdout" &
   out_pid=$!
-  exec {err_fd}> >(head -c 65537 > "$work/stderr")
+  timeout --signal=TERM --kill-after=1 "$remaining" head -c 65537 < "$err_fifo" > "$work/stderr" &
   err_pid=$!
+  exec {out_fd}> "$out_fifo" || return 1
+  exec {err_fd}> "$err_fifo" || return 1
   if ( while IFS= read -r key; do export -n "$key"; done < <(compgen -e)
        export PATH LANG=C.UTF-8 HOME="$root/host-private/empty-home" STAGE5_RUN_COMPACT="${project#vf5}"
        if [[ ${args[0]} == redis-cli ]]; then
@@ -225,14 +247,14 @@ stage5_pipe_command() {
        remaining=$((deadline-SECONDS)); ((remaining>0)) || exit 1
        ((requested<=remaining)) || requested=$remaining
        timeout --signal=TERM --kill-after=1 "$requested" "${args[@]}" < "$work/stdin" >&"$out_fd" 2>&"$err_fd" ); then rc=0; else rc=$?; fi
-  exec {out_fd}>&-; exec {err_fd}>&-
-  while kill -0 "$out_pid" 2>/dev/null || kill -0 "$err_pid" 2>/dev/null; do
-    if ((SECONDS>=deadline)); then kill "$out_pid" "$err_pid" 2>/dev/null; wait "$out_pid" "$err_pid" 2>/dev/null; return 1; fi
-    sleep 0.01
-  done
-  wait "$out_pid" "$err_pid" || return 1
-  ((rc==0)) && [[ $(wc -c < "$work/stdout") -le $output_cap && $(wc -c < "$work/stderr") -le 65536 ]]
-}
+  exec {out_fd}>&-; out_fd=''
+  exec {err_fd}>&-; err_fd=''
+  wait "$out_pid"; out_rc=$?; out_pid=''
+  wait "$err_pid"; err_rc=$?; err_pid=''
+  rm -f -- "$out_fifo" "$err_fifo"
+  ((rc==0 && out_rc==0 && err_rc==0)) &&
+    [[ $(wc -c < "$work/stdout") -le $output_cap && $(wc -c < "$work/stderr") -le 65536 ]]
+)
 
 stage5_pipe_serve() (
   umask 077
