@@ -77,7 +77,7 @@ class Stage5RunnerContractTest {
         "STAGE5_PYTHON_INDEX_DIGEST='sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6'",
         "STAGE5_PYTHON_MANIFEST_DIGEST='sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6'",
         "STAGE5_PYTHON_CONFIG_DIGEST='sha256:64f864dc81f0907bda2e1f08d208687d261f70ad0a67dbe56d88598f31ed7243'",
-        "STAGE5_PYTHON_OFFLINE_ARCHIVE_SHA256='sha256:437e3a92118aa1e01954b202f11ac592d13da1105171a9fc480dc10fc2620f3b'",
+        "STAGE5_PYTHON_APPROVED_HISTORICAL_ARCHIVE_SHA256='sha256:437e3a92118aa1e01954b202f11ac592d13da1105171a9fc480dc10fc2620f3b'",
         "stage5_python_offline_identity_allowed",
         "\"$STAGE5_PYTHON_RUNTIME_IMAGE\" python -B /acceptance.py")
         .doesNotContain("\"$STAGE5_PYTHON_OFFLINE_TAG\" python -B /acceptance.py");
@@ -160,7 +160,7 @@ class Stage5RunnerContractTest {
     assertThat(wait).contains("attempt", "timeout", "readiness", "backend-a", "backend-b");
     assertThat(replay).contains("--topic", "--partition", "--start-offset", "--end-offset", "--confirm",
         "--dry-run", "1000", "timeout", "--max-messages", "parse.key=true", "key.separator=",
-        "enable.auto.commit=false")
+        "enable.auto.commit=false", "\"$STAGE5_PYTHON_RUNTIME_IMAGE\" python -B -")
         .doesNotContain("--reset-offsets", "--from-beginning", "eval ");
   }
 

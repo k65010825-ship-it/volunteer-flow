@@ -47,6 +47,10 @@ replay_cleanup() {
 }
 trap replay_cleanup EXIT
 stage5_python_preflight "$scratch"
+[[ $STAGE5_PYTHON_RUNTIME_IMAGE == "$STAGE5_PYTHON_CONFIG_DIGEST" ]] || {
+  printf 'Approved Python runtime image unavailable\n' >&2
+  exit 1
+}
 cat "$scratch/python-runtime.txt"
 # No group offsets are reset or committed. Sparse/compacted ranges fail closed.
 compose exec -T kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server kafka:9092 \
@@ -60,7 +64,7 @@ timeout --signal=TERM --kill-after=10 60 docker run --rm -i --pull never --cidfi
   --network none --read-only --cap-drop ALL --security-opt no-new-privileges \
   --cpus 1 --memory 256m --pids-limit 32 --user 65534:65534 --log-driver none \
   --mount "type=bind,src=$scratch/raw,dst=/replay/raw,readonly" \
-  "$STAGE5_PYTHON_IMAGE" python -B - /replay/raw "$start" "$end" > "$scratch/records" <<'PY'
+  "$STAGE5_PYTHON_RUNTIME_IMAGE" python -B - /replay/raw "$start" "$end" > "$scratch/records" <<'PY'
 import json, pathlib, sys, uuid
 source, start, end = sys.argv[1:]
 rows = pathlib.Path(source).read_text().splitlines()

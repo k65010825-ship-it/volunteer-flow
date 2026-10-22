@@ -44,6 +44,12 @@ docker() {
   case "$1 $2" in
     'version --format') [[ ${FAIL_DOCKER:-0} == 1 ]] && return 42; printf '27.0\\n' ;;
     'compose version') printf 'v2.29\\n' ;;
+    'compose -p')
+      if [[ " $* " == *' kafka-console-consumer.sh '* ]]; then
+        printf '%s\\n' 'Offset:0\t7:9\t{"eventId":"00000000-0000-0000-0000-000000000001","organizationId":7,"activityId":9}'
+      elif [[ " $* " == *' kafka-console-producer.sh '* ]]; then
+        cat >/dev/null
+      fi ;;
     'image inspect')
       image=${@: -1}
       if [[ $image == python@sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6 ]]; then
@@ -63,7 +69,13 @@ docker() {
         return 1
       fi ;;
     'pull --quiet') [[ ${FAIL_PULL:-0} == 1 ]] && return 1; : > "$TEST_ROOT/pulled" ;;
-    'run --rm') printf 'VF5|1|00000001|done|0||\\n'; return "${FAIL_RUN:-0}" ;;
+    'run --rm')
+      if [[ ${REPLAY_MODE:-0} == 1 ]]; then
+        printf '%s\\n' '7:9\t{"eventId":"00000000-0000-0000-0000-000000000001","organizationId":7,"activityId":9}'
+      else
+        printf 'VF5|1|00000001|done|0||\\n'
+      fi
+      return "${FAIL_RUN:-0}" ;;
   esac
 }
 python3() { printf 'HOST_PYTHON_CALLED' >&2; return 127; }
@@ -108,7 +120,9 @@ export -f ulimit
         self.assertIn('upstreamIndexDigest=sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6', recorded)
         self.assertIn('linuxAmd64ManifestDigest=sha256:3121f8b0804aa3698ab750d9a39ea4a42657a385c9b133722b915e55c51551a6', recorded)
         self.assertIn('expectedImageConfigDigest=' + expected_id, recorded)
-        self.assertIn('offlineArchiveSha256=sha256:437e3a92118aa1e01954b202f11ac592d13da1105171a9fc480dc10fc2620f3b', recorded)
+        self.assertIn('approvedHistoricalOfflineArchiveSha256=sha256:437e3a92118aa1e01954b202f11ac592d13da1105171a9fc480dc10fc2620f3b', recorded)
+        self.assertNotIn('offlineArchiveSha256=', recorded)
+        self.assertNotIn('observedOfflineArchiveSha256=', recorded)
         self.assertIn('runtimeImageId=' + expected_id, recorded)
         self.assertNotIn('localRepoDigest=', recorded)
         self.assertIn('hostUid=0 containerUid=65534 containerGid=65534', recorded)
@@ -207,6 +221,49 @@ export -f ulimit
         timeouts = (self.root / 'timeouts').read_bytes()
         self.assertIn(b'--signal=TERM\0--kill-after=10\0' +
                       b'180\0docker\0pull\0--quiet\0', timeouts)
+
+    def test_replay_reuses_verified_offline_immutable_image_id_without_pull(self):
+        (self.root / 'compose.yml').write_text('safe\n')
+        (self.root / 'replay.env').write_text('safe\n')
+        replay = HERE / 'replay-dlt.sh'
+        body = (f'bash "{replay.as_posix()}" '
+                '--project vf5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa '
+                '--compose-file "$TEST_ROOT/compose.yml" --env-file "$TEST_ROOT/replay.env" '
+                '--topic vf5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.registration-events.v1.DLT '
+                '--partition 0 --start-offset 0 --end-offset 1 '
+                '--confirm vf5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.registration-events.v1.DLT:0:0:1')
+        result = self.shell(body, FAIL_IMAGE='1', REPLAY_MODE='1')
+        self.assertEqual(0, result.returncode, result.stderr)
+        self.assertNotIn('private-marker', result.stdout + result.stderr)
+        argv = (self.root / 'argv').read_text().split('\0')
+        self.assertFalse(any(arg.lstrip('\n') == 'pull' for arg in argv))
+        run_index = next(i for i, arg in enumerate(argv) if arg.lstrip('\n') == 'run')
+        run_argv = argv[run_index:]
+        self.assertIn('sha256:64f864dc81f0907bda2e1f08d208687d261f70ad0a67dbe56d88598f31ed7243',
+                      run_argv)
+        self.assertNotIn('python:i-was-a-digest', run_argv)
+        self.assertNotIn('python@sha256:a58daefb915e1e03ad48f3ca4df8832065412c5c35cacb9d39f4229184de12b6',
+                         run_argv)
+
+    def test_replay_rejects_wrong_offline_identity_before_container_without_secret_echo(self):
+        (self.root / 'compose.yml').write_text('safe\n')
+        (self.root / 'replay.env').write_text('DB_PASSWORD=private-marker\n')
+        replay = HERE / 'replay-dlt.sh'
+        body = (f'bash "{replay.as_posix()}" '
+                '--project vf5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa '
+                '--compose-file "$TEST_ROOT/compose.yml" --env-file "$TEST_ROOT/replay.env" '
+                '--topic vf5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.registration-events.v1.DLT '
+                '--partition 0 --start-offset 0 --end-offset 1 '
+                '--confirm vf5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.registration-events.v1.DLT:0:0:1')
+        invalid = ('sha256:' + '1' * 64 +
+                   '|linux|amd64|["python:i-was-a-digest"]|[]')
+        result = self.shell(body, FAIL_IMAGE='1', REPLAY_MODE='1',
+                            OFFLINE_INSPECT_FIRST=invalid, OFFLINE_INSPECT_SECOND=invalid)
+        self.assertNotEqual(0, result.returncode)
+        self.assertNotIn('private-marker', result.stdout + result.stderr)
+        argv = (self.root / 'argv').read_text().split('\0')
+        self.assertFalse(any(arg.lstrip('\n') == 'run' for arg in argv))
+        self.assertFalse(any(arg.lstrip('\n') == 'pull' for arg in argv))
 
     def test_container_failure_stays_failure_and_removes_transport(self):
         for code in ('37', '124'):
