@@ -167,5 +167,85 @@ else
   record_fail collector_early_rejection_is_bounded
 fi
 
+# Exercise the real TERM -> EXIT cleanup while both direct collectors are
+# still alive after observing EOF. The kill shim delegates ownership probes
+# but records any numeric-PID signal attempt, so this test detects cleanup
+# that treats PID existence as proof of child ownership.
+new_work signal-cleanup || exit 2
+slow_bin="$test_root/slow-bin"
+mkdir -- "$slow_bin" || exit 2
+case $(uname -s) in
+  CYGWIN*|MINGW*|MSYS*) ;;
+  *) chmod 700 "$slow_bin" || exit 2 ;;
+esac
+real_head=$(command -v head) || exit 2
+cat > "$slow_bin/head" <<'HEAD'
+#!/usr/bin/env bash
+set -u
+"$COLLECTOR_TEST_REAL_HEAD" "$@"
+rc=$?
+printf '%s\n' "$BASHPID" > "$COLLECTOR_TEST_HEAD_READY.$BASHPID"
+stop=$((SECONDS+30))
+while ((SECONDS < stop)); do :; done
+exit "$rc"
+HEAD
+chmod 700 "$slow_bin/head" || exit 2
+cleanup_kill_log="$TEST_WORK/cleanup-kill.log"
+slow_head_ready="$TEST_WORK/head-ready"
+kill() {
+  if [[ ${1:-} == -0 ]]; then
+    builtin kill "$@"
+    return
+  fi
+  printf '%s\n' "$*" >> "$cleanup_kill_log"
+  return 0
+}
+wait() {
+  if [[ ${COLLECTOR_TEST_SIGNAL_ON_WAIT:-0} == 1 ]]; then
+    unset -f wait
+    builtin kill -TERM "$BASHPID"
+    return 143
+  fi
+  builtin wait "$@"
+}
+started=$SECONDS
+COLLECTOR_TEST_REAL_HEAD="$real_head" \
+COLLECTOR_TEST_HEAD_READY="$slow_head_ready" \
+COLLECTOR_TEST_SIGNAL_ON_WAIT=1 \
+PATH="$slow_bin:$PATH" \
+stage5_pipe_command "$test_root" "$project" "$TEST_WORK" "$((SECONDS+4))" 2 32 \
+    collector-fixture fast
+cleanup_rc=$?
+unset -f kill
+unset -f wait
+elapsed=$((SECONDS-started))
+signal_cleanup_ok=1
+living_collectors=0
+[[ $cleanup_rc -ne 0 && $elapsed -le 6 && ! -s $cleanup_kill_log &&
+   ! -e $TEST_WORK/.stdout.pipe && ! -e $TEST_WORK/.stderr.pipe ]] || signal_cleanup_ok=0
+observed_collectors=0
+for ready_file in "$slow_head_ready".*; do
+  [[ -f $ready_file ]] || continue
+  observed_collectors=$((observed_collectors+1))
+  IFS= read -r slow_head_pid < "$ready_file"
+  if [[ $slow_head_pid =~ ^[0-9]+$ ]] && builtin kill -0 "$slow_head_pid" 2>/dev/null; then
+    signal_cleanup_ok=0
+    living_collectors=$((living_collectors+1))
+    builtin kill "$slow_head_pid" 2>/dev/null || true
+  fi
+done
+((observed_collectors == 2)) || signal_cleanup_ok=0
+if ((signal_cleanup_ok)); then
+  record_pass collector_signal_cleanup_waits_without_blind_kill
+else
+  kill_bytes=0
+  [[ ! -f $cleanup_kill_log ]] || kill_bytes=$(wc -c < "$cleanup_kill_log")
+  printf 'SIGNAL_CLEANUP_DEBUG rc=%s elapsed=%s kill_bytes=%s living=%s fifo_out=%s fifo_err=%s\n' \
+    "$cleanup_rc" "$elapsed" "$kill_bytes" "$living_collectors" \
+    "$([[ -e $TEST_WORK/.stdout.pipe ]] && printf present || printf absent)" \
+    "$([[ -e $TEST_WORK/.stderr.pipe ]] && printf present || printf absent)" >&2
+  record_fail collector_signal_cleanup_waits_without_blind_kill
+fi
+
 printf 'TEST_RUNTIME_BASH=%s\n' "$BASH_VERSION"
 ((failures==0))

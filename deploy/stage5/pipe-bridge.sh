@@ -209,7 +209,6 @@ stage5_pipe_command() (
     out_fd=''; err_fd=''
     for pid in "$out_pid" "$err_pid"; do
       [[ $pid =~ ^[0-9]+$ ]] || continue
-      if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null || true; fi
       wait "$pid" 2>/dev/null || true
     done
     rm -f -- "$out_fifo" "$err_fifo"
