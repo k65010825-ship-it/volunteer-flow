@@ -158,7 +158,7 @@ fi
             '[[ ${REDISCLI_AUTH+x} == x && $REDISCLI_AUTH == redis-private-marker ]]',
             '[[ ${REDISCLI_AUTH+x} == x && -z $REDISCLI_AUTH ]]'))
         result = self.serve(request(['redis-cli', '--container-id', REDIS_ID, '--version'], data=b'') + done(),
-                            PRESERVE_DOCKER='1')
+                            PRESERVE_DOCKER='1', FAKE_BUDGET='8')
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertNotIn(b'redis-private-marker', result.stdout + result.stderr)
         self.assertNotIn(b'redis-private-marker', (self.root / 'docker.argv').read_bytes())

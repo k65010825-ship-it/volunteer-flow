@@ -229,13 +229,15 @@ stage5_pipe_command() (
   exec {out_guard}<> "$out_fifo" || return 1
   exec {err_guard}<> "$err_fifo" || return 1
   remaining=$((deadline-SECONDS)); ((remaining>0)) || return 1
-  ( exec {out_guard}>&-
+  ( exec 0< "$out_fifo"
+    exec {out_guard}>&-
     exec {err_guard}>&-
-    exec timeout --signal=TERM --kill-after=1 "$remaining" head -c "$((output_cap+1))" < "$out_fifo" > "$work/stdout" ) &
+    exec timeout --signal=TERM --kill-after=1 "$remaining" head -c "$((output_cap+1))" > "$work/stdout" ) &
   out_pid=$!
-  ( exec {out_guard}>&-
+  ( exec 0< "$err_fifo"
+    exec {out_guard}>&-
     exec {err_guard}>&-
-    exec timeout --signal=TERM --kill-after=1 "$remaining" head -c 65537 < "$err_fifo" > "$work/stderr" ) &
+    exec timeout --signal=TERM --kill-after=1 "$remaining" head -c 65537 > "$work/stderr" ) &
   err_pid=$!
   exec {out_fd}> "$out_fifo" || return 1
   exec {err_fd}> "$err_fifo" || return 1

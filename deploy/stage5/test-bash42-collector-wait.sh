@@ -172,6 +172,7 @@ fi
 # but records any numeric-PID signal attempt, so this test detects cleanup
 # that treats PID existence as proof of child ownership.
 new_work signal-cleanup || exit 2
+collector_base_path=$PATH
 slow_bin="$test_root/slow-bin"
 mkdir -- "$slow_bin" || exit 2
 case $(uname -s) in
@@ -259,13 +260,39 @@ root=$2
 project=$3
 work=$4
 source "$bridge"
+worker_pid=$BASHPID
+stage_owner=''
 startup_signal_before_writer() {
-  case $BASH_COMMAND in
-    exec*'{out_fd}'*)
-      trap - DEBUG
-      builtin kill -TERM "$BASHPID"
-      ;;
-  esac
+  local command=$BASH_COMMAND ready_count ready_file wait_deadline
+  if [[ -z $stage_owner && $BASHPID != "$worker_pid" ]]; then
+    stage_owner=$BASHPID
+  fi
+  if [[ -n $stage_owner && $BASHPID != "$stage_owner" ]]; then
+    case $command in
+      exec*)
+        : > "$work/child-ready.$BASHPID"
+        while [[ ! -e $work/release-children ]]; do sleep 0.02; done
+        trap - DEBUG
+        ;;
+    esac
+  elif [[ -n $stage_owner && $BASHPID == "$stage_owner" ]]; then
+    case $command in
+      exec*'{out_fd}'*)
+        wait_deadline=$((SECONDS+2))
+        while ((SECONDS <= wait_deadline)); do
+          ready_count=0
+          for ready_file in "$work"/child-ready.*; do
+            [[ -f $ready_file ]] && ready_count=$((ready_count+1))
+          done
+          ((ready_count == 2)) && break
+          sleep 0.02
+        done
+        : > "$work/parent-entered-cleanup"
+        trap - DEBUG
+        builtin kill -TERM "$BASHPID"
+        ;;
+    esac
+  fi
 }
 trap startup_signal_before_writer DEBUG
 stage5_pipe_command "$root" "$project" "$work" "$((SECONDS+3))" 2 32 \
@@ -273,18 +300,29 @@ stage5_pipe_command "$root" "$project" "$work" "$((SECONDS+3))" 2 32 \
 WORKER
 chmod 700 "$startup_worker" || exit 2
 started=$SECONDS
-if timeout --signal=KILL 8 bash "$startup_worker" "$bridge" "$test_root" "$project" "$TEST_WORK"; then
-  startup_rc=0
-else
-  startup_rc=$?
-fi
+PATH="$collector_base_path" timeout --signal=KILL 8 bash "$startup_worker" "$bridge" "$test_root" "$project" "$TEST_WORK" &
+startup_timeout_pid=$!
+release_deadline=$((SECONDS+4))
+while ((SECONDS <= release_deadline)); do
+  [[ -e $TEST_WORK/parent-entered-cleanup ]] && break
+  builtin kill -0 "$startup_timeout_pid" 2>/dev/null || break
+  sleep 0.02
+done
+[[ ! -e $TEST_WORK/parent-entered-cleanup ]] || : > "$TEST_WORK/release-children"
+if wait "$startup_timeout_pid"; then startup_rc=0; else startup_rc=$?; fi
 elapsed=$((SECONDS-started))
-if [[ $startup_rc -ne 0 && $elapsed -le 6 &&
+startup_children=0
+for ready_file in "$TEST_WORK"/child-ready.*; do
+  [[ -f $ready_file ]] && startup_children=$((startup_children+1))
+done
+if [[ $startup_rc -ne 0 && $elapsed -le 6 && $startup_children -eq 2 &&
+      -e $TEST_WORK/parent-entered-cleanup &&
       ! -e $TEST_WORK/.stdout.pipe && ! -e $TEST_WORK/.stderr.pipe ]]; then
   record_pass collector_startup_signal_remains_deadline_bounded
 else
-  printf 'STARTUP_CLEANUP_DEBUG rc=%s elapsed=%s fifo_out=%s fifo_err=%s\n' \
-    "$startup_rc" "$elapsed" \
+  printf 'STARTUP_CLEANUP_DEBUG rc=%s elapsed=%s children=%s cleanup_marker=%s fifo_out=%s fifo_err=%s\n' \
+    "$startup_rc" "$elapsed" "$startup_children" \
+    "$([[ -e $TEST_WORK/parent-entered-cleanup ]] && printf present || printf absent)" \
     "$([[ -e $TEST_WORK/.stdout.pipe ]] && printf present || printf absent)" \
     "$([[ -e $TEST_WORK/.stderr.pipe ]] && printf present || printf absent)" >&2
   record_fail collector_startup_signal_remains_deadline_bounded
