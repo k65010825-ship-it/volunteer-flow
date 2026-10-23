@@ -198,7 +198,7 @@ stage5_sql_safe() {
 }
 
 stage5_pipe_command() (
-  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_id='' redis_container='' approved_id='' inspect_limit out_fifo err_fifo out_fd='' err_fd='' out_pid='' err_pid='' rc=0 remaining out_rc=1 err_rc=1
+  local root=$1 project=$2 work=$3 deadline=$4 requested=$5 output_cap=$6 key auth='' redis_id='' redis_container='' approved_id='' inspect_limit out_fifo err_fifo out_guard='' err_guard='' out_fd='' err_fd='' out_pid='' err_pid='' rc=0 remaining out_rc=1 err_rc=1
   shift 6; local -a args=("$@")
   out_fifo="$work/.stdout.pipe"
   err_fifo="$work/.stderr.pipe"
@@ -206,7 +206,9 @@ stage5_pipe_command() (
     local pid
     if [[ $out_fd =~ ^[0-9]+$ ]]; then exec {out_fd}>&- 2>/dev/null || true; fi
     if [[ $err_fd =~ ^[0-9]+$ ]]; then exec {err_fd}>&- 2>/dev/null || true; fi
-    out_fd=''; err_fd=''
+    if [[ $out_guard =~ ^[0-9]+$ ]]; then exec {out_guard}>&- 2>/dev/null || true; fi
+    if [[ $err_guard =~ ^[0-9]+$ ]]; then exec {err_guard}>&- 2>/dev/null || true; fi
+    out_fd=''; err_fd=''; out_guard=''; err_guard=''
     for pid in "$out_pid" "$err_pid"; do
       [[ $pid =~ ^[0-9]+$ ]] || continue
       wait "$pid" 2>/dev/null || true
@@ -221,13 +223,24 @@ stage5_pipe_command() (
   # waitable by this shell on Bash 4.2 while still draining concurrently.
   [[ ! -e $out_fifo && ! -L $out_fifo && ! -e $err_fifo && ! -L $err_fifo ]] || return 1
   mkfifo -m 600 -- "$out_fifo" "$err_fifo" || return 1
+  # Parent-held read/write guards make every FIFO open non-blocking. Collector
+  # children close their inherited copies before exec, so the recorded direct
+  # children reach deadline-bounded timeout even if startup is interrupted.
+  exec {out_guard}<> "$out_fifo" || return 1
+  exec {err_guard}<> "$err_fifo" || return 1
   remaining=$((deadline-SECONDS)); ((remaining>0)) || return 1
-  timeout --signal=TERM --kill-after=1 "$remaining" head -c "$((output_cap+1))" < "$out_fifo" > "$work/stdout" &
+  ( exec {out_guard}>&-
+    exec {err_guard}>&-
+    exec timeout --signal=TERM --kill-after=1 "$remaining" head -c "$((output_cap+1))" < "$out_fifo" > "$work/stdout" ) &
   out_pid=$!
-  timeout --signal=TERM --kill-after=1 "$remaining" head -c 65537 < "$err_fifo" > "$work/stderr" &
+  ( exec {out_guard}>&-
+    exec {err_guard}>&-
+    exec timeout --signal=TERM --kill-after=1 "$remaining" head -c 65537 < "$err_fifo" > "$work/stderr" ) &
   err_pid=$!
   exec {out_fd}> "$out_fifo" || return 1
   exec {err_fd}> "$err_fifo" || return 1
+  exec {out_guard}>&-; out_guard=''
+  exec {err_guard}>&-; err_guard=''
   if ( while IFS= read -r key; do export -n "$key"; done < <(compgen -e)
        export PATH LANG=C.UTF-8 HOME="$root/host-private/empty-home" STAGE5_RUN_COMPACT="${project#vf5}"
        if [[ ${args[0]} == redis-cli ]]; then

@@ -231,7 +231,6 @@ for ready_file in "$slow_head_ready".*; do
   if [[ $slow_head_pid =~ ^[0-9]+$ ]] && builtin kill -0 "$slow_head_pid" 2>/dev/null; then
     signal_cleanup_ok=0
     living_collectors=$((living_collectors+1))
-    builtin kill "$slow_head_pid" 2>/dev/null || true
   fi
 done
 ((observed_collectors == 2)) || signal_cleanup_ok=0
@@ -245,6 +244,50 @@ else
     "$([[ -e $TEST_WORK/.stdout.pipe ]] && printf present || printf absent)" \
     "$([[ -e $TEST_WORK/.stderr.pipe ]] && printf present || printf absent)" >&2
   record_fail collector_signal_cleanup_waits_without_blind_kill
+fi
+
+# Signal the real function immediately before its first writer open. On the
+# unsafe implementation both asynchronous children are still blocked opening
+# their FIFO readers, so `timeout` has not started and EXIT cleanup hangs.
+new_work startup-signal || exit 2
+startup_worker="$test_root/startup-signal-worker.sh"
+cat > "$startup_worker" <<'WORKER'
+#!/usr/bin/env bash
+set -uT
+bridge=$1
+root=$2
+project=$3
+work=$4
+source "$bridge"
+startup_signal_before_writer() {
+  case $BASH_COMMAND in
+    exec*'{out_fd}'*)
+      trap - DEBUG
+      builtin kill -TERM "$BASHPID"
+      ;;
+  esac
+}
+trap startup_signal_before_writer DEBUG
+stage5_pipe_command "$root" "$project" "$work" "$((SECONDS+3))" 2 32 \
+  collector-fixture fast
+WORKER
+chmod 700 "$startup_worker" || exit 2
+started=$SECONDS
+if timeout --signal=KILL 8 bash "$startup_worker" "$bridge" "$test_root" "$project" "$TEST_WORK"; then
+  startup_rc=0
+else
+  startup_rc=$?
+fi
+elapsed=$((SECONDS-started))
+if [[ $startup_rc -ne 0 && $elapsed -le 6 &&
+      ! -e $TEST_WORK/.stdout.pipe && ! -e $TEST_WORK/.stderr.pipe ]]; then
+  record_pass collector_startup_signal_remains_deadline_bounded
+else
+  printf 'STARTUP_CLEANUP_DEBUG rc=%s elapsed=%s fifo_out=%s fifo_err=%s\n' \
+    "$startup_rc" "$elapsed" \
+    "$([[ -e $TEST_WORK/.stdout.pipe ]] && printf present || printf absent)" \
+    "$([[ -e $TEST_WORK/.stderr.pipe ]] && printf present || printf absent)" >&2
+  record_fail collector_startup_signal_remains_deadline_bounded
 fi
 
 printf 'TEST_RUNTIME_BASH=%s\n' "$BASH_VERSION"
