@@ -22,15 +22,23 @@ public interface OrganizationMemberMapper extends BaseMapper<OrganizationMember>
   OrganizationMember selectByOrganizationAndUser(
       @Param("orgId") Long orgId, @Param("userId") Long userId);
 
-  @Select(
-      "SELECT * FROM organization_member WHERE organization_id=#{orgId} AND user_id=#{userId} AND"
-          + " status='ACTIVE' LIMIT 1")
-  OrganizationMember selectActiveMember(@Param("userId") Long userId, @Param("orgId") Long orgId);
-
+  /** Authorization requires an active organization as well as an active membership. */
   @Select(
       """
-      SELECT * FROM organization_member
-      WHERE organization_id=#{orgId} AND user_id=#{userId} AND status='ACTIVE'
+      SELECT m.* FROM organization_member m
+      WHERE m.organization_id=#{orgId} AND m.user_id=#{userId} AND m.status='ACTIVE'
+      AND EXISTS (SELECT 1 FROM organization o WHERE o.id=m.organization_id AND o.status='ACTIVE')
+      LIMIT 1
+      """)
+  OrganizationMember selectActiveMember(@Param("userId") Long userId, @Param("orgId") Long orgId);
+
+  // The organization subquery is deliberately non-locking: preserve the existing member lock order.
+  // Deactivation blocks new requests; already-authorized concurrent transactions may finish.
+  @Select(
+      """
+      SELECT m.* FROM organization_member m
+      WHERE m.organization_id=#{orgId} AND m.user_id=#{userId} AND m.status='ACTIVE'
+      AND EXISTS (SELECT 1 FROM organization o WHERE o.id=m.organization_id AND o.status='ACTIVE')
       LIMIT 1 FOR UPDATE
       """)
   OrganizationMember selectActiveMemberForUpdate(

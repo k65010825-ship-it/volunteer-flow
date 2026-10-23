@@ -205,6 +205,10 @@ public class OrganizationService {
         || !"ACTIVE".equals(invite.getStatus())
         || !invite.getExpiresAt().isAfter(now())
         || invite.getUsedCount() >= invite.getMaxUses()) throw invalidInvite();
+    // 与停用组织的 UPDATE 共用组织行锁：停用先提交则拒绝，兑换先锁定则允许本次事务完成。
+    // 锁序为 invite -> organization -> 新成员写入；停用组织不会锁 invite，不产生反向锁序。
+    Organization organization = organizations.selectByIdForUpdate(invite.getOrganizationId());
+    if (organization == null || !"ACTIVE".equals(organization.getStatus())) throw invalidInvite();
     OrganizationMember existing =
         members.selectByOrganizationAndUser(invite.getOrganizationId(), userId);
     if (existing != null) return existing;

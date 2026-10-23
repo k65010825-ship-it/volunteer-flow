@@ -42,6 +42,79 @@ class OrganizationServiceTest {
           clock);
 
   @Test
+  void inactiveOrganizationRejectsValidInviteWithoutConsumingIt() {
+    OrganizationInvite invite = validInvite();
+    when(inviteMapper.selectByCodeHashForUpdate(invite.getCodeHash())).thenReturn(invite);
+    Organization organization = new Organization();
+    organization.setId(100L);
+    organization.setStatus("INACTIVE");
+    when(organizationMapper.selectByIdForUpdate(100L)).thenReturn(organization);
+
+    assertThatThrownBy(() -> service.joinByInvite(2L, "join-secret"))
+        .isInstanceOf(com.volunteerflow.infrastructure.web.BusinessException.class)
+        .extracting(ex -> ((com.volunteerflow.infrastructure.web.BusinessException) ex).code())
+        .isEqualTo("INVALID_INVITE");
+    assertThat(invite.getUsedCount()).isZero();
+    verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.<OrganizationMember>any());
+    verify(inviteMapper, never()).updateById(org.mockito.ArgumentMatchers.<OrganizationInvite>any());
+    verifyNoInteractions(auditService);
+  }
+
+  @Test
+  void inactiveOrganizationRejectsEvenDuplicateInviteJoin() {
+    OrganizationInvite invite = validInvite();
+    when(inviteMapper.selectByCodeHashForUpdate(invite.getCodeHash())).thenReturn(invite);
+    Organization organization = new Organization();
+    organization.setId(100L);
+    organization.setStatus("INACTIVE");
+    when(organizationMapper.selectByIdForUpdate(100L)).thenReturn(organization);
+    when(memberMapper.selectByOrganizationAndUser(100L, 2L))
+        .thenReturn(new OrganizationMember());
+
+    assertThatThrownBy(() -> service.joinByInvite(2L, "join-secret"))
+        .isInstanceOf(com.volunteerflow.infrastructure.web.BusinessException.class)
+        .extracting(ex -> ((com.volunteerflow.infrastructure.web.BusinessException) ex).code())
+        .isEqualTo("INVALID_INVITE");
+    verifyNoInteractions(auditService);
+  }
+
+  @Test
+  void missingOrganizationRejectsValidInvite() {
+    OrganizationInvite invite = validInvite();
+    when(inviteMapper.selectByCodeHashForUpdate(invite.getCodeHash())).thenReturn(invite);
+
+    assertThatThrownBy(() -> service.joinByInvite(2L, "join-secret"))
+        .isInstanceOf(com.volunteerflow.infrastructure.web.BusinessException.class)
+        .extracting(ex -> ((com.volunteerflow.infrastructure.web.BusinessException) ex).code())
+        .isEqualTo("INVALID_INVITE");
+    verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.<OrganizationMember>any());
+    verifyNoInteractions(auditService);
+  }
+
+  @Test
+  void activeOrganizationJoinLocksOrganizationBeforeCreatingMembershipAndConsumingInvite() {
+    OrganizationInvite invite = validInvite();
+    when(inviteMapper.selectByCodeHashForUpdate(invite.getCodeHash())).thenReturn(invite);
+    Organization organization = new Organization();
+    organization.setId(100L);
+    organization.setStatus("ACTIVE");
+    when(organizationMapper.selectByIdForUpdate(100L)).thenReturn(organization);
+
+    OrganizationMember result = service.joinByInvite(2L, "join-secret");
+
+    assertThat(result.getOrganizationId()).isEqualTo(100L);
+    assertThat(result.getUserId()).isEqualTo(2L);
+    assertThat(result.getStatus()).isEqualTo("ACTIVE");
+    assertThat(invite.getUsedCount()).isEqualTo(1);
+    var order = inOrder(inviteMapper, organizationMapper, memberMapper);
+    order.verify(inviteMapper).selectByCodeHashForUpdate(invite.getCodeHash());
+    order.verify(organizationMapper).selectByIdForUpdate(100L);
+    order.verify(memberMapper).selectByOrganizationAndUser(100L, 2L);
+    order.verify(memberMapper).insert(result);
+    order.verify(inviteMapper).updateById(invite);
+  }
+
+  @Test
   void inviteStoresHashAndDuplicateJoinDoesNotConsumeUse() {
     OrganizationInvite invite = new OrganizationInvite();
     invite.setId(1L);
@@ -53,6 +126,10 @@ class OrganizationServiceTest {
     invite.setStatus("ACTIVE");
     invite.setExpiresAt(java.time.LocalDateTime.of(2026, 9, 16, 0, 0));
     when(inviteMapper.selectByCodeHashForUpdate(invite.getCodeHash())).thenReturn(invite);
+    Organization organization = new Organization();
+    organization.setId(100L);
+    organization.setStatus("ACTIVE");
+    when(organizationMapper.selectByIdForUpdate(100L)).thenReturn(organization);
     OrganizationMember existing = new OrganizationMember();
     existing.setId(9L);
     when(memberMapper.selectByOrganizationAndUser(100L, 2L)).thenReturn(existing);
@@ -63,6 +140,19 @@ class OrganizationServiceTest {
     verify(inviteMapper, never())
         .updateById(org.mockito.ArgumentMatchers.<OrganizationInvite>any());
     verify(memberMapper, never()).insert(org.mockito.ArgumentMatchers.<OrganizationMember>any());
+  }
+
+  private OrganizationInvite validInvite() {
+    OrganizationInvite invite = new OrganizationInvite();
+    invite.setId(1L);
+    invite.setOrganizationId(100L);
+    invite.setDefaultRoleId(30L);
+    invite.setCodeHash(OrganizationService.hashInvite("join-secret"));
+    invite.setMaxUses(50);
+    invite.setUsedCount(0);
+    invite.setStatus("ACTIVE");
+    invite.setExpiresAt(java.time.LocalDateTime.of(2026, 9, 16, 0, 0));
+    return invite;
   }
 
   @Test

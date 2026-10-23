@@ -19,6 +19,24 @@ class OrganizationAuthorizationServiceTest {
       new OrganizationAuthorizationService(memberMapper, roleMapper, rolePermissionMapper);
 
   @Test
+  void missingUsableMembershipIsHidden() {
+    assertThatThrownBy(() -> service.requireMembership(1L, 100L))
+        .isInstanceOf(BusinessException.class)
+        .extracting(ex -> ((BusinessException) ex).code())
+        .isEqualTo("ORGANIZATION_NOT_FOUND");
+  }
+
+  @Test
+  void missingUsableMembershipCannotUseProtectedOwnerPermission() {
+    when(roleMapper.selectById(10L)).thenReturn(role(10L, "OWNER", true));
+
+    assertThatThrownBy(() -> service.requirePermission(1L, 100L, "member:invite"))
+        .isInstanceOf(BusinessException.class)
+        .extracting(ex -> ((BusinessException) ex).code())
+        .isEqualTo("ORGANIZATION_NOT_FOUND");
+  }
+
+  @Test
   void protectedOwnerHasEveryCurrentAndFuturePermission() {
     OrganizationMember member = member(10L);
     RbacRole owner = role(10L, "OWNER", true);
