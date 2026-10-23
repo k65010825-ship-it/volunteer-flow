@@ -343,6 +343,24 @@ class PromotionServiceTest {
   }
 
   @Test
+  void finishedActivityRejectsPendingOfferAcceptanceEvenBeforePlannedEnd() {
+    Activity finished = new Activity();
+    finished.setId(11L);
+    finished.setOrganizationId(10L);
+    finished.setStatus("FINISHED");
+    finished.setActivityEndAt(now.plusDays(1));
+    when(policies.lockActivityForRegistrationChange(10L, 11L)).thenReturn(finished);
+    rejects(() -> service.respond(21L, 300L, new PromotionResponseRequest("ACCEPT")),
+        "ACTIVITY_NOT_OPEN_FOR_CONFIRMATION");
+    assertThat(offer.getStatus()).isEqualTo("PENDING");
+    assertThat(cycle.getStatus()).isEqualTo("WAITLISTED");
+    verify(offers, never()).updateById(any(PromotionOffer.class));
+    verify(cycles, never()).updateById(any(RegistrationCycle.class));
+    verifyNoInteractions(audit);
+    assertThat(notifications.commands()).isEmpty();
+  }
+
+  @Test
   void foreignOwnerAndChangedLockedOfferAreHidden() {
     assertThatThrownBy(() -> service.respond(99L, 300L, new PromotionResponseRequest("ACCEPT")))
         .isInstanceOfSatisfying(

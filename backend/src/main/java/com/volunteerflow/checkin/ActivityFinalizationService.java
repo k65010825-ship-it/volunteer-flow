@@ -42,6 +42,27 @@ public class ActivityFinalizationService {
     Activity activity = activities.selectByIdForUpdate(activityId);
     if (activity == null) throw new OptimisticLockingFailureException("Claimed activity was not found");
 
+    archive(activity, null, null);
+    return true;
+  }
+
+  /** Caller owns the parent activity lock and has checked activity:change in this transaction. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public void finalizeManually(Activity activity, Long actorId, String reason) {
+    int claimed = activities.claimFinishedManually(activity.getId(), activity.getOrganizationId());
+    if (claimed != 1) {
+      throw new OptimisticLockingFailureException("Manual activity claim affected an unexpected row count");
+    }
+    activity.setStatus("FINISHED");
+    if (activity.getVersion() != null) {
+      activity.setVersion(activity.getVersion() + 1);
+    }
+    archive(activity, actorId, reason);
+  }
+
+  private void archive(Activity activity, Long actorId, String reason) {
+    Long activityId = activity.getId();
+
     // No Java cycle load. Both statements scope the V9 index to this activity and current CONFIRMED cycles.
     // A concurrent registration change that changes the matched count aborts rather than silently finishing partial attendance.
     long expected = cycles.countCurrentConfirmedForActivity(activity.getOrganizationId(), activityId);
@@ -49,9 +70,8 @@ public class ActivityFinalizationService {
     if (updated != expected) throw new OptimisticLockingFailureException("Attendance finalization row count changed");
 
     // recordChange, unlike record, requires exactly one audit insert; any failure rolls back the FINISHED claim.
-    audit.recordChange(activity.getOrganizationId(), null, "activity.finished", "activity", activityId,
-        Map.of("status", "PUBLISHED"), Map.of("status", "FINISHED", "confirmedCount", expected), null);
+    audit.recordChange(activity.getOrganizationId(), actorId, "activity.finished", "activity", activityId,
+        Map.of("status", "PUBLISHED"), Map.of("status", "FINISHED", "confirmedCount", expected), reason);
     cacheInvalidator.evictAfterCommit(activityId);
-    return true;
   }
 }

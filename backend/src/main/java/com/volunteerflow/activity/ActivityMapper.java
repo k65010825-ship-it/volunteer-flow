@@ -33,6 +33,13 @@ public interface ActivityMapper extends BaseMapper<Activity> {
       """)
   int claimFinished(@Param("id") Long id, @Param("now") LocalDateTime now);
 
+  /** Authorized manual completion is explicit; it never changes the planned end timestamp. */
+  @Update("""
+      UPDATE activity SET status='FINISHED', version=version+1
+      WHERE id=#{id} AND organization_id=#{organizationId} AND status='PUBLISHED'
+      """)
+  int claimFinishedManually(@Param("id") Long id, @Param("organizationId") Long organizationId);
+
   record DueActivityId(Long id, LocalDateTime activityEndAt) {}
 
   /** Shared serialization point for publication and draft question mutations. */
