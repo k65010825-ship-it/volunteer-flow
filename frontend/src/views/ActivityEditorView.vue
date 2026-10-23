@@ -405,16 +405,10 @@ async function publish() {
 </script>
 <template>
   <section class="page editor-page">
-    <RouterLink
-      class="text-action"
-      :to="
-        organizationId
-          ? `/organizations/${organizationId}/activities`
-          : '/activities'
-      "
-      >← 活动列表</RouterLink
-    >
     <h1>{{ savedId ? "活动草稿编辑" : "创建志愿活动" }}</h1>
+    <p class="muted editor-intro">
+      先保存活动信息，再配置岗位和报名问题。确认无误后即可发布。
+    </p>
     <p v-if="loading" class="state">正在加载…</p>
     <p v-if="error" class="error" role="alert">{{ error }}</p>
     <p v-if="notice" class="success" role="status">{{ notice }}</p>
@@ -427,18 +421,25 @@ async function publish() {
         <RouterLink :to="`/activities/${savedId}/edit`">草稿固定链接</RouterLink
         ><template v-if="activity"> · 状态 {{ activity.status }}</template>
       </p>
-      <RouterLink
-        v-if="organizationId"
-        :to="`/organizations/${organizationId}/manage`"
-        >返回组织管理</RouterLink
-      >
-      <RouterLink
-        v-if="activity?.status === 'PUBLISHED'"
-        :to="`/activities/${savedId}`"
-        >查看已发布活动</RouterLink
-      >
+      <nav class="workspace-links" aria-label="活动相关页面">
+        <RouterLink
+          v-if="organizationId"
+          :to="`/organizations/${organizationId}/activities`"
+          >活动列表</RouterLink
+        >
+        <RouterLink
+          v-if="organizationId"
+          :to="`/organizations/${organizationId}/manage`"
+          >组织管理</RouterLink
+        >
+        <RouterLink
+          v-if="activity?.status === 'PUBLISHED'"
+          :to="`/activities/${savedId}`"
+          >查看已发布活动</RouterLink
+        >
+      </nav>
       <form class="editor-card" @submit.prevent="save">
-        <fieldset :disabled="!canEdit || busy">
+        <fieldset class="activity-fields" :disabled="!canEdit || busy">
           <legend>活动信息</legend>
           <label
             >活动标题<input

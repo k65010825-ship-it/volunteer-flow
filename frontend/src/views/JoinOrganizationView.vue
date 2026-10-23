@@ -16,7 +16,6 @@ async function submit() {
 </script>
 <template>
   <section class="narrow">
-    <button class="back" @click="$router.back()">← 返回</button>
     <h1>加入组织</h1>
     <p class="muted">
       输入负责人分享给你的邀请码。邀请码只会在创建时展示一次。

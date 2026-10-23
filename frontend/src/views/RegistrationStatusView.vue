@@ -192,7 +192,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="page detail-page">
-    <RouterLink class="back" to="/registrations">← 我的报名</RouterLink>
     <div class="page-heading">
       <div>
         <h1>报名状态</h1>

@@ -242,7 +242,6 @@ const format = (v: string) =>
 </script>
 <template>
   <section class="page detail-page">
-    <button class="back" @click="$router.back()">← 返回活动</button>
     <p v-if="loading" class="state">正在加载活动…</p>
     <div v-else-if="failed || !detail" class="state">
       <strong>活动不存在或你无权查看</strong>

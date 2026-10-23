@@ -711,7 +711,6 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="page detail-page management-page">
-    <button class="back" @click="$router.back()">← 返回活动</button>
     <p v-if="loading" class="state">正在加载活动管理信息…</p>
     <div
       v-else-if="loadError || !detail || !activityForm"

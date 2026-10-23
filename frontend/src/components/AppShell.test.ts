@@ -73,6 +73,18 @@ describe("AppShell notification badge and polling", () => {
     expect(wrapper.get('a[href="/profile"]').text()).toContain("我的资料");
     expect(wrapper.find(".admin-sidebar").exists()).toBe(false);
   });
+  it("hides the shared back action on the user home", async () => {
+    const { wrapper } = await open();
+    expect(wrapper.find(".page-back-button").exists()).toBe(false);
+  });
+  it("offers a safe home fallback when a subpage was opened directly", async () => {
+    const { wrapper, router } = await open("/profile");
+    expect(wrapper.get(".page-back-button").text()).toBe("返回上一页");
+    await wrapper.get(".page-back-button").trigger("click");
+    await flushPromises();
+    expect(router.currentRoute.value.fullPath).toBe("/activities?userView=1");
+    expect(wrapper.find(".page-back-button").exists()).toBe(false);
+  });
   it("renders the unread count on the notification navigation entry", async () => {
     const { wrapper } = await open();
     expect(wrapper.get('[data-test="notification-badge"]').text()).toBe("3");

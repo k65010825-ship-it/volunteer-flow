@@ -3,6 +3,8 @@ import { computed, onBeforeUnmount, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useAuthStore } from "../stores/auth";
 import { useNotificationStore } from "../stores/notifications";
+import PageBack from "./PageBack.vue";
+import { isNavigationHome } from "../router/backNavigation";
 const route = useRoute();
 const router = useRouter();
 const auth = useAuthStore();
@@ -12,6 +14,7 @@ const administratorPage = computed(() => route.path.startsWith("/admin"));
 const isAdministrator = computed(
   () => auth.user?.platformRole === "PLATFORM_ADMIN",
 );
+const showBack = computed(() => !isNavigationHome(route.path));
 async function logout() {
   notifications.stopPolling();
   await auth.logout();
@@ -67,7 +70,9 @@ onBeforeUnmount(notifications.stopPolling);
         退出
       </button>
     </header>
-    <main class="main"><slot /></main>
+    <main class="main" :class="{ 'has-page-back': showBack }">
+      <PageBack v-if="showBack" /><slot />
+    </main>
     <nav
       v-if="!publicPage && !administratorPage"
       class="bottom-nav"
