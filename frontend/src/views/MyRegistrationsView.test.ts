@@ -24,20 +24,44 @@ async function open() {
   return wrapper;
 }
 describe("MyRegistrationsView", () => {
-  it("shows own status and links, enriching each distinct activity once", async () => {
-    mock
-      .onGet("/api/v1/users/me/registrations")
-      .reply(200, {
+  it("requests and renders the next backend page instead of hiding records after twenty", async () => {
+    mock.onGet("/api/v1/users/me/registrations").reply((config) => [
+      200,
+      {
         data: [
-          registration(),
           registration({
-            registrationId: "31",
-            positionId: "21",
-            status: "PENDING_REVIEW",
-            waitlistSequence: null,
+            registrationId: String(config.params.page === 2 ? 99 : 30),
           }),
         ],
-      });
+        meta: { page: config.params.page, size: 20, total: 21 },
+      },
+    ]);
+    mock.onGet("/api/v1/activities/10").reply(200, { data: activityDetail });
+    const wrapper = await open();
+    const next = wrapper.findAll(".pagination button")[1];
+    expect(next.attributes("disabled")).toBeUndefined();
+    await next.trigger("click");
+    await flushPromises();
+    expect(wrapper.find('a[href="/registrations/99"]').exists()).toBe(true);
+    expect(wrapper.get(".pagination").text()).toContain("第 2 页");
+    expect(
+      mock.history.get.filter(
+        (r) => r.url === "/api/v1/users/me/registrations",
+      )[1].params.page,
+    ).toBe(2);
+  });
+  it("shows own status and links, enriching each distinct activity once", async () => {
+    mock.onGet("/api/v1/users/me/registrations").reply(200, {
+      data: [
+        registration(),
+        registration({
+          registrationId: "31",
+          positionId: "21",
+          status: "PENDING_REVIEW",
+          waitlistSequence: null,
+        }),
+      ],
+    });
     mock.onGet("/api/v1/activities/10").reply(200, { data: activityDetail });
     const wrapper = await open();
     expect(wrapper.text()).toContain("开学典礼");

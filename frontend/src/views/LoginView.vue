@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import { useAuthStore } from "../stores/auth";
+import { loginDestination } from "../router/access";
 const username = ref("");
 const password = ref("");
 const error = ref("");
@@ -14,7 +15,7 @@ async function submit() {
   loading.value = true;
   try {
     await auth.login(username.value, password.value);
-    await router.replace(String(route.query.redirect || "/activities"));
+    await router.replace(loginDestination(route.query.redirect, auth.user));
   } catch {
     error.value = "用户名或密码不正确";
   } finally {

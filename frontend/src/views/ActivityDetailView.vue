@@ -9,6 +9,7 @@ import {
 } from "vue";
 import { useRouter } from "vue-router";
 import { getActivity, getManagementActivity } from "../api/activities";
+import { getOrganizationAccess } from "../api/organizations";
 import { getAttendanceSummary, getCurrentCheckin } from "../api/checkins";
 import {
   getRegistrationForm,
@@ -80,16 +81,35 @@ async function loadActivity() {
   } catch {
     if (request === activityRequest) canManage.value = false;
   }
+  // Cancellation is an independent permission; do not require change access merely to show its entry.
+  if (request !== activityRequest) return;
+  const organizationId = detail.value?.activity.organizationId;
+  if (organizationId) {
+    try {
+      const access = await getOrganizationAccess(organizationId);
+      if (request === activityRequest)
+        canManage.value = access.permissionCodes.some(
+          (code) => code === "activity:change" || code === "activity:cancel",
+        );
+    } catch {
+      /* The protected management probe remains a compatibility fallback. */
+    }
+  }
   // These protected probes use check-in permissions, independent of activity management.
   if (request !== activityRequest) return;
   const activityId = props.id;
   await Promise.all([
-    getCurrentCheckin(activityId).then((current) => {
-      if (request === activityRequest) canCheckin.value = Boolean(current.attendance);
-    }).catch(() => {}),
-    getAttendanceSummary(activityId).then(() => {
-      if (request === activityRequest) canManageCheckin.value = true;
-    }).catch(() => {}),
+    getCurrentCheckin(activityId)
+      .then((current) => {
+        if (request === activityRequest)
+          canCheckin.value = Boolean(current.attendance);
+      })
+      .catch(() => {}),
+    getAttendanceSummary(activityId)
+      .then(() => {
+        if (request === activityRequest) canManageCheckin.value = true;
+      })
+      .catch(() => {}),
   ]);
 }
 
@@ -240,8 +260,20 @@ const format = (v: string) =>
         >
       </header>
       <nav class="checkin-actions" aria-label="活动签到">
-        <RouterLink v-if="canCheckin" class="secondary" data-test="checkin-link" :to="`/activities/${detail.activity.id}/check-in`">活动签到</RouterLink>
-        <RouterLink v-if="canManageCheckin" class="secondary" data-test="checkin-management-link" :to="`/activities/${detail.activity.id}/check-in-management`">签到管理</RouterLink>
+        <RouterLink
+          v-if="canCheckin"
+          class="secondary"
+          data-test="checkin-link"
+          :to="`/activities/${detail.activity.id}/check-in`"
+          >活动签到</RouterLink
+        >
+        <RouterLink
+          v-if="canManageCheckin"
+          class="secondary"
+          data-test="checkin-management-link"
+          :to="`/activities/${detail.activity.id}/check-in-management`"
+          >签到管理</RouterLink
+        >
       </nav>
       <dl class="facts">
         <div>
@@ -311,8 +343,7 @@ const format = (v: string) =>
               v-for="question in form.questions"
               :key="questionKey(question)"
               :ref="
-                (instance) =>
-                  setQuestionField(questionKey(question), instance)
+                (instance) => setQuestionField(questionKey(question), instance)
               "
               v-model="answers[questionKey(question)]"
               :question="question"

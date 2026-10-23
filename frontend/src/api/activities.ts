@@ -15,13 +15,110 @@ export async function listActivities(
   return (await apiClient.get(`/api/v1/organizations/${orgId}/activities`)).data
     .data;
 }
+export interface ActivityPage {
+  data: ActivitySummary[];
+  meta: { total: number; page: number; size: number };
+}
+export async function listActivitiesPage(
+  orgId: EntityId,
+  page = 1,
+  size = 20,
+): Promise<ActivityPage> {
+  return (
+    await apiClient.get(`/api/v1/organizations/${orgId}/activities`, {
+      params: { page, size },
+    })
+  ).data;
+}
+export interface ActivityDraftRequest {
+  title: string;
+  description: string;
+  location: string;
+  registrationStartAt: string;
+  registrationEndAt: string;
+  freeCancelDeadlineAt?: string | null;
+  activityStartAt: string;
+  activityEndAt: string;
+}
+export async function createActivity(
+  orgId: EntityId,
+  body: ActivityDraftRequest,
+): Promise<Activity> {
+  return (
+    await apiClient.post(`/api/v1/organizations/${orgId}/activities`, body)
+  ).data.data;
+}
+export async function updateActivity(
+  id: EntityId,
+  body: ActivityDraftRequest,
+): Promise<Activity> {
+  return (await apiClient.put(`/api/v1/activities/${id}`, body)).data.data;
+}
+export async function publishActivity(id: EntityId): Promise<Activity> {
+  return (await apiClient.post(`/api/v1/activities/${id}/publication`)).data
+    .data;
+}
+export async function cancelActivity(
+  id: EntityId,
+  reason: string,
+): Promise<Activity> {
+  return (
+    await apiClient.post(`/api/v1/activities/${id}/cancellation`, { reason })
+  ).data.data;
+}
+export async function completeActivity(
+  id: EntityId,
+  reason: string,
+): Promise<Activity> {
+  return (
+    await apiClient.post(`/api/v1/activities/${id}/completion`, { reason })
+  ).data.data;
+}
+export async function createActivityQuestion(
+  id: EntityId,
+  body: PositionQuestionRequest,
+): Promise<PositionManagementQuestion> {
+  return (await apiClient.post(`/api/v1/activities/${id}/questions`, body)).data
+    .data;
+}
+export async function updateActivityQuestion(
+  id: EntityId,
+  questionId: EntityId,
+  body: PositionQuestionRequest,
+): Promise<PositionManagementQuestion> {
+  return (
+    await apiClient.put(
+      `/api/v1/activities/${id}/questions/${questionId}`,
+      body,
+    )
+  ).data.data;
+}
+export async function deleteActivityQuestion(
+  id: EntityId,
+  questionId: EntityId,
+): Promise<void> {
+  await apiClient.delete(`/api/v1/activities/${id}/questions/${questionId}`);
+}
+export async function listActivityQuestions(
+  id: EntityId,
+): Promise<PositionManagementQuestion[]> {
+  return (await apiClient.get(`/api/v1/activities/${id}/questions`)).data.data;
+}
+export async function listPositionQuestions(
+  id: EntityId,
+): Promise<PositionManagementQuestion[]> {
+  return (await apiClient.get(`/api/v1/positions/${id}/questions`)).data.data;
+}
 export async function getActivity(id: EntityId): Promise<ActivityDetail> {
   return (await apiClient.get(`/api/v1/activities/${id}`)).data.data;
 }
 
 type ManagementResponse = {
   activity: Activity;
-  positions: Array<{ position: Position; questions: PositionManagementQuestion[] }>;
+  positions: Array<{
+    position: Position;
+    questions: PositionManagementQuestion[];
+  }>;
   commonQuestionCount: number;
 };
 
@@ -115,14 +212,16 @@ export async function createPosition(
   activityId: EntityId,
   body: PositionDraftRequest,
 ): Promise<Position> {
-  return (await apiClient.post(`/api/v1/activities/${activityId}/positions`, body))
-    .data.data;
+  return (
+    await apiClient.post(`/api/v1/activities/${activityId}/positions`, body)
+  ).data.data;
 }
 
 export async function publishPosition(
   id: EntityId,
 ): Promise<PositionChangeResult> {
-  return (await apiClient.post(`/api/v1/positions/${id}/publication`)).data.data;
+  return (await apiClient.post(`/api/v1/positions/${id}/publication`)).data
+    .data;
 }
 
 export async function createPositionQuestion(
@@ -151,5 +250,7 @@ export async function deletePositionQuestion(
   positionId: EntityId,
   questionId: EntityId,
 ): Promise<void> {
-  await apiClient.delete(`/api/v1/positions/${positionId}/questions/${questionId}`);
+  await apiClient.delete(
+    `/api/v1/positions/${positionId}/questions/${questionId}`,
+  );
 }

@@ -1,19 +1,13 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import { listOrganizations } from "../api/organizations";
 import type { Organization } from "../api/types";
 const organizations = ref<Organization[]>([]);
 const loading = ref(true);
 const failed = ref(false);
-const router = useRouter();
 onMounted(async () => {
   try {
     organizations.value = await listOrganizations();
-    if (organizations.value.length === 1)
-      await router.replace(
-        `/organizations/${organizations.value[0].id}/activities`,
-      );
   } catch {
     failed.value = true;
   } finally {
@@ -23,7 +17,13 @@ onMounted(async () => {
 </script>
 <template>
   <section class="page">
-    <h1>选择组织</h1>
+    <div class="page-heading">
+      <div>
+        <h1>我的组织</h1>
+        <p class="muted">从组织进入活动，查看可以参与的服务。</p>
+      </div>
+      <RouterLink class="primary link-button" to="/join">加入组织</RouterLink>
+    </div>
     <p v-if="loading" class="state">正在加载组织…</p>
     <div v-else-if="failed" class="state">
       <strong>组织加载失败</strong>
@@ -38,7 +38,7 @@ onMounted(async () => {
     </div>
     <div v-else class="organization-list">
       <RouterLink
-        v-for="org in organizations"
+        v-for="org in organizations.filter((item) => item.status === 'ACTIVE')"
         :key="org.id"
         :to="`/organizations/${org.id}/activities`"
         ><strong>{{ org.name }}</strong

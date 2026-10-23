@@ -2,7 +2,7 @@
 import { onBeforeUnmount, onMounted, ref } from "vue";
 import { getActivity } from "../api/activities";
 import {
-  listMyRegistrations,
+  listMyRegistrationsPage,
   registrationStatusLabel,
 } from "../api/registrations";
 import type { ActivityDetail, OwnRegistration } from "../api/types";
@@ -11,6 +11,8 @@ const registrations = ref<OwnRegistration[]>([]);
 const details = ref<Record<string, ActivityDetail>>({});
 const loading = ref(true);
 const failed = ref(false);
+const page = ref(1);
+const total = ref(0);
 let generation = 0;
 
 async function load() {
@@ -19,8 +21,11 @@ async function load() {
   failed.value = false;
   details.value = {};
   try {
-    const result = await listMyRegistrations();
+    const resultPage = await listMyRegistrationsPage(page.value, 20);
+    const result = resultPage.data;
     if (request !== generation) return;
+    total.value = Number(resultPage.meta.total);
+    page.value = Number(resultPage.meta.page);
     registrations.value = result;
     loading.value = false;
     // Enrichment is optional: a missing activity must never hide the member's status.
@@ -47,6 +52,11 @@ function position(item: OwnRegistration) {
   return details.value[item.activityId]?.positions.find(
     (candidate) => candidate.id === item.positionId,
   );
+}
+
+function movePage(next: number) {
+  page.value = next;
+  void load();
 }
 
 onMounted(load);
@@ -115,5 +125,16 @@ onBeforeUnmount(() => {
         </p>
       </RouterLink>
     </div>
+    <nav
+      v-if="!loading && !failed && total > 0"
+      class="pagination"
+      aria-label="我的报名分页"
+    >
+      <button :disabled="page <= 1" @click="movePage(page - 1)">上一页</button>
+      <span>第 {{ page }} 页 · 共 {{ total }} 条</span>
+      <button :disabled="page * 20 >= total" @click="movePage(page + 1)">
+        下一页
+      </button>
+    </nav>
   </section>
 </template>

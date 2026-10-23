@@ -54,6 +54,20 @@ async function open() {
 }
 
 describe("ActivityDetailView registration", () => {
+  it("offers a cancellation management entry without requiring activity:change", async () => {
+    mock
+      .onGet("/api/v1/activities/10/management")
+      .reply(403, { code: "PERMISSION_DENIED" });
+    mock
+      .onGet(
+        `/api/v1/organizations/${activityDetail.activity.organizationId}/access`,
+      )
+      .reply(200, {
+        data: { permissionCodes: ["activity:read", "activity:cancel"] },
+      });
+    const { wrapper } = await open();
+    expect(wrapper.find(".manage-link").exists()).toBe(true);
+  });
   it("hides the management entry when the protected management probe is forbidden", async () => {
     mock.onGet("/api/v1/activities/10/management").reply(403, {
       code: "PERMISSION_DENIED",
@@ -68,22 +82,33 @@ describe("ActivityDetailView registration", () => {
     mock.onGet("/api/v1/activities/10/management").reply(200, {
       data: {
         activity: activityDetail.activity,
-        positions: activityDetail.positions.map((position) => ({ position, questions: [] })),
+        positions: activityDetail.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
       },
     });
 
     const { wrapper } = await open();
 
-    expect(wrapper.get(".manage-link").attributes("href")).toBe("/activities/10/manage");
+    expect(wrapper.get(".manage-link").attributes("href")).toBe(
+      "/activities/10/manage",
+    );
   });
 
   it("does not let an older protected management probe change the next activity entry", async () => {
     let resolveOld!: (value: [number, unknown]) => void;
     mock.onGet("/api/v1/activities/10/management").reply(
-      () => new Promise((resolve) => { resolveOld = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        }),
     );
     mock.onGet("/api/v1/activities/11").reply(200, {
-      data: { ...activityDetail, activity: { ...activityDetail.activity, id: "11" } },
+      data: {
+        ...activityDetail,
+        activity: { ...activityDetail.activity, id: "11" },
+      },
     });
     mock.onGet("/api/v1/activities/11/management").reply(403, {
       code: "PERMISSION_DENIED",
@@ -98,7 +123,10 @@ describe("ActivityDetailView registration", () => {
         data: {
           activity: activityDetail.activity,
           commonQuestionCount: 0,
-          positions: activityDetail.positions.map((position) => ({ position, questions: [] })),
+          positions: activityDetail.positions.map((position) => ({
+            position,
+            questions: [],
+          })),
         },
       },
     ]);
@@ -170,17 +198,15 @@ describe("ActivityDetailView registration", () => {
         ],
       },
     });
-    mock
-      .onPost("/api/v1/activities/10/registrations")
-      .reply(201, {
-        data: {
-          registrationId: "30",
-          cycleId: "40",
-          status: "CONFIRMED",
-          waitlistSequence: null,
-          currentPosition: null,
-        },
-      });
+    mock.onPost("/api/v1/activities/10/registrations").reply(201, {
+      data: {
+        registrationId: "30",
+        cycleId: "40",
+        status: "CONFIRMED",
+        waitlistSequence: null,
+        currentPosition: null,
+      },
+    });
     const { wrapper } = await open();
     await wrapper.get('input[name="position"][value="20"]').setValue();
     await flushPromises();
@@ -244,17 +270,15 @@ describe("ActivityDetailView registration", () => {
   });
 
   it("loads only after selection, validates missing boolean, submits false and navigates", async () => {
-    mock
-      .onPost("/api/v1/activities/10/registrations")
-      .reply(201, {
-        data: {
-          registrationId: "30",
-          cycleId: "40",
-          status: "CONFIRMED",
-          waitlistSequence: null,
-          currentPosition: null,
-        },
-      });
+    mock.onPost("/api/v1/activities/10/registrations").reply(201, {
+      data: {
+        registrationId: "30",
+        cycleId: "40",
+        status: "CONFIRMED",
+        waitlistSequence: null,
+        currentPosition: null,
+      },
+    });
     const { wrapper, router } = await open();
     expect(
       mock.history.get.filter((r) => r.url?.endsWith("registration-form")),

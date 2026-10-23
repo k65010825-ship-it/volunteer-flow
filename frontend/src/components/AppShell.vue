@@ -8,6 +8,10 @@ const router = useRouter();
 const auth = useAuthStore();
 const notifications = useNotificationStore();
 const publicPage = computed(() => Boolean(route.meta.public));
+const administratorPage = computed(() => route.path.startsWith("/admin"));
+const isAdministrator = computed(
+  () => auth.user?.platformRole === "PLATFORM_ADMIN",
+);
 async function logout() {
   notifications.stopPolling();
   await auth.logout();
@@ -24,16 +28,52 @@ watch(
 onBeforeUnmount(notifications.stopPolling);
 </script>
 <template>
-  <div class="app-shell">
+  <div
+    class="app-shell"
+    :class="{ 'admin-shell': administratorPage, 'public-shell': publicPage }"
+  >
+    <aside
+      v-if="administratorPage"
+      class="admin-sidebar"
+      aria-label="平台管理员导航"
+    >
+      <RouterLink class="sidebar-brand" to="/admin/organizations"
+        >VolunteerFlow</RouterLink
+      >
+      <p class="sidebar-label">平台管理</p>
+      <RouterLink to="/admin/organizations">组织管理</RouterLink>
+      <RouterLink to="/profile">个人资料</RouterLink>
+      <RouterLink to="/activities?userView=1">进入用户端</RouterLink>
+      <p class="sidebar-note">平台身份与组织角色独立管理。</p>
+    </aside>
     <header class="topbar">
-      <RouterLink class="brand" to="/activities">VolunteerFlow</RouterLink
-      ><button v-if="!publicPage" class="logout-button" @click="logout">
+      <RouterLink
+        class="brand"
+        :to="
+          administratorPage ? '/admin/organizations' : '/activities?userView=1'
+        "
+        >VolunteerFlow</RouterLink
+      >
+      <span v-if="!publicPage" class="account-name">{{
+        auth.user?.realName || auth.user?.username
+      }}</span>
+      <RouterLink
+        v-if="!publicPage && isAdministrator && !administratorPage"
+        class="admin-entry"
+        to="/admin/organizations"
+        >平台管理</RouterLink
+      >
+      <button v-if="!publicPage" class="logout-button" @click="logout">
         退出
       </button>
     </header>
     <main class="main"><slot /></main>
-    <nav v-if="!publicPage" class="bottom-nav" aria-label="主导航">
-      <RouterLink to="/activities"
+    <nav
+      v-if="!publicPage && !administratorPage"
+      class="bottom-nav"
+      aria-label="主导航"
+    >
+      <RouterLink to="/activities?userView=1"
         ><svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M4 5.5h16v13H4zM8 3v5M16 3v5M4 10h16" /></svg
         >活动</RouterLink
@@ -47,11 +87,16 @@ onBeforeUnmount(notifications.stopPolling);
           <path
             d="M18 9a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"
           /></svg
-        >通知<span v-if="notifications.unreadCount" class="notification-badge" data-test="notification-badge">{{ notifications.unreadCount }}</span></RouterLink
-      ><a aria-disabled="true"
+        >通知<span
+          v-if="notifications.unreadCount"
+          class="notification-badge"
+          data-test="notification-badge"
+          >{{ notifications.unreadCount }}</span
+        ></RouterLink
+      ><RouterLink to="/profile"
         ><svg viewBox="0 0 24 24" aria-hidden="true">
           <path d="M5 4h14v16H5zM8 8h8M8 12h8M8 16h5" /></svg
-        >我的资料</a
+        >我的资料</RouterLink
       >
     </nav>
   </div>

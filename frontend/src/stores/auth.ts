@@ -18,10 +18,12 @@ export const useAuthStore = defineStore("auth", () => {
   async function login(username: string, password: string) {
     await authApi.login(username, password);
     user.value = await authApi.me();
+    ready.value = true;
   }
   async function register(payload: Parameters<typeof authApi.register>[0]) {
     await authApi.register(payload);
     user.value = await authApi.me();
+    ready.value = true;
   }
   async function logout() {
     try {
@@ -29,6 +31,7 @@ export const useAuthStore = defineStore("auth", () => {
     } finally {
       clearAccessToken();
       user.value = null;
+      ready.value = false;
     }
   }
   return { user, ready, restore, login, register, logout };

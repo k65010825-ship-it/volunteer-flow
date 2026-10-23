@@ -1,5 +1,6 @@
 import { isAxiosError } from "axios";
 import { apiClient } from "./http";
+import { normalizePage } from "./pagination";
 import type {
   EntityId,
   OwnOffer,
@@ -107,6 +108,13 @@ export async function listMyRegistrations(): Promise<OwnRegistration[]> {
       "/api/v1/users/me/registrations",
     )
   ).data.data;
+}
+
+export async function listMyRegistrationsPage(page = 1, size = 20) {
+  const response = await apiClient.get("/api/v1/users/me/registrations", {
+    params: { page, size },
+  });
+  return normalizePage<OwnRegistration>(response.data, page, size);
 }
 
 export async function getRegistration(id: EntityId): Promise<OwnRegistration> {

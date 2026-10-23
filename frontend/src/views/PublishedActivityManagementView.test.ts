@@ -4,6 +4,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { apiClient } from "../api/http";
 import type { ActivityDetail } from "../api/types";
 import PublishedActivityManagementView from "./PublishedActivityManagementView.vue";
+vi.mock("../api/organizations", () => ({
+  getOrganizationAccess: vi
+    .fn()
+    .mockResolvedValue({
+      permissionCodes: [
+        "activity:change",
+        "activity:cancel",
+        "activity:create",
+        "activity:publish",
+      ],
+    }),
+}));
 
 const mock = new MockAdapter(apiClient);
 const wrappers: ReturnType<typeof mount>[] = [];
@@ -39,10 +51,25 @@ const activity: ActivityDetail = {
 };
 
 beforeEach(() => {
+  mock
+    .onGet("/api/v1/organizations/1/access")
+    .reply(200, {
+      data: {
+        permissionCodes: [
+          "activity:change",
+          "activity:cancel",
+          "activity:create",
+          "activity:publish",
+        ],
+      },
+    });
   mock.onGet("/api/v1/activities/10/management").reply(200, {
     data: {
       activity: activity.activity,
-      positions: activity.positions.map((position) => ({ position, questions: [] })),
+      positions: activity.positions.map((position) => ({
+        position,
+        questions: [],
+      })),
     },
   });
 });
@@ -54,7 +81,10 @@ afterEach(() => {
 });
 
 async function open(id = "10") {
-  const wrapper = mount(PublishedActivityManagementView, { props: { id } });
+  const wrapper = mount(PublishedActivityManagementView, {
+    props: { id },
+    global: { stubs: { RouterLink: { template: "<a><slot /></a>" } } },
+  });
   wrappers.push(wrapper);
   await flushPromises();
   return wrapper;
@@ -62,10 +92,16 @@ async function open(id = "10") {
 
 describe("PublishedActivityManagementView", () => {
   it.each(["title", "description", "started-description"])(
-    "preserves original ISO precision for a pure %s change", async (field) => {
+    "preserves original ISO precision for a pure %s change",
+    async (field) => {
       vi.useFakeTimers({ toFake: ["Date"] });
-      vi.setSystemTime(new Date(field === "started-description"
-        ? "2026-10-01T10:00:00" : "2026-09-20T10:00:00"));
+      vi.setSystemTime(
+        new Date(
+          field === "started-description"
+            ? "2026-10-01T10:00:00"
+            : "2026-09-20T10:00:00",
+        ),
+      );
       const original = {
         ...activity.activity,
         registrationEndAt: "2026-09-30T08:00:17.123456",
@@ -73,62 +109,105 @@ describe("PublishedActivityManagementView", () => {
         activityStartAt: "2026-10-01T08:00:19.345678",
         activityEndAt: "2026-10-01T12:00:20.456789",
       };
-      mock.onGet("/api/v1/activities/10/management").reply(200, { data: {
-        activity: original,
-        positions: activity.positions.map((position) => ({ position, questions: [] })),
-      } });
+      mock.onGet("/api/v1/activities/10/management").reply(200, {
+        data: {
+          activity: original,
+          positions: activity.positions.map((position) => ({
+            position,
+            questions: [],
+          })),
+        },
+      });
       const wrapper = await open();
-      await wrapper.get(field === "title" ? '[data-test="activity-title"]' : '.change-form textarea')
+      await wrapper
+        .get(
+          field === "title"
+            ? '[data-test="activity-title"]'
+            : ".change-form textarea",
+        )
         .setValue("仅更正文字");
-      await wrapper.get('[data-test="review-activity-change"]').trigger("click");
+      await wrapper
+        .get('[data-test="review-activity-change"]')
+        .trigger("click");
       const summary = wrapper.get('[data-test="change-summary"]').text();
       expect(summary).not.toContain("时间");
       await wrapper.get('[data-test="change-reason"]').setValue("文字更正");
-      await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
+      await wrapper
+        .get('[data-test="submit-activity-change"]')
+        .trigger("click");
       await flushPromises();
       expect(JSON.parse(mock.history.post[0].data)).toMatchObject({
         registrationEndAt: original.registrationEndAt,
         activityStartAt: original.activityStartAt,
         activityEndAt: original.activityEndAt,
       });
-      expect(JSON.parse(mock.history.post[0].data)).not.toHaveProperty("freeCancelDeadlineAt");
+      expect(JSON.parse(mock.history.post[0].data)).not.toHaveProperty(
+        "freeCancelDeadlineAt",
+      );
     },
   );
 
   it("preserves service-time seconds and microseconds for a position text change", async () => {
-    const position = { ...activity.positions[0],
-      serviceStartAt: "2026-10-01T09:00:21.123456", serviceEndAt: "2026-10-01T11:00:32.654321" };
-    mock.onGet("/api/v1/activities/10/management").reply(200, { data: {
-      activity: activity.activity, positions: [{ position, questions: [] }],
-    } });
+    const position = {
+      ...activity.positions[0],
+      serviceStartAt: "2026-10-01T09:00:21.123456",
+      serviceEndAt: "2026-10-01T11:00:32.654321",
+    };
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: activity.activity,
+        positions: [{ position, questions: [] }],
+      },
+    });
     const wrapper = await open();
-    await wrapper.get('.managed-position textarea').setValue("仅更正岗位说明");
+    await wrapper.get(".managed-position textarea").setValue("仅更正岗位说明");
     await wrapper.get('[data-test="review-position-20"]').trigger("click");
-    expect(wrapper.get('[data-test="change-summary"]').text()).not.toContain("服务开始时间");
-    expect(wrapper.get('[data-test="change-summary"]').text()).not.toContain("服务结束时间");
+    expect(wrapper.get('[data-test="change-summary"]').text()).not.toContain(
+      "服务开始时间",
+    );
+    expect(wrapper.get('[data-test="change-summary"]').text()).not.toContain(
+      "服务结束时间",
+    );
     await wrapper.get('[data-test="change-reason"]').setValue("岗位说明更正");
     await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
     await flushPromises();
     expect(JSON.parse(mock.history.post[0].data)).toMatchObject({
-      serviceStartAt: "2026-10-01T09:00:21.123456", serviceEndAt: "2026-10-01T11:00:32.654321",
+      serviceStartAt: "2026-10-01T09:00:21.123456",
+      serviceEndAt: "2026-10-01T11:00:32.654321",
     });
   });
 
   it("sends a minute value only for the actually edited time and shows that same difference", async () => {
-    const original = { ...activity.activity, registrationEndAt: "2026-09-30T08:00:17.123456" };
-    mock.onGet("/api/v1/activities/10/management").reply(200, { data: {
-      activity: original, positions: activity.positions.map((position) => ({ position, questions: [] })),
-    } });
+    const original = {
+      ...activity.activity,
+      registrationEndAt: "2026-09-30T08:00:17.123456",
+    };
+    mock.onGet("/api/v1/activities/10/management").reply(200, {
+      data: {
+        activity: original,
+        positions: activity.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
+      },
+    });
     const wrapper = await open();
-    await wrapper.get('.change-form input[type="datetime-local"]').setValue("2026-09-30T09:15");
+    await wrapper
+      .get('.change-form input[type="datetime-local"]')
+      .setValue("2026-09-30T09:15");
     await wrapper.get('[data-test="review-activity-change"]').trigger("click");
-    expect(wrapper.get('[data-test="change-summary"]').text()).toContain("2026-09-30T09:15");
-    expect(wrapper.get('[data-test="change-summary"]').text()).toContain("2026-09-30T08:00:17.123456");
+    expect(wrapper.get('[data-test="change-summary"]').text()).toContain(
+      "2026-09-30T09:15",
+    );
+    expect(wrapper.get('[data-test="change-summary"]').text()).toContain(
+      "2026-09-30T08:00:17.123456",
+    );
     await wrapper.get('[data-test="change-reason"]').setValue("延长报名时间");
     await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
     await flushPromises();
     expect(JSON.parse(mock.history.post[0].data)).toMatchObject({
-      registrationEndAt: "2026-09-30T09:15", activityStartAt: "2026-10-01T08:00:00",
+      registrationEndAt: "2026-09-30T09:15",
+      activityStartAt: "2026-10-01T08:00:00",
     });
   });
   it("summarizes only actually changed allowed activity fields", async () => {
@@ -156,7 +235,10 @@ describe("PublishedActivityManagementView", () => {
 
   it("requires and trims the change reason before submitting the changed fields", async () => {
     mock.onPost("/api/v1/activities/10/changes").reply(200, {
-      data: { activity: { ...activity.activity, title: "迎新典礼" }, notifiedRecipients: 3 },
+      data: {
+        activity: { ...activity.activity, title: "迎新典礼" },
+        notifiedRecipients: 3,
+      },
     });
     const wrapper = await open();
 
@@ -167,7 +249,9 @@ describe("PublishedActivityManagementView", () => {
 
     expect(wrapper.text()).toContain("请填写变更原因");
     expect(mock.history.post).toHaveLength(0);
-    await wrapper.get('[data-test="change-reason"]').setValue("  场地安排调整  ");
+    await wrapper
+      .get('[data-test="change-reason"]')
+      .setValue("  场地安排调整  ");
     await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
     await flushPromises();
 
@@ -219,7 +303,10 @@ describe("PublishedActivityManagementView", () => {
             {
               data: {
                 activity: { ...activity.activity, id: "11", title: "新的活动" },
-                positions: activity.positions.map((position) => ({ position, questions: [] })),
+                positions: activity.positions.map((position) => ({
+                  position,
+                  questions: [],
+                })),
               },
             },
           ],
@@ -232,14 +319,18 @@ describe("PublishedActivityManagementView", () => {
       {
         data: {
           activity: activity.activity,
-          positions: activity.positions.map((position) => ({ position, questions: [] })),
+          positions: activity.positions.map((position) => ({
+            position,
+            questions: [],
+          })),
         },
       },
     ]);
     await flushPromises();
 
     expect(
-      wrapper.get<HTMLInputElement>('[data-test="activity-title"]').element.value,
+      wrapper.get<HTMLInputElement>('[data-test="activity-title"]').element
+        .value,
     ).toBe("新的活动");
   });
 
@@ -279,7 +370,10 @@ describe("PublishedActivityManagementView", () => {
 
   it("omits an unchanged free-cancellation deadline from an activity-change request", async () => {
     mock.onPost("/api/v1/activities/10/changes").reply(200, {
-      data: { activity: { ...activity.activity, title: "迎新典礼" }, notifiedRecipients: 0 },
+      data: {
+        activity: { ...activity.activity, title: "迎新典礼" },
+        notifiedRecipients: 0,
+      },
     });
     const wrapper = await open();
 
@@ -296,13 +390,18 @@ describe("PublishedActivityManagementView", () => {
 
   it("sends an explicit null only when the free-cancellation deadline is cleared", async () => {
     mock.onPost("/api/v1/activities/10/changes").reply(200, {
-      data: { activity: { ...activity.activity, freeCancelDeadlineAt: null }, notifiedRecipients: 0 },
+      data: {
+        activity: { ...activity.activity, freeCancelDeadlineAt: null },
+        notifiedRecipients: 0,
+      },
     });
     const wrapper = await open();
 
     await wrapper.get('[data-test="free-cancel-deadline"]').setValue("");
     await wrapper.get('[data-test="review-activity-change"]').trigger("click");
-    await wrapper.get('[data-test="change-reason"]').setValue("取消免费截止时间");
+    await wrapper
+      .get('[data-test="change-reason"]')
+      .setValue("取消免费截止时间");
     await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
     await flushPromises();
 
@@ -313,7 +412,10 @@ describe("PublishedActivityManagementView", () => {
 
   it("omits the deadline after it is changed and restored before submitting another field", async () => {
     mock.onPost("/api/v1/activities/10/changes").reply(200, {
-      data: { activity: { ...activity.activity, title: "迎新典礼" }, notifiedRecipients: 0 },
+      data: {
+        activity: { ...activity.activity, title: "迎新典礼" },
+        notifiedRecipients: 0,
+      },
     });
     const wrapper = await open();
 
@@ -344,7 +446,10 @@ describe("PublishedActivityManagementView", () => {
 
   it("sends an increased capacity in the formal position-change request", async () => {
     mock.onPost("/api/v1/positions/20/changes").reply(200, {
-      data: { position: { ...activity.positions[0], capacity: 21 }, notifiedRecipients: 1 },
+      data: {
+        position: { ...activity.positions[0], capacity: 21 },
+        notifiedRecipients: 1,
+      },
     });
     const wrapper = await open();
 
@@ -354,7 +459,9 @@ describe("PublishedActivityManagementView", () => {
     await wrapper.get('[data-test="submit-activity-change"]').trigger("click");
     await flushPromises();
 
-    expect(JSON.parse(mock.history.post[0].data)).toMatchObject({ capacity: 21 });
+    expect(JSON.parse(mock.history.post[0].data)).toMatchObject({
+      capacity: 21,
+    });
   });
 
   it("resets old mutation state immediately when navigating to another activity", async () => {
@@ -362,7 +469,10 @@ describe("PublishedActivityManagementView", () => {
     mock.onGet("/api/v1/activities/11/management").reply(200, {
       data: {
         activity: { ...activity.activity, id: "11", title: "新的活动" },
-        positions: activity.positions.map((position) => ({ position, questions: [] })),
+        positions: activity.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
       },
     });
     mock.onPost("/api/v1/activities/10/changes").reply(
@@ -381,19 +491,30 @@ describe("PublishedActivityManagementView", () => {
     await flushPromises();
 
     expect(
-      wrapper.get<HTMLInputElement>('[data-test="activity-title"]').element.value,
+      wrapper.get<HTMLInputElement>('[data-test="activity-title"]').element
+        .value,
     ).toBe("新的活动");
-    expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
+    expect(
+      wrapper
+        .get('[data-test="review-activity-change"]')
+        .attributes("disabled"),
+    ).toBeUndefined();
     expect(wrapper.find('[data-test="change-summary"]').exists()).toBe(false);
     finishOld([
       200,
-      { data: { activity: { ...activity.activity, title: "旧活动变更" }, notifiedRecipients: 7 } },
+      {
+        data: {
+          activity: { ...activity.activity, title: "旧活动变更" },
+          notifiedRecipients: 7,
+        },
+      },
     ]);
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("已通知 7 位受影响成员");
     expect(
-      wrapper.get<HTMLInputElement>('[data-test="activity-title"]').element.value,
+      wrapper.get<HTMLInputElement>('[data-test="activity-title"]').element
+        .value,
     ).toBe("新的活动");
   });
 
@@ -402,11 +523,17 @@ describe("PublishedActivityManagementView", () => {
     mock.onGet("/api/v1/activities/11/management").reply(200, {
       data: {
         activity: { ...activity.activity, id: "11", title: "新的活动" },
-        positions: activity.positions.map((position) => ({ position, questions: [] })),
+        positions: activity.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
       },
     });
     mock.onPost("/api/v1/positions/20/changes").reply(
-      () => new Promise((resolve) => { rejectOld = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          rejectOld = resolve;
+        }),
     );
     const wrapper = await open();
     await wrapper.get('[data-test="position-capacity-20"]').setValue(21);
@@ -420,7 +547,11 @@ describe("PublishedActivityManagementView", () => {
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("活动状态已变化，请刷新后重试");
-    expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
+    expect(
+      wrapper
+        .get('[data-test="review-activity-change"]')
+        .attributes("disabled"),
+    ).toBeUndefined();
   });
 
   it("discards an old draft-creation response after the route changes", async () => {
@@ -428,27 +559,46 @@ describe("PublishedActivityManagementView", () => {
     mock.onGet("/api/v1/activities/11/management").reply(200, {
       data: {
         activity: { ...activity.activity, id: "11", title: "新的活动" },
-        positions: activity.positions.map((position) => ({ position, questions: [] })),
+        positions: activity.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
       },
     });
     mock.onPost("/api/v1/activities/10/positions").reply(
-      () => new Promise((resolve) => { finishOld = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
     );
     const wrapper = await open();
     await wrapper.get('[data-test="new-position-name"]').setValue("旧草稿");
-    await wrapper.get('[data-test="new-position-description"]').setValue("不应进入新活动");
+    await wrapper
+      .get('[data-test="new-position-description"]')
+      .setValue("不应进入新活动");
     await wrapper.get('[data-test="save-draft-position"]').trigger("click");
 
     await wrapper.setProps({ id: "11" });
     await flushPromises();
     finishOld([
       201,
-      { data: { ...activity.positions[0], id: "99", name: "旧草稿", status: "DRAFT" } },
+      {
+        data: {
+          ...activity.positions[0],
+          id: "99",
+          name: "旧草稿",
+          status: "DRAFT",
+        },
+      },
     ]);
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("旧草稿");
-    expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
+    expect(
+      wrapper
+        .get('[data-test="review-activity-change"]')
+        .attributes("disabled"),
+    ).toBeUndefined();
   });
 
   it("discards an old draft-publication response after the route changes", async () => {
@@ -458,18 +608,32 @@ describe("PublishedActivityManagementView", () => {
       data: {
         activity: activity.activity,
         positions: [
-          { position: { ...activity.positions[0], id: "99", name: "旧草稿", status: "DRAFT" }, questions: [] },
+          {
+            position: {
+              ...activity.positions[0],
+              id: "99",
+              name: "旧草稿",
+              status: "DRAFT",
+            },
+            questions: [],
+          },
         ],
       },
     });
     mock.onGet("/api/v1/activities/11/management").reply(200, {
       data: {
         activity: { ...activity.activity, id: "11", title: "新的活动" },
-        positions: activity.positions.map((position) => ({ position, questions: [] })),
+        positions: activity.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
       },
     });
     mock.onPost("/api/v1/positions/99/publication").reply(
-      () => new Promise((resolve) => { finishOld = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
     );
     const wrapper = await open();
     await wrapper.get('[data-test="publish-position-99"]').trigger("click");
@@ -477,31 +641,51 @@ describe("PublishedActivityManagementView", () => {
     await flushPromises();
     finishOld([
       200,
-      { data: { position: { ...activity.positions[0], id: "99", status: "ACTIVE" }, notifiedRecipients: 7 } },
+      {
+        data: {
+          position: { ...activity.positions[0], id: "99", status: "ACTIVE" },
+          notifiedRecipients: 7,
+        },
+      },
     ]);
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("已通知 7 位受影响成员");
-    expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
+    expect(
+      wrapper
+        .get('[data-test="review-activity-change"]')
+        .attributes("disabled"),
+    ).toBeUndefined();
   });
 
   it("clears an unsubmitted new-position draft before loading another activity", async () => {
     mock.onGet("/api/v1/activities/11/management").reply(200, {
       data: {
         activity: { ...activity.activity, id: "11", title: "新的活动" },
-        positions: activity.positions.map((position) => ({ position, questions: [] })),
+        positions: activity.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
       },
     });
     const wrapper = await open();
-    await wrapper.get('[data-test="new-position-name"]').setValue("活动 A 草稿");
-    await wrapper.get('[data-test="new-position-description"]').setValue("不得提交给活动 B");
+    await wrapper
+      .get('[data-test="new-position-name"]')
+      .setValue("活动 A 草稿");
+    await wrapper
+      .get('[data-test="new-position-description"]')
+      .setValue("不得提交给活动 B");
 
     await wrapper.setProps({ id: "11" });
     await flushPromises();
 
-    expect(wrapper.get<HTMLInputElement>('[data-test="new-position-name"]').element.value).toBe("");
     expect(
-      wrapper.get<HTMLTextAreaElement>('[data-test="new-position-description"]').element.value,
+      wrapper.get<HTMLInputElement>('[data-test="new-position-name"]').element
+        .value,
+    ).toBe("");
+    expect(
+      wrapper.get<HTMLTextAreaElement>('[data-test="new-position-description"]')
+        .element.value,
     ).toBe("");
     await wrapper.get('[data-test="save-draft-position"]').trigger("click");
     expect(mock.history.post).toHaveLength(0);
@@ -514,7 +698,10 @@ describe("PublishedActivityManagementView", () => {
         activity: activity.activity,
         commonQuestionCount: 0,
         positions: [
-          { position: { ...activity.positions[0], id: "99", status: "DRAFT" }, questions: [] },
+          {
+            position: { ...activity.positions[0], id: "99", status: "DRAFT" },
+            questions: [],
+          },
         ],
       },
     });
@@ -522,7 +709,9 @@ describe("PublishedActivityManagementView", () => {
     await wrapper.get('[data-test="add-question-99"]').trigger("click");
     await wrapper.get('[data-test="question-title-99-0"]').setValue("接待经验");
 
-    expect(wrapper.get('[data-test="publish-position-99"]').attributes("disabled")).toBeDefined();
+    expect(
+      wrapper.get('[data-test="publish-position-99"]').attributes("disabled"),
+    ).toBeDefined();
     expect(mock.history.post).toHaveLength(0);
   });
 
@@ -535,15 +724,28 @@ describe("PublishedActivityManagementView", () => {
         positions: [
           {
             position: { ...activity.positions[0], id: "99", status: "DRAFT" },
-            questions: [{ id: "100", questionType: "TEXT", title: "接待经验", requiredQuestion: false, optionsJson: null, sortOrder: 1 }],
+            questions: [
+              {
+                id: "100",
+                questionType: "TEXT",
+                title: "接待经验",
+                requiredQuestion: false,
+                optionsJson: null,
+                sortOrder: 1,
+              },
+            ],
           },
         ],
       },
     });
     const wrapper = await open();
-    await wrapper.get('[data-test="question-title-99-0"]').setValue("更新后的经验");
+    await wrapper
+      .get('[data-test="question-title-99-0"]')
+      .setValue("更新后的经验");
 
-    expect(wrapper.get('[data-test="publish-position-99"]').attributes("disabled")).toBeDefined();
+    expect(
+      wrapper.get('[data-test="publish-position-99"]').attributes("disabled"),
+    ).toBeDefined();
   });
 
   it("allows publication after the edited question is saved", async () => {
@@ -555,25 +757,53 @@ describe("PublishedActivityManagementView", () => {
         positions: [
           {
             position: { ...activity.positions[0], id: "99", status: "DRAFT" },
-            questions: [{ id: "100", questionType: "TEXT", title: "接待经验", requiredQuestion: false, optionsJson: null, sortOrder: 1 }],
+            questions: [
+              {
+                id: "100",
+                questionType: "TEXT",
+                title: "接待经验",
+                requiredQuestion: false,
+                optionsJson: null,
+                sortOrder: 1,
+              },
+            ],
           },
         ],
       },
     });
     mock.onPut("/api/v1/positions/99/questions/100").reply(200, {
-      data: { id: "100", questionType: "TEXT", title: "更新后的经验", requiredQuestion: false, optionsJson: null, sortOrder: 1 },
+      data: {
+        id: "100",
+        questionType: "TEXT",
+        title: "更新后的经验",
+        requiredQuestion: false,
+        optionsJson: null,
+        sortOrder: 1,
+      },
     });
     const wrapper = await open();
-    await wrapper.get('[data-test="question-title-99-0"]').setValue("更新后的经验");
-    await wrapper.findAll("button").find((button) => button.text() === "保存问题")!.trigger("click");
+    await wrapper
+      .get('[data-test="question-title-99-0"]')
+      .setValue("更新后的经验");
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "保存问题")!
+      .trigger("click");
     await flushPromises();
 
-    expect(wrapper.get('[data-test="publish-position-99"]').attributes("disabled")).toBeUndefined();
+    expect(
+      wrapper.get('[data-test="publish-position-99"]').attributes("disabled"),
+    ).toBeUndefined();
   });
 
   it("uses common plus position question counts when limiting additions and publication", async () => {
     const questions = Array.from({ length: 8 }, (_, index) => ({
-      id: String(100 + index), questionType: "TEXT", title: `问题${index}`, requiredQuestion: false, optionsJson: null, sortOrder: index + 1,
+      id: String(100 + index),
+      questionType: "TEXT",
+      title: `问题${index}`,
+      requiredQuestion: false,
+      optionsJson: null,
+      sortOrder: index + 1,
     }));
     mock.reset();
     mock.onGet("/api/v1/activities/10/management").reply(200, {
@@ -581,14 +811,21 @@ describe("PublishedActivityManagementView", () => {
         activity: activity.activity,
         commonQuestionCount: 3,
         positions: [
-          { position: { ...activity.positions[0], id: "99", status: "DRAFT" }, questions },
+          {
+            position: { ...activity.positions[0], id: "99", status: "DRAFT" },
+            questions,
+          },
         ],
       },
     });
     const wrapper = await open();
 
-    expect(wrapper.get('[data-test="add-question-99"]').attributes("disabled")).toBeDefined();
-    expect(wrapper.get('[data-test="publish-position-99"]').attributes("disabled")).toBeDefined();
+    expect(
+      wrapper.get('[data-test="add-question-99"]').attributes("disabled"),
+    ).toBeDefined();
+    expect(
+      wrapper.get('[data-test="publish-position-99"]').attributes("disabled"),
+    ).toBeDefined();
   });
 
   it("discards an old question-save response after the route changes", async () => {
@@ -598,25 +835,70 @@ describe("PublishedActivityManagementView", () => {
       data: {
         activity: activity.activity,
         commonQuestionCount: 0,
-        positions: [{ position: { ...activity.positions[0], id: "99", status: "DRAFT" }, questions: [{ id: "100", questionType: "TEXT", title: "旧问题", requiredQuestion: false, optionsJson: null, sortOrder: 1 }] }],
+        positions: [
+          {
+            position: { ...activity.positions[0], id: "99", status: "DRAFT" },
+            questions: [
+              {
+                id: "100",
+                questionType: "TEXT",
+                title: "旧问题",
+                requiredQuestion: false,
+                optionsJson: null,
+                sortOrder: 1,
+              },
+            ],
+          },
+        ],
       },
     });
     mock.onGet("/api/v1/activities/11/management").reply(200, {
-      data: { activity: { ...activity.activity, id: "11", title: "新的活动" }, commonQuestionCount: 0, positions: activity.positions.map((position) => ({ position, questions: [] })) },
+      data: {
+        activity: { ...activity.activity, id: "11", title: "新的活动" },
+        commonQuestionCount: 0,
+        positions: activity.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
+      },
     });
     mock.onPut("/api/v1/positions/99/questions/100").reply(
-      () => new Promise((resolve) => { finishOld = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
     );
     const wrapper = await open();
-    await wrapper.get('[data-test="question-title-99-0"]').setValue("旧响应不得写回");
-    await wrapper.findAll("button").find((button) => button.text() === "保存问题")!.trigger("click");
+    await wrapper
+      .get('[data-test="question-title-99-0"]')
+      .setValue("旧响应不得写回");
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "保存问题")!
+      .trigger("click");
     await wrapper.setProps({ id: "11" });
     await flushPromises();
-    finishOld([200, { data: { id: "100", questionType: "TEXT", title: "旧响应不得写回", requiredQuestion: false, optionsJson: null, sortOrder: 1 } }]);
+    finishOld([
+      200,
+      {
+        data: {
+          id: "100",
+          questionType: "TEXT",
+          title: "旧响应不得写回",
+          requiredQuestion: false,
+          optionsJson: null,
+          sortOrder: 1,
+        },
+      },
+    ]);
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("旧响应不得写回");
-    expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
+    expect(
+      wrapper
+        .get('[data-test="review-activity-change"]')
+        .attributes("disabled"),
+    ).toBeUndefined();
   });
 
   it("discards an old question-delete response after the route changes", async () => {
@@ -626,24 +908,55 @@ describe("PublishedActivityManagementView", () => {
       data: {
         activity: activity.activity,
         commonQuestionCount: 0,
-        positions: [{ position: { ...activity.positions[0], id: "99", status: "DRAFT" }, questions: [{ id: "100", questionType: "TEXT", title: "旧问题", requiredQuestion: false, optionsJson: null, sortOrder: 1 }] }],
+        positions: [
+          {
+            position: { ...activity.positions[0], id: "99", status: "DRAFT" },
+            questions: [
+              {
+                id: "100",
+                questionType: "TEXT",
+                title: "旧问题",
+                requiredQuestion: false,
+                optionsJson: null,
+                sortOrder: 1,
+              },
+            ],
+          },
+        ],
       },
     });
     mock.onGet("/api/v1/activities/11/management").reply(200, {
-      data: { activity: { ...activity.activity, id: "11", title: "新的活动" }, commonQuestionCount: 0, positions: activity.positions.map((position) => ({ position, questions: [] })) },
+      data: {
+        activity: { ...activity.activity, id: "11", title: "新的活动" },
+        commonQuestionCount: 0,
+        positions: activity.positions.map((position) => ({
+          position,
+          questions: [],
+        })),
+      },
     });
     mock.onDelete("/api/v1/positions/99/questions/100").reply(
-      () => new Promise((resolve) => { finishOld = resolve; }),
+      () =>
+        new Promise((resolve) => {
+          finishOld = resolve;
+        }),
     );
     const wrapper = await open();
-    await wrapper.findAll("button").find((button) => button.text() === "删除问题")!.trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "删除问题")!
+      .trigger("click");
     await wrapper.setProps({ id: "11" });
     await flushPromises();
     finishOld([204, undefined]);
     await flushPromises();
 
     expect(wrapper.text()).not.toContain("旧问题");
-    expect(wrapper.get('[data-test="review-activity-change"]').attributes("disabled")).toBeUndefined();
+    expect(
+      wrapper
+        .get('[data-test="review-activity-change"]')
+        .attributes("disabled"),
+    ).toBeUndefined();
   });
 
   it("loads persisted draft positions and questions from the protected management detail", async () => {
@@ -652,7 +965,10 @@ describe("PublishedActivityManagementView", () => {
       data: {
         activity: activity.activity,
         positions: [
-          ...activity.positions.map((position) => ({ position, questions: [] })),
+          ...activity.positions.map((position) => ({
+            position,
+            questions: [],
+          })),
           {
             position: {
               ...activity.positions[0],
@@ -678,7 +994,8 @@ describe("PublishedActivityManagementView", () => {
 
     expect(wrapper.text()).toContain("引导");
     expect(
-      wrapper.get<HTMLInputElement>('[data-test="question-title-99-0"]').element.value,
+      wrapper.get<HTMLInputElement>('[data-test="question-title-99-0"]').element
+        .value,
     ).toBe("有接待经验吗？");
   });
 
@@ -689,7 +1006,12 @@ describe("PublishedActivityManagementView", () => {
         activity: activity.activity,
         positions: [
           {
-            position: { ...activity.positions[0], id: "99", name: "引导", status: "DRAFT" },
+            position: {
+              ...activity.positions[0],
+              id: "99",
+              name: "引导",
+              status: "DRAFT",
+            },
             questions: [],
           },
         ],
@@ -707,15 +1029,25 @@ describe("PublishedActivityManagementView", () => {
     });
     mock.onPost("/api/v1/positions/99/publication").reply(200, {
       data: {
-        position: { ...activity.positions[0], id: "99", name: "引导", status: "ACTIVE" },
+        position: {
+          ...activity.positions[0],
+          id: "99",
+          name: "引导",
+          status: "ACTIVE",
+        },
         notifiedRecipients: 2,
       },
     });
     const wrapper = await open();
 
     await wrapper.get('[data-test="add-question-99"]').trigger("click");
-    await wrapper.get('[data-test="question-title-99-0"]').setValue(" 接待经验 ");
-    await wrapper.findAll("button").find((button) => button.text() === "保存问题")!.trigger("click");
+    await wrapper
+      .get('[data-test="question-title-99-0"]')
+      .setValue(" 接待经验 ");
+    await wrapper
+      .findAll("button")
+      .find((button) => button.text() === "保存问题")!
+      .trigger("click");
     await flushPromises();
     expect(JSON.parse(mock.history.post[0].data)).toMatchObject({
       type: "TEXT",
@@ -724,9 +1056,12 @@ describe("PublishedActivityManagementView", () => {
       options: null,
       sortOrder: 1,
     });
-    expect(wrapper.findAll('[data-test^="question-title-99-"]')).toHaveLength(1);
+    expect(wrapper.findAll('[data-test^="question-title-99-"]')).toHaveLength(
+      1,
+    );
     expect(
-      wrapper.get<HTMLInputElement>('[data-test="question-title-99-0"]').element.value,
+      wrapper.get<HTMLInputElement>('[data-test="question-title-99-0"]').element
+        .value,
     ).toBe("接待经验");
     await wrapper.get('[data-test="publish-position-99"]').trigger("click");
     await flushPromises();
