@@ -62,6 +62,33 @@ public class ActivityQuestionService {
     return entity;
   }
 
+  /** Management definition reads never return answers and do not apply draft-only write gates. */
+  @Transactional(readOnly = true)
+  public List<ActivityQuestion> activityQuestions(Long userId, Long activityId) {
+    Activity activity = readableActivity(activityId);
+    authorization.requirePermission(userId, activity.getOrganizationId(), "activity:create");
+    return activityQuestions.selectByActivity(activity.getOrganizationId(), activityId);
+  }
+
+  @Transactional(readOnly = true)
+  public List<ActivityPositionQuestion> positionQuestions(Long userId, Long positionId) {
+    ActivityPosition position = positions.selectById(positionId);
+    if (position == null) throw positionNotFound();
+    Activity activity = readableActivity(position.getActivityId());
+    authorization.requirePermission(userId, activity.getOrganizationId(),
+        "DRAFT".equals(activity.getStatus()) ? "activity:create" : "activity:change");
+    if (!activity.getOrganizationId().equals(position.getOrganizationId())) throw positionNotFound();
+    return positionQuestions.selectByPosition(
+        activity.getOrganizationId(), activity.getId(), positionId);
+  }
+
+  private Activity readableActivity(Long activityId) {
+    Activity activity = activities.selectById(activityId);
+    if (activity == null)
+      throw new BusinessException(HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+    return activity;
+  }
+
   @Transactional
   public ActivityPositionQuestion createPositionQuestion(
       Long userId, Long positionId, QuestionRequest request) {

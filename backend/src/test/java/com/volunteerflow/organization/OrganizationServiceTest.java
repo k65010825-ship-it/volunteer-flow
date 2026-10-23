@@ -177,6 +177,7 @@ class OrganizationServiceTest {
 
     ArgumentCaptor<OrganizationInvite> captor = ArgumentCaptor.forClass(OrganizationInvite.class);
     verify(inviteMapper).insert(captor.capture());
+    assertThat(result.inviteId()).isEqualTo(captor.getValue().getId());
     assertThat(result.code()).isNotBlank();
     assertThat(captor.getValue().getCodeHash()).hasSize(64).isNotEqualTo(result.code());
     assertThat(captor.getValue().getMaxUses()).isEqualTo(50);

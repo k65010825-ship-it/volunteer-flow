@@ -40,6 +40,18 @@ public class ActivityQuestionController {
         .body(ApiResponse.of(questions.createActivityQuestion(currentUser.id(), activityId, request)));
   }
 
+  @GetMapping("/activities/{activityId}/questions")
+  public ApiResponse<java.util.List<ActivityQuestion>> activityQuestions(
+      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long activityId) {
+    return ApiResponse.of(questions.activityQuestions(currentUser.id(), activityId));
+  }
+
+  @GetMapping("/positions/{positionId}/questions")
+  public ApiResponse<java.util.List<ActivityPositionQuestion>> positionQuestions(
+      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long positionId) {
+    return ApiResponse.of(questions.positionQuestions(currentUser.id(), positionId));
+  }
+
   @PutMapping("/activities/{activityId}/questions/{questionId}")
   public ApiResponse<ActivityQuestion> updateActivityQuestion(
       @AuthenticationPrincipal CurrentUser currentUser,

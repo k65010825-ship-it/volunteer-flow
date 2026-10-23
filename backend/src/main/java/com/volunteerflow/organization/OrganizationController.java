@@ -109,6 +109,20 @@ public class OrganizationController {
     return ApiResponse.of(service.roles(currentUser.id(), id));
   }
 
+  @GetMapping("/organizations/{id}/access")
+  public ApiResponse<OrganizationService.OrganizationAccess> access(
+      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long id) {
+    return ApiResponse.of(service.access(currentUser.id(), id));
+  }
+
+  @GetMapping("/organizations/{id}/roles/{roleId}/permissions")
+  public ApiResponse<List<String>> rolePermissionCodes(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @PathVariable Long id,
+      @PathVariable Long roleId) {
+    return ApiResponse.of(service.rolePermissionCodes(currentUser.id(), id, roleId));
+  }
+
   @GetMapping("/organizations/{id}/permissions")
   public ApiResponse<List<RbacPermission>> permissions(
       @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long id) {

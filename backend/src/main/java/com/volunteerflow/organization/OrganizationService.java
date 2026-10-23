@@ -194,7 +194,7 @@ public class OrganizationService {
     invites.insert(invite);
     audit.record(
         orgId, actorId, "organization.invite.created", "organization_invite", invite.getId(), null);
-    return new InviteCode(raw, expiry, max);
+    return new InviteCode(raw, expiry, max, invite.getId());
   }
 
   @Transactional
@@ -272,6 +272,40 @@ public class OrganizationService {
     authorization.requirePermission(actorId, orgId, "role:read");
     return roles.selectActiveByOrganization(orgId);
   }
+
+  /** Current membership capabilities; platform administrators have no membership bypass here. */
+  @Transactional(readOnly = true)
+  public OrganizationAccess access(Long actorId, Long orgId) {
+    OrganizationMember member = members.selectActiveMember(actorId, orgId);
+    if (member == null)
+      throw new BusinessException(
+          HttpStatus.NOT_FOUND, "ORGANIZATION_NOT_FOUND", "Organization was not found");
+    RbacRole role = roles.selectById(member.getRoleId());
+    if (role == null
+        || !orgId.equals(role.getOrganizationId())
+        || !"ACTIVE".equals(role.getStatus()))
+      throw new BusinessException(
+          HttpStatus.FORBIDDEN, "PERMISSION_DENIED", "You do not have permission for this operation");
+    return new OrganizationAccess(
+        orgId, member.getId(), role.getId(), role.getName(), effectivePermissionCodes(orgId, role));
+  }
+
+  @Transactional(readOnly = true)
+  public List<String> rolePermissionCodes(Long actorId, Long orgId, Long roleId) {
+    authorization.requirePermission(actorId, orgId, "role:read");
+    RbacRole role = roles.selectById(roleId);
+    requireRole(orgId, role);
+    return effectivePermissionCodes(orgId, role);
+  }
+
+  private List<String> effectivePermissionCodes(Long orgId, RbacRole role) {
+    if (Boolean.TRUE.equals(role.getProtectedRole()) && "OWNER".equals(role.getBuiltInType()))
+      return permissions.selectAllActive().stream().map(RbacPermission::getCode).sorted().toList();
+    return grants.selectActivePermissionCodes(orgId, role.getId());
+  }
+
+  public record OrganizationAccess(
+      Long organizationId, Long memberId, Long roleId, String roleName, List<String> permissionCodes) {}
 
   public List<RbacPermission> permissions(Long actorId, Long orgId) {
     authorization.requirePermission(actorId, orgId, "role:read");

@@ -6,6 +6,14 @@ import org.apache.ibatis.annotations.*;
 @Mapper
 public interface RbacRolePermissionMapper extends BaseMapper<RbacRolePermission> {
   @Select(
+      "SELECT DISTINCT p.code FROM rbac_role_permission rp"
+          + " JOIN rbac_permission p ON p.id=rp.permission_id"
+          + " WHERE rp.organization_id=#{orgId} AND rp.role_id=#{roleId}"
+          + " AND p.status='ACTIVE' ORDER BY p.code")
+  java.util.List<String> selectActivePermissionCodes(
+      @Param("orgId") Long orgId, @Param("roleId") Long roleId);
+
+  @Select(
       "SELECT COUNT(*) FROM rbac_role_permission rp JOIN rbac_permission p ON p.id=rp.permission_id"
           + " WHERE rp.organization_id=#{orgId} AND rp.role_id=#{roleId} AND p.code=#{code} AND"
           + " p.status='ACTIVE'")
