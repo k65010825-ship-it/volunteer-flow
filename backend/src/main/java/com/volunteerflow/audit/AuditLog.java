@@ -5,6 +5,9 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import lombok.Getter;
 import lombok.Setter;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
+import java.time.LocalDateTime;
 
 @TableName("audit_log")
 @Getter
@@ -21,4 +24,8 @@ public class AuditLog {
   private String beforeJson;
   private String afterJson;
   private String reason;
+
+  // Database-generated timestamp; audit writes must not override it.
+  @TableField(insertStrategy = FieldStrategy.NEVER, updateStrategy = FieldStrategy.NEVER)
+  private LocalDateTime createTime;
 }
