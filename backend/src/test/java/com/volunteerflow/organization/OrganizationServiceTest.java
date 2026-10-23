@@ -99,6 +99,11 @@ class OrganizationServiceTest {
     organization.setId(100L);
     organization.setStatus("ACTIVE");
     when(organizationMapper.selectByIdForUpdate(100L)).thenReturn(organization);
+    RbacRole defaultRole = new RbacRole();
+    defaultRole.setId(30L);
+    defaultRole.setOrganizationId(100L);
+    defaultRole.setStatus("ACTIVE");
+    when(roleMapper.selectById(30L)).thenReturn(defaultRole);
 
     OrganizationMember result = service.joinByInvite(2L, "join-secret");
 
@@ -130,6 +135,11 @@ class OrganizationServiceTest {
     organization.setId(100L);
     organization.setStatus("ACTIVE");
     when(organizationMapper.selectByIdForUpdate(100L)).thenReturn(organization);
+    RbacRole defaultRole = new RbacRole();
+    defaultRole.setId(30L);
+    defaultRole.setOrganizationId(100L);
+    defaultRole.setStatus("ACTIVE");
+    when(roleMapper.selectById(30L)).thenReturn(defaultRole);
     OrganizationMember existing = new OrganizationMember();
     existing.setId(9L);
     when(memberMapper.selectByOrganizationAndUser(100L, 2L)).thenReturn(existing);

@@ -209,6 +209,10 @@ public class OrganizationService {
     // 锁序为 invite -> organization -> 新成员写入；停用组织不会锁 invite，不产生反向锁序。
     Organization organization = organizations.selectByIdForUpdate(invite.getOrganizationId());
     if (organization == null || !"ACTIVE".equals(organization.getStatus())) throw invalidInvite();
+    RbacRole defaultRole = roles.selectById(invite.getDefaultRoleId());
+    if (defaultRole == null
+        || !invite.getOrganizationId().equals(defaultRole.getOrganizationId())
+        || !"ACTIVE".equals(defaultRole.getStatus())) throw invalidInvite();
     OrganizationMember existing =
         members.selectByOrganizationAndUser(invite.getOrganizationId(), userId);
     if (existing != null) return existing;
@@ -282,7 +286,7 @@ public class OrganizationService {
   @Transactional
   public void setRolePermissions(
       Long actorId, Long orgId, Long roleId, SetRolePermissionsRequest request) {
-    authorization.requirePermission(actorId, orgId, "role:update");
+    lockAndAuthorizeRoleMutation(actorId, orgId, "role:update");
     RbacRole role = roles.selectById(roleId);
     requireRole(orgId, role);
     if (Boolean.TRUE.equals(role.getProtectedRole()))
@@ -294,7 +298,7 @@ public class OrganizationService {
 
   @Transactional
   public RbacRole updateRole(Long actorId, Long orgId, Long roleId, UpdateRoleRequest request) {
-    authorization.requirePermission(actorId, orgId, "role:update");
+    lockAndAuthorizeRoleMutation(actorId, orgId, "role:update");
     RbacRole role = roles.selectById(roleId);
     requireRole(orgId, role);
     if (Boolean.TRUE.equals(role.getProtectedRole())) throw protectedRole();
@@ -307,7 +311,7 @@ public class OrganizationService {
 
   @Transactional
   public void deactivateRole(Long actorId, Long orgId, Long roleId) {
-    authorization.requirePermission(actorId, orgId, "role:update");
+    lockAndAuthorizeRoleMutation(actorId, orgId, "role:update");
     RbacRole role = roles.selectById(roleId);
     requireRole(orgId, role);
     if (Boolean.TRUE.equals(role.getProtectedRole())) throw protectedRole();
@@ -323,7 +327,7 @@ public class OrganizationService {
 
   @Transactional
   public void deleteRole(Long actorId, Long orgId, Long roleId) {
-    authorization.requirePermission(actorId, orgId, "role:update");
+    lockAndAuthorizeRoleMutation(actorId, orgId, "role:update");
     RbacRole role = roles.selectById(roleId);
     if (role == null || !orgId.equals(role.getOrganizationId())) throw notFound();
     if (Boolean.TRUE.equals(role.getProtectedRole()) || !"CUSTOM".equals(role.getBuiltInType()))
@@ -339,10 +343,7 @@ public class OrganizationService {
   @Transactional
   public OrganizationMember assignRole(
       Long actorId, Long orgId, Long memberId, AssignRoleRequest request) {
-    authorization.requirePermission(actorId, orgId, "member:role_assign");
-
-    // Serialize owner-role changes so concurrent requests cannot both remove the last owner.
-    organizations.selectByIdForUpdate(orgId);
+    lockAndAuthorizeRoleMutation(actorId, orgId, "member:role_assign");
     OrganizationMember member = members.selectById(memberId);
     if (member == null
         || !orgId.equals(member.getOrganizationId())
@@ -362,6 +363,14 @@ public class OrganizationService {
     members.updateById(member);
     audit.record(orgId, actorId, "member.role.assigned", "organization_member", memberId, null);
     return member;
+  }
+
+  private void lockAndAuthorizeRoleMutation(Long actorId, Long orgId, String permission) {
+    // 先锁组织再做任何普通读：避免 REPEATABLE READ 在等锁前建立旧角色/成员快照。
+    // 分配、停用、删除、编辑角色与邀请码加入共用组织锁，保持计数检查和写入串行。
+    // 此路径不获取邀请码锁；邀请码加入仍为 invite -> organization，不产生反向锁序。
+    organizations.selectByIdForUpdate(orgId);
+    authorization.requirePermission(actorId, orgId, permission);
   }
 
   private RbacRole createBuiltIn(Long orgId, String name, String type, boolean protectedRole) {
