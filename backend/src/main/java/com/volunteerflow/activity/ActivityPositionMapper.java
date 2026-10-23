@@ -18,6 +18,20 @@ public interface ActivityPositionMapper extends BaseMapper<ActivityPosition> {
   List<ActivityPosition> selectActiveByActivity(
       @Param("orgId") Long orgId, @Param("activityId") Long activityId);
 
+  /** Load public positions once for the current activity page, never once per activity. */
+  @Select("""
+      <script>
+      SELECT * FROM activity_position
+      WHERE organization_id=#{orgId} AND status='ACTIVE' AND activity_id IN
+      <foreach collection="activityIds" item="activityId" open="(" separator="," close=")">
+        #{activityId}
+      </foreach>
+      ORDER BY activity_id,id
+      </script>
+      """)
+  List<ActivityPosition> selectActiveByActivities(
+      @Param("orgId") Long orgId, @Param("activityIds") List<Long> activityIds);
+
   /** Management reads may include unpublished additions; public detail must stay ACTIVE-only. */
   @Select(
       "SELECT * FROM activity_position WHERE organization_id=#{orgId} AND activity_id=#{activityId}"

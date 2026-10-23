@@ -2,6 +2,7 @@ package com.volunteerflow.organization;
 
 import com.volunteerflow.auth.CurrentUser;
 import com.volunteerflow.infrastructure.web.ApiResponse;
+import com.volunteerflow.infrastructure.web.PageResponse;
 import com.volunteerflow.rbac.RbacPermission;
 import com.volunteerflow.rbac.RbacRole;
 import jakarta.validation.Valid;
@@ -18,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** HTTP adapter for organizations, invitations, memberships, and organization-scoped roles. */
@@ -84,9 +86,12 @@ public class OrganizationController {
   }
 
   @GetMapping("/organizations/{id}/members")
-  public ApiResponse<List<OrganizationMember>> members(
-      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long id) {
-    return ApiResponse.of(service.members(currentUser.id(), id));
+  public PageResponse<OrganizationMember> members(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @PathVariable Long id,
+      @RequestParam(name = "page", defaultValue = "1") int page,
+      @RequestParam(name = "size", defaultValue = "20") int size) {
+    return service.members(currentUser.id(), id, page, size);
   }
 
   @PatchMapping("/organizations/{id}/members/{memberId}/role")

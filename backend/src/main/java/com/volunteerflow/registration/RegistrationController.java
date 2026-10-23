@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.volunteerflow.auth.CurrentUser;
 import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
 import com.volunteerflow.infrastructure.web.ApiResponse;
+import com.volunteerflow.infrastructure.web.PageResponse;
 import com.volunteerflow.registration.RegistrationSubmissionService.AnswerInput;
 import com.volunteerflow.registration.RegistrationSubmissionService.RegistrationResult;
 import com.volunteerflow.registration.RegistrationSubmissionService.SubmitRegistrationRequest;
@@ -84,9 +85,11 @@ public class RegistrationController {
   }
 
   @GetMapping("/users/me/registrations")
-  public ApiResponse<List<OwnRegistrationView>> listOwn(
-      @AuthenticationPrincipal CurrentUser currentUser) {
-    return ApiResponse.of(queries.listOwn(currentUser.id()));
+  public PageResponse<OwnRegistrationView> listOwn(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @RequestParam(name = "page", defaultValue = "1") int page,
+      @RequestParam(name = "size", defaultValue = "20") int size) {
+    return queries.listOwn(currentUser.id(), page, size);
   }
 
   @PostMapping("/registrations/{registrationId}/cancellation")

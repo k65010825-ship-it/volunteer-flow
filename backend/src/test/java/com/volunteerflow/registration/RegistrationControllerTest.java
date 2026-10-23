@@ -19,6 +19,7 @@ import com.volunteerflow.infrastructure.ratelimit.RateLimitExceededException;
 import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.infrastructure.web.GlobalExceptionHandler;
+import com.volunteerflow.infrastructure.web.PageResponse;
 import com.volunteerflow.registration.RegistrationSubmissionService.RegistrationResult;
 import com.volunteerflow.registration.RegistrationViews.ManagedRegistrationPage;
 import com.volunteerflow.registration.RegistrationViews.OwnRegistrationView;
@@ -199,7 +200,7 @@ class RegistrationControllerTest {
   @Test
   void memberQueriesOnlyUsePrincipalIdentity() throws Exception {
     when(queries.getOwn(21L, 30L)).thenReturn(ownView());
-    when(queries.listOwn(21L)).thenReturn(List.of(ownView()));
+    when(queries.listOwn(21L, 1, 20)).thenReturn(PageResponse.of(List.of(ownView()), 1, 1, 20));
     mvc.perform(get("/api/v1/registrations/30").param("userId", "999"))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data.cycleId").value(40));
@@ -207,7 +208,7 @@ class RegistrationControllerTest {
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.data[0].registrationId").value(30));
     verify(queries).getOwn(21L, 30L);
-    verify(queries).listOwn(21L);
+    verify(queries).listOwn(21L, 1, 20);
   }
 
   @Test

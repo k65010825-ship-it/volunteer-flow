@@ -55,6 +55,7 @@ class PromotionServiceTest {
     activity.setId(11L); activity.setOrganizationId(10L); activity.setStatus("PUBLISHED");
     activity.setActivityEndAt(now.plusHours(2));
     when(policies.lockActivityForRegistrationChange(10L, 11L)).thenReturn(activity);
+    when(policies.activityForPromotion(10L, 11L)).thenReturn(activity);
     when(registrations.selectById(100L)).thenReturn(registration);
     when(cycles.selectActiveOrLatest(100L)).thenReturn(cycle);
     when(cycles.selectById(101L)).thenReturn(cycle);
@@ -136,7 +137,9 @@ class PromotionServiceTest {
     assertThat(inserted.getValue().getStatus()).isEqualTo("PENDING");
     verify(cycles, times(1)).selectFirstWaitlistedForUpdate(20L);
     verify(cycles, never()).updateById(any(RegistrationCycle.class));
-    verifyNoInteractions(policies);
+    // Current activity admission reads are allowed; the supplied position must not be relocked.
+    verify(policies, never()).lockPositionForRegistrationChange(anyLong());
+    verify(policies, never()).lockActivityForRegistrationChange(anyLong(), anyLong());
   }
 
   @Test

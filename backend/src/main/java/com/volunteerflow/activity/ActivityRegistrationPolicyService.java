@@ -67,6 +67,13 @@ public class ActivityRegistrationPolicyService {
     return activity;
   }
 
+  /** Current nonlocking source for offer admission; safe after existing member/position locks. */
+  @Transactional(propagation = Propagation.MANDATORY, readOnly = true)
+  public Activity activityForPromotion(Long organizationId, Long activityId) {
+    Activity activity = activities.selectByIdForSubmissionRevalidation(activityId);
+    return activity != null && organizationId.equals(activity.getOrganizationId()) ? activity : null;
+  }
+
   /** Call after all blocking locks, while still holding the parent activity, immediately before CONFIRMED writes. */
   public static void requireActivityOpenForConfirmation(Activity activity, LocalDateTime now) {
     if (!isActivityOpenForConfirmation(activity, now)) {

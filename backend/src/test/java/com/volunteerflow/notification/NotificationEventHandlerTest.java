@@ -23,6 +23,22 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 
 class NotificationEventHandlerTest {
   @Test
+  void administratorActionRequiredIntentRoundTripsAndConsumesOnceWithoutRecipientLookup() {
+    String type = "registration.promotion-admin-action-required.v1";
+    assertThat(DomainEventTypes.ALL).contains(type);
+    NotificationConsumerFixture f = new NotificationConsumerFixture();
+    var payload = new NotificationIntentPayload(31L, "PROMOTION_ADMIN_ACTION_REQUIRED",
+        "递补邀请需要处理", "人工审核递补邀请已过期，请选择其他候选人", "PROMOTION_OFFER", 300L);
+    var event = f.codec.decode(f.codec.encode(f.event(type, payload)));
+    assertThat(f.handler.handle(event)).isEqualTo(NotificationEventHandler.ProcessingResult.CREATED);
+    assertThat(f.handler.handle(event)).isEqualTo(NotificationEventHandler.ProcessingResult.DUPLICATE);
+    assertThat(f.rows).hasSize(1);
+    assertThat(f.rows.get(0).getUserId()).isEqualTo(31L);
+    assertThat(f.rows.get(0).getBusinessId()).isEqualTo(300L);
+    assertThat(f.rows.get(0).getDeduplicationKey()).endsWith(":31:IN_APP");
+  }
+
+  @Test
   void commitsConsumedMarkerAndNotificationTogether() {
     NotificationConsumerFixture f = new NotificationConsumerFixture();
     assertThat(f.handler.handle(f.event())).isEqualTo(NotificationEventHandler.ProcessingResult.CREATED);

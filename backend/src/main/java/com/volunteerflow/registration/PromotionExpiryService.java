@@ -102,6 +102,8 @@ public class PromotionExpiryService {
     reconciliation.request(cycle.getOrganizationId(), position.getId(), now);
     if ("FIRST_COME".equals(position.getRegistrationMode())) {
       promotions.offerNextFirstCome(position.getId(), null, "Previous invitation expired");
+    } else if ("REVIEW".equals(position.getRegistrationMode())) {
+      PromotionService.notifyReviewAdministrators(members, events, cycle, offer, "EXPIRED");
     }
     return true;
   }

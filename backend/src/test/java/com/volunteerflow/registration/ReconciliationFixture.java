@@ -49,6 +49,7 @@ final class ReconciliationFixture {
   ReconciliationFixture() {
     activity.setId(11L); activity.setOrganizationId(10L); activity.setStatus("PUBLISHED");
     activity.setRegistrationEndAt(now.minusHours(1)); activity.setActivityEndAt(now.plusHours(2));
+    when(policies.activityForPromotion(10L, 11L)).thenReturn(activity);
     when(positions.selectById(anyLong())).thenAnswer(call -> {
       operations.add("snapshot");
       if (!Objects.equals(call.getArgument(0), 20L)) return null;

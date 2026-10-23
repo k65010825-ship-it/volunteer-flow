@@ -1,6 +1,7 @@
 package com.volunteerflow.registration;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import java.util.List;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
@@ -20,4 +21,10 @@ public interface RegistrationMapper extends BaseMapper<Registration> {
   @Select(
       "SELECT * FROM registration WHERE user_id=#{userId} ORDER BY update_time DESC, id DESC")
   List<Registration> selectOwnedByUser(@Param("userId") Long userId);
+
+  @Select("""
+      SELECT * FROM registration WHERE user_id=#{userId}
+      ORDER BY update_time DESC, id DESC
+      """)
+  IPage<Registration> selectOwnedByUserPage(IPage<Registration> page, @Param("userId") Long userId);
 }

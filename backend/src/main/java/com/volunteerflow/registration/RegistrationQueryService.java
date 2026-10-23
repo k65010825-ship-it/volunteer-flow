@@ -10,6 +10,7 @@ import com.volunteerflow.activity.ActivityPositionMapper;
 import com.volunteerflow.auth.AppUser;
 import com.volunteerflow.auth.AppUserMapper;
 import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.infrastructure.web.PageResponse;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.RegistrationViews.AnswerView;
 import com.volunteerflow.registration.RegistrationViews.ManagedOfferView;
@@ -71,7 +72,22 @@ public class RegistrationQueryService {
 
   @Transactional(readOnly = true)
   public List<OwnRegistrationView> listOwn(Long userId) {
-    List<Registration> ownedRegistrations = registrations.selectOwnedByUser(userId);
+    return listOwn(userId, 1, 20).data();
+  }
+
+  @Transactional(readOnly = true)
+  public PageResponse<OwnRegistrationView> listOwn(Long userId, int page, int size) {
+    long safePage = Math.max(1, page);
+    long safeSize = Math.min(100, Math.max(1, size));
+    var result = registrations.selectOwnedByUserPage(new Page<>(safePage, safeSize), userId);
+    List<Registration> ownedRegistrations = result.getRecords();
+    if (ownedRegistrations.stream().anyMatch(row -> !userId.equals(row.getUserId()))) {
+      throw registrationNotFound();
+    }
+    return PageResponse.of(ownViews(userId, ownedRegistrations), result.getTotal(), safePage, safeSize);
+  }
+
+  private List<OwnRegistrationView> ownViews(Long userId, List<Registration> ownedRegistrations) {
     if (ownedRegistrations.isEmpty()) {
       return List.of();
     }

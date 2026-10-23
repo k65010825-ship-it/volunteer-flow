@@ -83,8 +83,7 @@ class RegistrationQueryServiceTest {
       String attendanceStatus) {
     RegistrationCycle cycle = cycle(101L, 100L, 21L, "CONFIRMED", null);
     cycle.setAttendanceStatus(attendanceStatus);
-    when(registrationMapper.selectOwnedByUser(21L))
-        .thenReturn(List.of(registration(100L, 21L)));
+    ownPage(List.of(registration(100L, 21L)));
     when(cycleMapper.selectActiveOrLatestOwned(21L, List.of(100L)))
         .thenReturn(List.of(cycle));
     when(answerMapper.selectByCycles(List.of(101L))).thenReturn(List.of());
@@ -154,7 +153,7 @@ class RegistrationQueryServiceTest {
   @Test
   void memberListUsesOnlyRegistrationsOwnedByThatMember() {
     Registration registration = registration(100L, 21L);
-    when(registrationMapper.selectOwnedByUser(21L)).thenReturn(List.of(registration));
+    ownPage(List.of(registration));
     when(cycleMapper.selectActiveOrLatestOwned(21L, List.of(100L)))
         .thenReturn(List.of(cycle(101L, 100L, 21L, "CONFIRMED", null)));
     when(answerMapper.selectByCycles(List.of(101L))).thenReturn(List.of());
@@ -165,7 +164,7 @@ class RegistrationQueryServiceTest {
     List<OwnRegistrationView> views = service.listOwn(21L);
 
     assertThat(views).extracting(OwnRegistrationView::registrationId).containsExactly(100L);
-    verify(registrationMapper).selectOwnedByUser(21L);
+    verify(registrationMapper).selectOwnedByUserPage(any(), eq(21L));
   }
 
   @Test
@@ -181,8 +180,7 @@ class RegistrationQueryServiceTest {
     RegistrationAnswer secondAnswer = answer(502L, 201L);
     secondAnswer.setAnswerJson("\"Evenings\"");
     PromotionOffer firstOffer = offer(601L, 101L);
-    when(registrationMapper.selectOwnedByUser(21L))
-        .thenReturn(List.of(firstRegistration, secondRegistration));
+    ownPage(List.of(firstRegistration, secondRegistration));
     when(cycleMapper.selectActiveOrLatestOwned(21L, List.of(100L, 200L)))
         .thenReturn(List.of(firstCycle, secondCycle));
     when(answerMapper.selectByCycles(List.of(101L, 201L)))
@@ -454,6 +452,14 @@ class RegistrationQueryServiceTest {
     user.setStudentNumber("20260021");
     user.setContact("13800000021");
     return user;
+  }
+
+  private void ownPage(List<Registration> rows) {
+    when(registrationMapper.selectOwnedByUserPage(any(), eq(21L))).thenAnswer(call -> {
+      IPage<Registration> page = call.getArgument(0);
+      page.setTotal(rows.size());
+      return page.setRecords(rows);
+    });
   }
 
   private PromotionOffer offer(Long id, Long cycleId) {

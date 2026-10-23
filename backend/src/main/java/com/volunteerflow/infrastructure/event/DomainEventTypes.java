@@ -14,6 +14,8 @@ public final class DomainEventTypes {
   public static final String REGISTRATION_PROMOTION_ACCEPTED = "registration.promotion-accepted.v1";
   public static final String REGISTRATION_PROMOTION_DECLINED = "registration.promotion-declined.v1";
   public static final String REGISTRATION_PROMOTION_EXPIRED = "registration.promotion-expired.v1";
+  public static final String REGISTRATION_PROMOTION_ADMIN_ACTION_REQUIRED =
+      "registration.promotion-admin-action-required.v1";
   public static final String CHECKIN_OPENED = "checkin.opened.v1";
   public static final String CHECKIN_CLOSED = "checkin.closed.v1";
   public static final String CHECKIN_COMPLETED = "checkin.completed.v1";
@@ -23,6 +25,7 @@ public final class DomainEventTypes {
       ACTIVITY_CANCELLED, REGISTRATION_SUBMITTED, REGISTRATION_REVIEWED, REGISTRATION_CANCELLED,
       REGISTRATION_PROMOTION_OFFERED, REGISTRATION_PROMOTION_ACCEPTED,
       REGISTRATION_PROMOTION_DECLINED, REGISTRATION_PROMOTION_EXPIRED,
+      REGISTRATION_PROMOTION_ADMIN_ACTION_REQUIRED,
       CHECKIN_OPENED, CHECKIN_CLOSED, CHECKIN_COMPLETED, CHECKIN_CORRECTED);
 
   private DomainEventTypes() {}

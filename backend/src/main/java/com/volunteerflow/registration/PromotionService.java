@@ -10,6 +10,7 @@ import com.volunteerflow.infrastructure.event.DomainEventCommand;
 import com.volunteerflow.infrastructure.event.DomainEventPublisher;
 import com.volunteerflow.infrastructure.event.DomainEventTypes;
 import com.volunteerflow.infrastructure.event.NotificationIntentPayload;
+import com.volunteerflow.infrastructure.event.NotificationEventTemplate;
 import com.volunteerflow.infrastructure.event.RegistrationStatusPayload;
 import com.volunteerflow.organization.OrganizationMemberMapper;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
@@ -70,7 +71,8 @@ public class PromotionService {
   public PromotionOffer offerNextFirstCome(Long positionId, Long createdBy, String reason) {
     ActivityPosition position = policies.lockPositionForRegistrationChange(positionId);
     if (position == null || !"ACTIVE".equals(position.getStatus())
-        || !"FIRST_COME".equals(position.getRegistrationMode()) || !hasCapacity(position)) {
+        || !"FIRST_COME".equals(position.getRegistrationMode())
+        || !isOpenForNewOffer(position) || !hasCapacity(position)) {
       return null;
     }
     RegistrationCycle cycle = cycles.selectFirstWaitlistedForUpdate(positionId);
@@ -81,7 +83,7 @@ public class PromotionService {
         || cycle.getWaitlistSequence() == null) {
       throw conflict("REGISTRATION_NOT_WAITLISTED", "Candidate is no longer waitlisted");
     }
-    return createOffer(position, cycle, createdBy, normalizeReason(reason));
+    return createOffer(position, cycle, createdBy, normalizeReason(reason), false);
   }
 
   /**
@@ -94,7 +96,7 @@ public class PromotionService {
     if (lockedPosition == null
         || !"ACTIVE".equals(lockedPosition.getStatus())
         || !"FIRST_COME".equals(lockedPosition.getRegistrationMode())
-        || lockedPosition.getCapacity() == null) {
+        || lockedPosition.getCapacity() == null || !isOpenForNewOffer(lockedPosition)) {
       return 0;
     }
     long occupied =
@@ -118,7 +120,9 @@ public class PromotionService {
           || cycle.getWaitlistSequence() == null) {
         throw conflict("REGISTRATION_NOT_WAITLISTED", "Candidate is no longer waitlisted");
       }
-      createOffer(lockedPosition, cycle, actorId, normalizedReason);
+      if (createOffer(lockedPosition, cycle, actorId, normalizedReason, false) == null) {
+        break;
+      }
       created++;
     }
     return created;
@@ -160,7 +164,7 @@ public class PromotionService {
     if (!hasCapacity(position)) {
       throw conflict("POSITION_CAPACITY_FULL", "Position capacity is full");
     }
-    return createOffer(position, cycle, actorId, reason);
+    return createOffer(position, cycle, actorId, reason, true);
   }
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
@@ -222,13 +226,43 @@ public class PromotionService {
       reconciliation.request(cycle.getOrganizationId(), position.getId(), now);
       if ("FIRST_COME".equals(position.getRegistrationMode())) {
         offerNextFirstCome(position.getId(), userId, "Previous invitation declined");
+      } else if ("REVIEW".equals(position.getRegistrationMode())) {
+        notifyReviewAdministrators(members, events, cycle, offer, "DECLINED");
       }
     }
     return offer;
   }
 
+  static void notifyReviewAdministrators(
+      OrganizationMemberMapper members, DomainEventPublisher events,
+      RegistrationCycle cycle, PromotionOffer offer, String outcome) {
+    // 在业务事务内固定有效授权收件人；只读查询不新增成员锁，消费重放不重新选人。
+    String content = "DECLINED".equals(outcome)
+        ? "人工审核岗位递补邀请已被拒绝，请重新选择候选人。"
+        : "人工审核岗位递补邀请已过期，请重新选择候选人。";
+    events.publishMany(members.selectNotificationRecipientIds(
+        cycle.getOrganizationId(), "registration:promote"), new NotificationEventTemplate(
+            cycle.getOrganizationId(), cycle.getActivityId(), "PROMOTION_OFFER", offer.getId().toString(),
+            DomainEventTypes.REGISTRATION_PROMOTION_ADMIN_ACTION_REQUIRED,
+            "PROMOTION_ADMIN_ACTION_REQUIRED", "人工审核递补需要处理", content, "PROMOTION_OFFER", offer.getId()));
+  }
+
+  private boolean isOpenForNewOffer(ActivityPosition position) {
+    return ActivityRegistrationPolicyService.isActivityOpenForConfirmation(
+        policies.activityForPromotion(position.getOrganizationId(), position.getActivityId()),
+        offers.currentDatabaseTime());
+  }
+
   private PromotionOffer createOffer(
-      ActivityPosition position, RegistrationCycle cycle, Long actorId, String reason) {
+      ActivityPosition position, RegistrationCycle cycle, Long actorId, String reason, boolean manual) {
+    // 候选行锁可能等待；最终创建门重新读取活动及数据库时间，不在成员/岗位之后反向锁活动。
+    Activity activity = policies.activityForPromotion(position.getOrganizationId(), position.getActivityId());
+    LocalDateTime admittedAt = offers.currentDatabaseTime();
+    if (!ActivityRegistrationPolicyService.isActivityOpenForConfirmation(activity, admittedAt)) {
+      if (manual) ActivityRegistrationPolicyService.requireActivityOpenForConfirmation(activity, admittedAt);
+      // 自动递补被拒绝不应回滚拒绝、过期或取消旧邀请的处理。
+      return null;
+    }
     if (position.getPromotionTimeoutMinutes() == null
         || position.getPromotionTimeoutMinutes() <= 0) {
       throw semantic("INVALID_PROMOTION_TIMEOUT", "Promotion timeout must be positive");
@@ -240,8 +274,7 @@ public class PromotionService {
     offer.setPositionId(position.getId());
     offer.setRegistrationCycleId(cycle.getId());
     offer.setStatus("PENDING");
-    offer.setExpiresAt(
-        offers.currentDatabaseTime().plusMinutes(position.getPromotionTimeoutMinutes()));
+    offer.setExpiresAt(admittedAt.plusMinutes(position.getPromotionTimeoutMinutes()));
     offer.setCreatedBy(actorId);
     offer.setReason(reason);
     offer.setVersion(0);

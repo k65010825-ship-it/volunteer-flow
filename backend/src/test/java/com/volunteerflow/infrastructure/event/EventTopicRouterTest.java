@@ -18,6 +18,7 @@ class EventTopicRouterTest {
       Map.entry("registration.promotion-accepted.v1", "registration"),
       Map.entry("registration.promotion-declined.v1", "registration"),
       Map.entry("registration.promotion-expired.v1", "registration"),
+      Map.entry("registration.promotion-admin-action-required.v1", "registration"),
       Map.entry("checkin.opened.v1", "checkin"),
       Map.entry("checkin.closed.v1", "checkin"),
       Map.entry("checkin.completed.v1", "checkin"),

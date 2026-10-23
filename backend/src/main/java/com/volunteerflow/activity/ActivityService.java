@@ -1,6 +1,8 @@
 package com.volunteerflow.activity;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.volunteerflow.infrastructure.web.PageResponse;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.infrastructure.event.ActivityStatusPayload;
@@ -234,13 +236,34 @@ public class ActivityService {
   }
 
   public List<ActivitySummary> list(Long userId, Long orgId) {
+    return list(userId, orgId, 1, 20).data();
+  }
+
+  @Transactional(readOnly = true)
+  public PageResponse<ActivitySummary> list(Long userId, Long orgId, int page, int size) {
     authorization.requireMembership(userId, orgId);
-    return activities.selectPublished(orgId).stream()
-        .map(
-            activity ->
-                new ActivitySummary(
-                    activity, positions.selectActiveByActivity(orgId, activity.getId())))
-        .toList();
+    long safePage = Math.max(1, page);
+    long safeSize = Math.min(100, Math.max(1, size));
+    var result = activities.selectPublishedPage(new Page<>(safePage, safeSize), orgId);
+    List<Activity> rows = result.getRecords();
+    if (rows.isEmpty()) {
+      return PageResponse.of(List.of(), result.getTotal(), safePage, safeSize);
+    }
+    List<Long> activityIds = rows.stream().map(Activity::getId).toList();
+    if (rows.stream().anyMatch(row -> !orgId.equals(row.getOrganizationId())
+        || !"PUBLISHED".equals(row.getStatus()))) {
+      throw new IllegalStateException("Activity page returned out-of-scope data");
+    }
+    List<ActivityPosition> scopedPositions = positions.selectActiveByActivities(orgId, activityIds);
+    if (scopedPositions.stream().anyMatch(position -> !orgId.equals(position.getOrganizationId())
+        || !activityIds.contains(position.getActivityId()) || !"ACTIVE".equals(position.getStatus()))) {
+      throw new IllegalStateException("Activity position batch returned out-of-scope data");
+    }
+    Map<Long, List<ActivityPosition>> positionsByActivity = scopedPositions.stream()
+        .collect(Collectors.groupingBy(ActivityPosition::getActivityId));
+    List<ActivitySummary> items = rows.stream().map(activity -> new ActivitySummary(activity,
+        positionsByActivity.getOrDefault(activity.getId(), List.of()))).toList();
+    return PageResponse.of(items, result.getTotal(), safePage, safeSize);
   }
 
   public ActivityDetail detail(Long userId, Long id) {

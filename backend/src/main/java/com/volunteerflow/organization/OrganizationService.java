@@ -1,6 +1,8 @@
 package com.volunteerflow.organization;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.volunteerflow.infrastructure.web.PageResponse;
 import com.volunteerflow.audit.AuditService;
 import com.volunteerflow.auth.AppUser;
 import com.volunteerflow.auth.AppUserMapper;
@@ -251,8 +253,19 @@ public class OrganizationService {
   }
 
   public List<OrganizationMember> members(Long actorId, Long orgId) {
+    return members(actorId, orgId, 1, 20).data();
+  }
+
+  @Transactional(readOnly = true)
+  public PageResponse<OrganizationMember> members(Long actorId, Long orgId, int page, int size) {
     authorization.requirePermission(actorId, orgId, "member:read");
-    return members.selectActiveByOrganization(orgId);
+    long safePage = Math.max(1, page);
+    long safeSize = Math.min(100, Math.max(1, size));
+    var result = members.selectActivePage(new Page<>(safePage, safeSize), orgId);
+    if (result.getRecords().stream().anyMatch(member -> !orgId.equals(member.getOrganizationId()))) {
+      throw new IllegalStateException("Member page returned out-of-scope data");
+    }
+    return PageResponse.of(result.getRecords(), result.getTotal(), safePage, safeSize);
   }
 
   public List<RbacRole> roles(Long actorId, Long orgId) {

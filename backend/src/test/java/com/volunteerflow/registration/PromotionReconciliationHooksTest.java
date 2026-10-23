@@ -59,6 +59,10 @@ class PromotionReconciliationHooksTest {
       });
       PromotionReconciliationRequester requester = tx.proxy(new PromotionReconciliationRequester(tasks));
       ActivityRegistrationPolicyService policies = mock(ActivityRegistrationPolicyService.class);
+      Activity promotionActivity = new Activity();
+      promotionActivity.setId(11L); promotionActivity.setOrganizationId(10L);
+      promotionActivity.setStatus("PUBLISHED"); promotionActivity.setActivityEndAt(now.plusHours(2));
+      when(policies.activityForPromotion(10L, 11L)).thenReturn(promotionActivity);
       OrganizationMemberMapper members = mock(OrganizationMemberMapper.class);
       RegistrationMapper registrations = mock(RegistrationMapper.class);
       RegistrationCycleMapper cycles = mock(RegistrationCycleMapper.class);

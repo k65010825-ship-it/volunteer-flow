@@ -1,6 +1,7 @@
 package com.volunteerflow.activity;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import com.baomidou.mybatisplus.core.metadata.IPage;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
@@ -58,6 +59,13 @@ public interface ActivityMapper extends BaseMapper<Activity> {
       "SELECT * FROM activity WHERE organization_id=#{orgId} AND status='PUBLISHED' ORDER BY"
           + " activity_start_at,id")
   List<Activity> selectPublished(@Param("orgId") Long orgId);
+
+  @Select("""
+      SELECT * FROM activity
+      WHERE organization_id=#{orgId} AND status='PUBLISHED'
+      ORDER BY activity_start_at,id
+      """)
+  IPage<Activity> selectPublishedPage(IPage<Activity> page, @Param("orgId") Long orgId);
 
   @Select("SELECT * FROM activity WHERE id=#{id} AND organization_id=#{orgId} LIMIT 1")
   Activity selectInOrganization(@Param("orgId") Long orgId, @Param("id") Long id);

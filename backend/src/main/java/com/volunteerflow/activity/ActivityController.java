@@ -7,6 +7,7 @@ import com.volunteerflow.activity.ActivityChangeService.PositionChangeRequest;
 import com.volunteerflow.activity.ActivityChangeService.PositionChangeResult;
 import com.volunteerflow.activity.ActivityChangeService.PositionPublicationResult;
 import com.volunteerflow.infrastructure.web.ApiResponse;
+import com.volunteerflow.infrastructure.web.PageResponse;
 import jakarta.validation.Valid;
 import java.util.List;
 import org.springframework.context.annotation.Profile;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /** HTTP adapter for activity lifecycle and position-management operations. */
@@ -97,9 +99,12 @@ public class ActivityController {
   }
 
   @GetMapping("/organizations/{orgId}/activities")
-  public ApiResponse<List<ActivityService.ActivitySummary>> list(
-      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long orgId) {
-    return ApiResponse.of(service.list(currentUser.id(), orgId));
+  public PageResponse<ActivityService.ActivitySummary> list(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @PathVariable Long orgId,
+      @RequestParam(name = "page", defaultValue = "1") int page,
+      @RequestParam(name = "size", defaultValue = "20") int size) {
+    return service.list(currentUser.id(), orgId, page, size);
   }
 
   @GetMapping("/activities/{id}")
