@@ -190,17 +190,31 @@ MyBatis-Plus 用于常规 CRUD、分页和条件查询；报名抢占、容量�
 
 ## 仓库结构
 
+以下为 Git 已跟踪的目录概览（省略各模块内部文件）。GitHub 会将只有一层子目录的路径折叠显示，例如 `.superpowers/sdd` 和 `loadtest/stage4d`。
+
 ```text
 VolunteerFlow/
-├─ backend/          # Spring Boot 工程，使用 IDEA 开发
-├─ frontend/         # Vue 工程，使用 VS Code 开发
-├─ deploy/           # Docker Compose 与 Nginx 配置
+├─ .superpowers/
+│  └─ sdd/           # 开发任务与评审过程记录
+├─ backend/          # Java 17 / Spring Boot 后端，使用 IDEA 开发
+├─ deploy/           # 部署配置、Nginx、验收与升级工具
 ├─ docs/
+│  ├─ design/        # 界面设计素材
+│  ├─ operations/    # 运行、部署与验收操作手册
 │  ├─ presentation/  # 项目设计演示文稿
-│  └─ specs/         # 正式设计规格
-├─ PROJECT_CONTEXT.md
+│  ├─ reports/       # 验收报告与验证证据
+│  ├─ specs/         # 正式设计规格
+│  └─ superpowers/   # 分阶段设计与实施计划
+├─ frontend/         # Vue 前端，使用 VS Code 开发
+├─ loadtest/
+│  └─ stage4d/       # k6 压测场景与公共脚本
+├─ .dockerignore
+├─ .gitattributes
+├─ .gitignore
 └─ README.md
 ```
+
+`PROJECT_CONTEXT.md` 是本地交接文件，已加入 `.gitignore`，不属于远程仓库内容，因此不在目录树和公开文档链接中列出。`backend/target/`、`frontend/node_modules/`、`frontend/dist/` 及私有运行配置也不属于上述源码目录概览。
 
 当前仓库包含 `backend/`、`frontend/`、Nginx 配置、外部 MySQL 两服务 Compose、冒烟脚本和 Playwright 场景。具体操作与验证边界见[阶段 3 演示部署操作手册](docs/operations/stage-3-demo-deployment.md)。
 
@@ -241,7 +255,6 @@ VolunteerFlow/
 - [阶段 4D 实测报告模板](docs/reports/stage-4d-report-template.md)
 - [修订版完整设计规格](docs/specs/2026-09-14-volunteerflow-revised-design.md)
 - [早期设计规格](docs/specs/2026-08-06-campus-volunteer-platform-design.md)
-- [项目交接说明](PROJECT_CONTEXT.md)
 - [项目设计演示文稿](docs/presentation/VolunteerFlow校园志愿活动平台完整设计.pptx)
 
 ## 开发约定
