@@ -236,6 +236,10 @@ onMounted(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
+  align-items: start;
+}
+.form-grid input {
+  height: 44px;
 }
 .form-grid h2,
 .wide {
