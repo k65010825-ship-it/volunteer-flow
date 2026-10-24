@@ -46,6 +46,7 @@ public class AuthService {
 
   @Transactional
   public AuthTokens register(RegisterRequest request, String deviceName) {
+    requireValidNewPassword(request.password());
     if (userMapper.selectCount(
             Wrappers.<AppUser>lambdaQuery().eq(AppUser::getUsername, request.username()))
         > 0) {
@@ -76,11 +77,13 @@ public class AuthService {
 
   @Transactional
   public AuthTokens login(LoginRequest request, String deviceName) {
-    AppUser user =
-        userMapper.selectOne(
-            Wrappers.<AppUser>lambdaQuery()
-                .eq(AppUser::getUsername, request.username())
-                .last("LIMIT 1"));
+    // BCrypt accepts at most 72 bytes, not 72 Java characters. Keep login failures generic.
+    if (request.password() == null
+        || request.password().getBytes(StandardCharsets.UTF_8).length > 72) {
+      throw invalidCredentials();
+    }
+    // Serialize credential verification and session creation with password changes.
+    AppUser user = userMapper.selectByUsernameForUpdate(request.username());
     if (user == null
         || !"ACTIVE".equals(user.getStatus())
         || !passwordEncoder.matches(request.password(), user.getPasswordHash())) {
@@ -91,10 +94,26 @@ public class AuthService {
 
   @Transactional
   public AuthTokens refresh(String rawRefreshToken, String deviceName) {
-    // The row lock prevents two concurrent refreshes from successfully rotating the same token.
-    RefreshSession session = findUsableSession(rawRefreshToken);
-    AppUser user = userMapper.selectById(session.getUserId());
+    if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
+      throw invalidRefreshToken();
+    }
+    String tokenHash = hash(rawRefreshToken);
+    // Discovery is non-locking. Every flow takes the user lock before any session write lock.
+    RefreshSession discovered =
+        sessionMapper.selectOne(
+            Wrappers.<RefreshSession>lambdaQuery()
+                .eq(RefreshSession::getTokenHash, tokenHash)
+                .last("LIMIT 1"));
+    if (discovered == null) {
+      throw invalidRefreshToken();
+    }
+    AppUser user = userMapper.selectByIdForUpdate(discovered.getUserId());
     if (user == null || !"ACTIVE".equals(user.getStatus())) {
+      throw invalidRefreshToken();
+    }
+    // Re-read current committed state after waiting for the user lock; never trust the snapshot.
+    RefreshSession session = findUsableSession(rawRefreshToken);
+    if (!user.getId().equals(session.getUserId()) || !tokenHash.equals(session.getTokenHash())) {
       throw invalidRefreshToken();
     }
 
@@ -144,6 +163,76 @@ public class AuthService {
     sessionMapper.insert(session);
     IssuedAccessToken accessToken = accessTokenIssuer.issue(user);
     return new AuthTokens(accessToken.value(), refreshToken, accessToken.expiresAt());
+  }
+
+  @Transactional
+  public CurrentUser updateProfile(Long userId, UpdateProfileRequest request) {
+    AppUser user = requireActiveLockedUser(userId);
+    String realName = request.realName() == null ? "" : request.realName().trim();
+    String contact = request.contact() == null ? "" : request.contact().trim();
+    if (realName.isBlank()
+        || realName.length() > 64
+        || contact.isBlank()
+        || contact.length() > 128) {
+      throw new BusinessException(
+          HttpStatus.BAD_REQUEST,
+          "INVALID_PROFILE",
+          "Name and contact are required and must fit their length limits");
+    }
+    // Never persist a caller-controlled entity or rewrite credentials/role/version.
+    userMapper.updateProfile(userId, realName, contact);
+    user.setRealName(realName);
+    user.setContact(contact);
+    return CurrentUser.from(user);
+  }
+
+  @Transactional
+  public void changePassword(Long userId, ChangePasswordRequest request) {
+    AppUser user = requireActiveLockedUser(userId);
+    String currentPassword = request.currentPassword();
+    if (currentPassword == null
+        || currentPassword.getBytes(StandardCharsets.UTF_8).length > 72
+        || !passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+      throw new BusinessException(
+          HttpStatus.BAD_REQUEST, "INVALID_CURRENT_PASSWORD", "Current password is incorrect");
+    }
+    String newPassword = request.newPassword();
+    requireValidNewPassword(newPassword);
+    if (passwordEncoder.matches(newPassword, user.getPasswordHash())) {
+      throw new BusinessException(
+          HttpStatus.BAD_REQUEST, "PASSWORD_UNCHANGED", "Choose a different password");
+    }
+    int version = user.getVersion() == null ? 0 : user.getVersion();
+    if (version == Integer.MAX_VALUE
+        || userMapper.updatePassword(userId, passwordEncoder.encode(newPassword), version) != 1) {
+      throw new BusinessException(
+          HttpStatus.CONFLICT,
+          "CREDENTIALS_CHANGED",
+          "Credentials changed; retry after signing in");
+    }
+    sessionMapper.revokeAllForUser(
+        userId, LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC));
+  }
+
+  private AppUser requireActiveLockedUser(Long userId) {
+    AppUser user = userMapper.selectByIdForUpdate(userId);
+    if (user == null || !"ACTIVE".equals(user.getStatus())) {
+      throw new BusinessException(HttpStatus.UNAUTHORIZED, "INVALID_TOKEN", "User is unavailable");
+    }
+    return user;
+  }
+
+  private static void requireValidNewPassword(String password) {
+    if (password == null
+        || password.isBlank()
+        || password.length() < 12
+        || password.length() > 72
+        || password.getBytes(StandardCharsets.UTF_8).length > 72) {
+      throw new BusinessException(
+          HttpStatus.BAD_REQUEST,
+          "INVALID_NEW_PASSWORD",
+          "New password must contain 12 to 72 characters and at most 72 UTF-8 bytes");
+    }
   }
 
   static String hash(String token) {

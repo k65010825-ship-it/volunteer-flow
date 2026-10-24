@@ -19,13 +19,11 @@ const activity = {
   status: "DRAFT",
 };
 beforeEach(() => {
+  mock.onGet("/api/v1/organizations/1/access").reply(200, {
+    data: { permissionCodes: ["activity:create", "activity:publish"] },
+  });
   mock
-    .onGet("/api/v1/organizations/1/access")
-    .reply(200, {
-      data: { permissionCodes: ["activity:create", "activity:publish"] },
-    });
-  mock
-    .onGet("/api/v1/activities/10")
+    .onGet("/api/v1/activities/10/draft")
     .reply(200, { data: { activity, positions: [] } });
   mock.onGet("/api/v1/activities/10/questions").reply(200, { data: [] });
 });
@@ -45,6 +43,50 @@ async function open(props: { id?: string; organizationId?: string }) {
   return w;
 }
 describe("ActivityEditorView", () => {
+  it("edits and confirms deletion of a saved position and resets its question scope", async () => {
+    const savedPosition = {
+      id: "20",
+      activityId: "10",
+      organizationId: "1",
+      name: "引导",
+      description: "指路",
+      capacity: 2,
+      registrationMode: "FIRST_COME",
+      promotionTimeoutMinutes: 120,
+      serviceStartAt: null,
+      serviceEndAt: null,
+      meetingLocation: null,
+      status: "ACTIVE",
+    };
+    mock
+      .onGet("/api/v1/activities/10/draft")
+      .reply(200, { data: { activity, positions: [savedPosition] } });
+    mock.onGet("/api/v1/positions/20/questions").reply(200, { data: [] });
+    mock
+      .onPut("/api/v1/positions/20/draft")
+      .reply(200, { data: { ...savedPosition, name: "新引导" } });
+    mock.onDelete("/api/v1/positions/20/draft").reply(204);
+    const wrapper = await open({ id: "10" });
+    await wrapper.find('[data-test="edit-position-20"]').trigger("click");
+    await wrapper.find('[data-test="position-name"]').setValue("新引导");
+    expect(
+      wrapper.find('[data-test="publish-activity"]').attributes("disabled"),
+    ).toBeDefined();
+    await wrapper.find('[data-test="save-position"]').trigger("submit");
+    await flushPromises();
+    expect(wrapper.text()).toContain("新引导");
+    expect(mock.history.put[0].url).toBe("/api/v1/positions/20/draft");
+    await wrapper.find('[data-test="position-questions-20"]').trigger("click");
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    await wrapper.find('[data-test="delete-position-20"]').trigger("click");
+    expect(mock.history.delete).toHaveLength(0);
+    confirm.mockReturnValue(true);
+    await wrapper.find('[data-test="delete-position-20"]').trigger("click");
+    await flushPromises();
+    expect(mock.history.delete).toHaveLength(1);
+    expect(wrapper.find('[data-test="edit-position-20"]').exists()).toBe(false);
+    expect(wrapper.text()).toContain("公共问题管理");
+  });
   it("creates a draft and keeps its real ID for the next step", async () => {
     mock
       .onPost("/api/v1/organizations/1/activities")
@@ -64,14 +106,42 @@ describe("ActivityEditorView", () => {
     await w.find("form").trigger("submit");
     await flushPromises();
     expect(w.text()).toContain("活动 ID：10");
-    expect(localStorage.getItem("activity-draft:1")).toBe("10");
+    expect(localStorage.getItem("activity-draft:1")).toBeNull();
     expect(
       JSON.parse(mock.history.post[0].data).freeCancelDeadlineAt,
     ).toBeNull();
   });
-  it("reopens a create-only draft and loads real common and position questions", async () => {
+  it("ignores an old draft response after switching to a new activity route", async () => {
+    let resolveOld!: (value: [number, unknown]) => void;
+    mock.onGet("/api/v1/activities/10/draft").reply(
+      () =>
+        new Promise((resolve) => {
+          resolveOld = resolve;
+        }),
+    );
     mock
-      .onGet("/api/v1/activities/10")
+      .onGet("/api/v1/activities/11/draft")
+      .reply(200, {
+        data: {
+          activity: { ...activity, id: "11", title: "新草稿" },
+          positions: [],
+        },
+      });
+    mock.onGet("/api/v1/activities/11/questions").reply(200, { data: [] });
+    const wrapper = await open({ id: "10" });
+    await wrapper.setProps({ id: "11" });
+    await flushPromises();
+    resolveOld([200, { data: { activity, positions: [] } }]);
+    await flushPromises();
+    expect(
+      (wrapper.find('[data-test="draft-title"]').element as HTMLInputElement)
+        .value,
+    ).toBe("新草稿");
+    expect(wrapper.text()).toContain("活动 ID：11");
+  });
+  it("blocks publication when only an unfinished new position capacity was changed", async () => {
+    mock
+      .onGet("/api/v1/activities/10/draft")
       .reply(200, {
         data: {
           activity,
@@ -86,20 +156,43 @@ describe("ActivityEditorView", () => {
           ],
         },
       });
-    mock
-      .onGet("/api/v1/activities/10/questions")
-      .reply(200, {
-        data: [
+    mock.onGet("/api/v1/positions/20/questions").reply(200, { data: [] });
+    const wrapper = await open({ id: "10" });
+    expect(
+      wrapper.find('[data-test="publish-activity"]').attributes("disabled"),
+    ).toBeUndefined();
+    await wrapper.findAll('input[type="number"]')[0].setValue(4);
+    expect(
+      wrapper.find('[data-test="publish-activity"]').attributes("disabled"),
+    ).toBeDefined();
+  });
+  it("reopens a create-only draft and loads real common and position questions", async () => {
+    mock.onGet("/api/v1/activities/10/draft").reply(200, {
+      data: {
+        activity,
+        positions: [
           {
-            id: "30",
-            title: "姓名",
-            questionType: "TEXT",
-            requiredQuestion: true,
-            optionsJson: null,
-            sortOrder: 1,
+            id: "20",
+            name: "引导",
+            description: "指路",
+            capacity: 2,
+            status: "ACTIVE",
           },
         ],
-      });
+      },
+    });
+    mock.onGet("/api/v1/activities/10/questions").reply(200, {
+      data: [
+        {
+          id: "30",
+          title: "姓名",
+          questionType: "TEXT",
+          requiredQuestion: true,
+          optionsJson: null,
+          sortOrder: 1,
+        },
+      ],
+    });
     mock.onGet("/api/v1/positions/20/questions").reply(200, { data: [] });
     const w = await open({ id: "10" });
     expect(w.text()).toContain("姓名");
@@ -126,30 +219,28 @@ describe("ActivityEditorView", () => {
     const w = await open({ id: "10" });
     expect(w.find('[data-test="publish-activity"]').exists()).toBe(false);
   });
-  it("explains the read permission on draft 403 and keeps the ID", async () => {
-    mock.onGet("/api/v1/activities/10").reply(403);
+  it("explains create permission on draft 403 and keeps the ID", async () => {
+    mock.onGet("/api/v1/activities/10/draft").reply(403);
     const w = await open({ id: "10" });
-    expect(w.text()).toContain("activity:read");
+    expect(w.text()).toContain("activity:create");
     expect(w.text()).toContain("活动 ID：10");
     expect(w.text()).not.toContain("活动不存在");
   });
   it("requires confirmation before publication and keeps ID", async () => {
-    mock
-      .onGet("/api/v1/activities/10")
-      .reply(200, {
-        data: {
-          activity,
-          positions: [
-            {
-              id: "20",
-              name: "引导",
-              description: "指路",
-              capacity: 2,
-              status: "ACTIVE",
-            },
-          ],
-        },
-      });
+    mock.onGet("/api/v1/activities/10/draft").reply(200, {
+      data: {
+        activity,
+        positions: [
+          {
+            id: "20",
+            name: "引导",
+            description: "指路",
+            capacity: 2,
+            status: "ACTIVE",
+          },
+        ],
+      },
+    });
     mock.onGet("/api/v1/positions/20/questions").reply(200, { data: [] });
     mock
       .onPost("/api/v1/activities/10/publication")

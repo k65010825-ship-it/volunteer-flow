@@ -10,7 +10,6 @@ const failed = ref(false);
 const page = ref(1);
 const total = ref(0);
 const permissions = ref<string[]>([]);
-const draftId = ref("");
 let generation = 0;
 async function load() {
   const request = ++generation;
@@ -37,11 +36,6 @@ watch(
   async (orgId) => {
     page.value = 1;
     permissions.value = [];
-    try {
-      draftId.value = localStorage.getItem(`activity-draft:${orgId}`) || "";
-    } catch {
-      draftId.value = "";
-    }
     void load();
     try {
       const access = await getOrganizationAccess(orgId);
@@ -86,10 +80,10 @@ const capacity = (item: ActivitySummary) =>
           >创建活动</RouterLink
         >
         <RouterLink
-          v-if="draftId && permissions.includes('activity:create')"
+          v-if="permissions.includes('activity:create')"
           class="text-action"
-          :to="`/activities/${draftId}/edit`"
-          >继续最近草稿</RouterLink
+          :to="`/organizations/${organizationId}/drafts`"
+          >草稿管理</RouterLink
         >
         <RouterLink class="text-action" to="/join">加入组织</RouterLink>
       </div>

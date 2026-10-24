@@ -17,6 +17,14 @@ const setPageVisible = (visible: boolean) =>
 beforeEach(() => {
   vi.useFakeTimers();
   setActivePinia(createPinia());
+  useAuthStore().user = {
+    id: "1",
+    username: "member",
+    realName: "成员",
+    studentNumber: "2026001",
+    contact: "contact",
+    platformRole: "USER",
+  };
   setPageVisible(true);
   mock
     .onGet("/api/v1/users/me/notifications/unread-count")
@@ -35,6 +43,7 @@ async function open(path = "/activities") {
     routes: [
       { path: "/activities", component: { template: "<p>活动</p>" } },
       { path: "/notifications", component: { template: "<p>通知</p>" } },
+      { path: "/registrations", component: { template: "<p>报名</p>" } },
       {
         path: "/login",
         component: { template: "<p>登录</p>" },
@@ -54,6 +63,16 @@ async function open(path = "/activities") {
   return { wrapper, router };
 }
 describe("AppShell notification badge and polling", () => {
+  it("does not poll before account restoration and starts after authentication", async () => {
+    const auth = useAuthStore();
+    const user = auth.user;
+    auth.user = null;
+    await open("/profile");
+    expect(mock.history.get).toHaveLength(0);
+    auth.user = user;
+    await flushPromises();
+    expect(mock.history.get).toHaveLength(1);
+  });
   it("provides an administrator sidebar without volunteer bottom navigation", async () => {
     useAuthStore().user = {
       id: "1",

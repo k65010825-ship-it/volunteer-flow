@@ -73,11 +73,14 @@ public class ActivityQuestionService {
   @Transactional(readOnly = true)
   public List<ActivityPositionQuestion> positionQuestions(Long userId, Long positionId) {
     ActivityPosition position = positions.selectById(positionId);
-    if (position == null) throw positionNotFound();
+    if (position == null || "DELETED".equals(position.getStatus())) throw positionNotFound();
     Activity activity = readableActivity(position.getActivityId());
-    authorization.requirePermission(userId, activity.getOrganizationId(),
+    authorization.requirePermission(
+        userId,
+        activity.getOrganizationId(),
         "DRAFT".equals(activity.getStatus()) ? "activity:create" : "activity:change");
-    if (!activity.getOrganizationId().equals(position.getOrganizationId())) throw positionNotFound();
+    if (!activity.getOrganizationId().equals(position.getOrganizationId()))
+      throw positionNotFound();
     return positionQuestions.selectByPosition(
         activity.getOrganizationId(), activity.getId(), positionId);
   }
@@ -85,7 +88,8 @@ public class ActivityQuestionService {
   private Activity readableActivity(Long activityId) {
     Activity activity = activities.selectById(activityId);
     if (activity == null)
-      throw new BusinessException(HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+      throw new BusinessException(
+          HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
     return activity;
   }
 
@@ -197,7 +201,8 @@ public class ActivityQuestionService {
     position = positions.selectByIdForUpdate(positionId);
     if (position == null
         || !activity.getId().equals(position.getActivityId())
-        || !activity.getOrganizationId().equals(position.getOrganizationId())) {
+        || !activity.getOrganizationId().equals(position.getOrganizationId())
+        || "DELETED".equals(position.getStatus())) {
       throw positionNotFound();
     }
     if (published && !"DRAFT".equals(position.getStatus())) {

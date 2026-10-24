@@ -36,6 +36,7 @@ public class JwtTokenService implements AccessTokenIssuer {
             .expiresAt(expiresAt)
             .claim("username", user.getUsername())
             .claim("platform_role", user.getPlatformRole())
+            .claim("credential_version", user.getVersion() == null ? 0 : user.getVersion())
             .build();
     JwsHeader header = JwsHeader.with(MacAlgorithm.HS256).build();
     String value = encoder.encode(JwtEncoderParameters.from(header, claims)).getTokenValue();

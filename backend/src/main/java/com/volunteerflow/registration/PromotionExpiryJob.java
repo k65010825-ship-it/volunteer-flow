@@ -3,6 +3,7 @@ package com.volunteerflow.registration;
 import java.time.LocalDateTime;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -10,6 +11,10 @@ import org.springframework.stereotype.Component;
 /** Scans without row locks and delegates every candidate to a separate transactional bean. */
 @Component
 @Profile("!test")
+@ConditionalOnProperty(
+    name = "volunteerflow.maintenance.enabled",
+    havingValue = "true",
+    matchIfMissing = true)
 public class PromotionExpiryJob {
   private static final Logger log = LoggerFactory.getLogger(PromotionExpiryJob.class);
   private final PromotionOfferMapper offers;

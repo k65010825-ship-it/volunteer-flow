@@ -34,5 +34,28 @@ export const useAuthStore = defineStore("auth", () => {
       ready.value = false;
     }
   }
-  return { user, ready, restore, login, register, logout };
+  async function updateProfile(
+    payload: Parameters<typeof authApi.updateProfile>[0],
+  ) {
+    user.value = await authApi.updateProfile(payload);
+  }
+  async function changePassword(
+    payload: Parameters<typeof authApi.changePassword>[0],
+  ) {
+    await authApi.changePassword(payload);
+    // Server revokes all sessions. Do not retain an invalid local credential.
+    clearAccessToken();
+    user.value = null;
+    ready.value = false;
+  }
+  return {
+    user,
+    ready,
+    restore,
+    login,
+    register,
+    logout,
+    updateProfile,
+    changePassword,
+  };
 });

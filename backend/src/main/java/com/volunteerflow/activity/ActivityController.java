@@ -1,19 +1,19 @@
 package com.volunteerflow.activity;
 
-import com.volunteerflow.auth.CurrentUser;
 import com.volunteerflow.activity.ActivityChangeService.ActivityChangeRequest;
 import com.volunteerflow.activity.ActivityChangeService.ActivityChangeResult;
 import com.volunteerflow.activity.ActivityChangeService.PositionChangeRequest;
 import com.volunteerflow.activity.ActivityChangeService.PositionChangeResult;
 import com.volunteerflow.activity.ActivityChangeService.PositionPublicationResult;
+import com.volunteerflow.auth.CurrentUser;
 import com.volunteerflow.infrastructure.web.ApiResponse;
 import com.volunteerflow.infrastructure.web.PageResponse;
 import jakarta.validation.Valid;
-import java.util.List;
 import org.springframework.context.annotation.Profile;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -105,6 +105,36 @@ public class ActivityController {
       @RequestParam(name = "page", defaultValue = "1") int page,
       @RequestParam(name = "size", defaultValue = "20") int size) {
     return service.list(currentUser.id(), orgId, page, size);
+  }
+
+  @GetMapping("/organizations/{orgId}/activity-drafts")
+  public PageResponse<ActivityService.ActivitySummary> drafts(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @PathVariable Long orgId,
+      @RequestParam(name = "page", defaultValue = "1") int page,
+      @RequestParam(name = "size", defaultValue = "20") int size) {
+    return service.listDrafts(currentUser.id(), orgId, page, size);
+  }
+
+  @GetMapping("/activities/{id}/draft")
+  public ApiResponse<ActivityService.ActivityDetail> draft(
+      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long id) {
+    return ApiResponse.of(service.draftDetail(currentUser.id(), id));
+  }
+
+  @PutMapping("/positions/{positionId}/draft")
+  public ApiResponse<ActivityPosition> updateDraftPosition(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @PathVariable Long positionId,
+      @Valid @RequestBody ActivityService.PositionRequest request) {
+    return ApiResponse.of(service.updateDraftPosition(currentUser.id(), positionId, request));
+  }
+
+  @DeleteMapping("/positions/{positionId}/draft")
+  public ResponseEntity<Void> deleteDraftPosition(
+      @AuthenticationPrincipal CurrentUser currentUser, @PathVariable Long positionId) {
+    service.deleteDraftPosition(currentUser.id(), positionId);
+    return ResponseEntity.noContent().build();
   }
 
   @GetMapping("/activities/{id}")

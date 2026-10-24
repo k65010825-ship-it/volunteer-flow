@@ -41,6 +41,28 @@ class AuthServiceTest {
   }
 
   @Test
+  void registrationRejectsOversizedUtf8BeforeDatabaseOrBcrypt() {
+    var request = new RegisterRequest("student1", "密".repeat(25), "张三", "20260001", "contact");
+    assertThatThrownBy(() -> authService.register(request, null))
+        .isInstanceOfSatisfying(
+            com.volunteerflow.infrastructure.web.BusinessException.class,
+            ex -> {
+              assertThat(ex.status()).isEqualTo(HttpStatus.BAD_REQUEST);
+              assertThat(ex.code()).isEqualTo("INVALID_NEW_PASSWORD");
+            });
+    verify(userMapper, never()).selectCount(any());
+    verify(sessionMapper, never()).insert(any(RefreshSession.class));
+  }
+
+  @Test
+  void loginRejectsOversizedUtf8WithoutQueryingAccount() {
+    assertThat(catchLoginFailure("student1", "密".repeat(25)).code())
+        .isEqualTo("INVALID_CREDENTIALS");
+    verify(userMapper, never()).selectByUsernameForUpdate(any());
+    verify(sessionMapper, never()).insert(any(RefreshSession.class));
+  }
+
+  @Test
   void registrationAlwaysCreatesOrdinaryUser() {
     when(userMapper.selectCount(any())).thenReturn(0L, 0L);
     when(refreshTokenGenerator.generate()).thenReturn("refresh-secret");
@@ -72,11 +94,11 @@ class AuthServiceTest {
 
   @Test
   void unknownUserAndWrongPasswordUseSameFailure() {
-    when(userMapper.selectOne(any())).thenReturn(null);
+    when(userMapper.selectByUsernameForUpdate(any())).thenReturn(null);
     var unknown = catchLoginFailure("missing", "password");
 
     AppUser existing = activeUser("student1", new BCryptPasswordEncoder(4).encode("correct"));
-    when(userMapper.selectOne(any())).thenReturn(existing);
+    when(userMapper.selectByUsernameForUpdate(any())).thenReturn(existing);
     var wrong = catchLoginFailure("student1", "wrong");
 
     assertThat(unknown.code()).isEqualTo("INVALID_CREDENTIALS");
@@ -88,7 +110,7 @@ class AuthServiceTest {
   void disabledUserCannotLogin() {
     AppUser user = activeUser("student1", new BCryptPasswordEncoder(4).encode("correct"));
     user.setStatus("DISABLED");
-    when(userMapper.selectOne(any())).thenReturn(user);
+    when(userMapper.selectByUsernameForUpdate(any())).thenReturn(user);
 
     assertThat(catchLoginFailure("student1", "correct").code()).isEqualTo("INVALID_CREDENTIALS");
   }
@@ -96,7 +118,7 @@ class AuthServiceTest {
   @Test
   void loginStoresOnlyRefreshTokenHash() {
     AppUser user = activeUser("student1", new BCryptPasswordEncoder(4).encode("correct"));
-    when(userMapper.selectOne(any())).thenReturn(user);
+    when(userMapper.selectByUsernameForUpdate(any())).thenReturn(user);
     when(refreshTokenGenerator.generate()).thenReturn("refresh-secret");
 
     AuthTokens tokens = authService.login(new LoginRequest("student1", "correct"), "x".repeat(200));
@@ -112,10 +134,11 @@ class AuthServiceTest {
   void refreshRotatesTokenAndRejectsReplayedOldToken() {
     AppUser user = activeUser("student1", "unused");
     RefreshSession session = activeSession("old-refresh", user.getId());
+    when(sessionMapper.selectOne(any())).thenReturn(session);
     when(sessionMapper.selectByTokenHashForUpdate(AuthService.hash("old-refresh")))
         .thenReturn(session)
         .thenReturn(null);
-    when(userMapper.selectById(user.getId())).thenReturn(user);
+    when(userMapper.selectByIdForUpdate(user.getId())).thenReturn(user);
     when(refreshTokenGenerator.generate()).thenReturn("new-refresh");
 
     AuthTokens tokens = authService.refresh("old-refresh", "Chrome");

@@ -28,6 +28,11 @@ const router = createRouter({
       props: true,
     },
     {
+      path: "/organizations/:organizationId/drafts",
+      component: () => import("../views/DraftActivitiesView.vue"),
+      props: true,
+    },
+    {
       path: "/organizations/:organizationId/activities/new",
       component: () => import("../views/ActivityEditorView.vue"),
       props: true,

@@ -21,10 +21,11 @@ async function logout() {
   await router.replace("/login");
 }
 watch(
-  publicPage,
-  (isPublic) => {
-    if (isPublic) notifications.stopPolling();
-    else notifications.startPolling();
+  () => !publicPage.value && !!auth.user,
+  (authenticatedPage) => {
+    // During initial navigation route metadata is not ready; do not race session restoration.
+    if (authenticatedPage) notifications.startPolling();
+    else notifications.stopPolling();
   },
   { immediate: true },
 );

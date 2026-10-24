@@ -7,6 +7,30 @@ import org.apache.ibatis.annotations.*;
 
 @Mapper
 public interface ActivityPositionMapper extends BaseMapper<ActivityPosition> {
+  /** Full draft replacement deliberately persists nullable fields and checks the locked version. */
+  @Update(
+      """
+      UPDATE activity_position SET name=#{name},description=#{description},capacity=#{capacity},
+      registration_mode=#{registrationMode},promotion_timeout_minutes=#{promotionTimeoutMinutes},
+      service_start_at=#{serviceStartAt,jdbcType=TIMESTAMP},
+      service_end_at=#{serviceEndAt,jdbcType=TIMESTAMP},
+      meeting_location=#{meetingLocation,jdbcType=VARCHAR},version=version+1
+      WHERE id=#{id} AND organization_id=#{organizationId} AND activity_id=#{activityId}
+      AND status='ACTIVE' AND version=#{version}
+      """)
+  int updateDraftFields(ActivityPosition position);
+
+  @Update(
+      """
+      UPDATE activity_position SET status='DELETED',version=version+1
+      WHERE id=#{positionId} AND organization_id=#{organizationId} AND activity_id=#{activityId}
+      AND status='ACTIVE'
+      """)
+  int markDraftDeleted(
+      @Param("positionId") Long positionId,
+      @Param("organizationId") Long organizationId,
+      @Param("activityId") Long activityId);
+
   @Select(
       "SELECT COUNT(*) FROM activity_position WHERE organization_id=#{orgId} AND"
           + " activity_id=#{activityId} AND status='ACTIVE'")
@@ -19,7 +43,8 @@ public interface ActivityPositionMapper extends BaseMapper<ActivityPosition> {
       @Param("orgId") Long orgId, @Param("activityId") Long activityId);
 
   /** Load public positions once for the current activity page, never once per activity. */
-  @Select("""
+  @Select(
+      """
       <script>
       SELECT * FROM activity_position
       WHERE organization_id=#{orgId} AND status='ACTIVE' AND activity_id IN

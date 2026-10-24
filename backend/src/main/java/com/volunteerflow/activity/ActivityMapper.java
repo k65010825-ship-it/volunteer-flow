@@ -10,7 +10,8 @@ import org.apache.ibatis.annotations.*;
 @Mapper
 public interface ActivityMapper extends BaseMapper<Activity> {
   /** Project only cursor keys; the V9 index and LIMIT keep every scheduler read bounded. */
-  @Select("""
+  @Select(
+      """
       <script>
       SELECT id,activity_end_at FROM activity FORCE INDEX (idx_activity_status_end_id)
       WHERE status='PUBLISHED' AND activity_end_at&lt;=#{now}
@@ -21,21 +22,27 @@ public interface ActivityMapper extends BaseMapper<Activity> {
       ORDER BY activity_end_at,id LIMIT #{batchSize}
       </script>
       """)
-  @ConstructorArgs({@Arg(column = "id", javaType = Long.class),
-      @Arg(column = "activity_end_at", javaType = LocalDateTime.class)})
+  @ConstructorArgs({
+    @Arg(column = "id", javaType = Long.class),
+    @Arg(column = "activity_end_at", javaType = LocalDateTime.class)
+  })
   @Options(useCache = false)
-  List<DueActivityId> selectDueIds(@Param("now") LocalDateTime now,
-      @Param("cursorEndAt") LocalDateTime cursorEndAt, @Param("cursorId") Long cursorId,
+  List<DueActivityId> selectDueIds(
+      @Param("now") LocalDateTime now,
+      @Param("cursorEndAt") LocalDateTime cursorEndAt,
+      @Param("cursorId") Long cursorId,
       @Param("batchSize") int batchSize);
 
-  @Update("""
+  @Update(
+      """
       UPDATE activity SET status='FINISHED'
       WHERE id=#{id} AND status='PUBLISHED' AND activity_end_at <= #{now}
       """)
   int claimFinished(@Param("id") Long id, @Param("now") LocalDateTime now);
 
   /** Authorized manual completion is explicit; it never changes the planned end timestamp. */
-  @Update("""
+  @Update(
+      """
       UPDATE activity SET status='FINISHED', version=version+1
       WHERE id=#{id} AND organization_id=#{organizationId} AND status='PUBLISHED'
       """)
@@ -48,11 +55,14 @@ public interface ActivityMapper extends BaseMapper<Activity> {
   @Options(flushCache = Options.FlushCachePolicy.TRUE)
   Activity selectByIdForUpdate(@Param("id") Long id);
 
-  @Update("""
+  @Update(
+      """
       UPDATE activity SET status='CANCELED', canceled_at=#{canceledAt}, version=version+1
       WHERE id=#{id} AND organization_id=#{organizationId} AND status IN ('DRAFT','PUBLISHED')
       """)
-  int cancelCurrent(@Param("id") Long id, @Param("organizationId") Long organizationId,
+  int cancelCurrent(
+      @Param("id") Long id,
+      @Param("organizationId") Long organizationId,
       @Param("canceledAt") LocalDateTime canceledAt);
 
   @Select(
@@ -60,12 +70,31 @@ public interface ActivityMapper extends BaseMapper<Activity> {
           + " activity_start_at,id")
   List<Activity> selectPublished(@Param("orgId") Long orgId);
 
-  @Select("""
+  @Select(
+      """
       SELECT * FROM activity
       WHERE organization_id=#{orgId} AND status='PUBLISHED'
       ORDER BY activity_start_at,id
       """)
   IPage<Activity> selectPublishedPage(IPage<Activity> page, @Param("orgId") Long orgId);
+
+  @Select(
+      """
+      SELECT * FROM activity WHERE organization_id=#{orgId} AND status='DRAFT'
+      ORDER BY update_time DESC,id DESC
+      """)
+  IPage<Activity> selectDraftPage(IPage<Activity> page, @Param("orgId") Long orgId);
+
+  /** Full draft replacement must persist an explicitly cleared cancellation deadline. */
+  @Update(
+      """
+UPDATE activity SET title=#{title},description=#{description},location=#{location},
+registration_start_at=#{registrationStartAt},registration_end_at=#{registrationEndAt},
+free_cancel_deadline_at=#{freeCancelDeadlineAt,jdbcType=TIMESTAMP},
+activity_start_at=#{activityStartAt},activity_end_at=#{activityEndAt},version=version+1
+WHERE id=#{id} AND organization_id=#{organizationId} AND status='DRAFT' AND version=#{version}
+""")
+  int updateDraftFields(Activity activity);
 
   @Select("SELECT * FROM activity WHERE id=#{id} AND organization_id=#{orgId} LIMIT 1")
   Activity selectInOrganization(@Param("orgId") Long orgId, @Param("id") Long id);

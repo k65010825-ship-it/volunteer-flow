@@ -28,6 +28,9 @@ async function submit() {
     <div class="auth-panel">
       <h1>欢迎回到 VolunteerFlow</h1>
       <p>登录后查看组织中的志愿活动。</p>
+      <p v-if="route.query.passwordChanged === '1'" role="status">
+        密码已更新，请使用新密码重新登录。
+      </p>
       <form @submit.prevent="submit">
         <label
           >用户名<input

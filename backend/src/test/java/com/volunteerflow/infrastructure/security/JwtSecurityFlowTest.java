@@ -70,6 +70,54 @@ class JwtSecurityFlowTest {
   }
 
   @Test
+  void passwordVersionChangeRejectsAlreadyIssuedAccessToken() throws Exception {
+    AppUser user = user("ACTIVE");
+    user.setVersion(0);
+    String oldToken = tokenService.issue(user).value();
+    user.setVersion(1);
+    when(userMapper.selectById(1L)).thenReturn(user);
+    mvc.perform(get("/api/v1/auth/me").header(HttpHeaders.AUTHORIZATION, bearer(oldToken)))
+        .andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void profileUpdateUsesJwtIdentityAndIgnoresImmutableBodyFields() throws Exception {
+    AppUser user = user("ACTIVE");
+    when(userMapper.selectById(1L)).thenReturn(user);
+    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+        .put("/api/v1/auth/me")
+        .header(HttpHeaders.AUTHORIZATION, bearer(tokenService.issue(user).value()))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"realName\":\"New Name\",\"contact\":\"new-contact\",\"id\":999,\"platformRole\":\"ADMIN\"}"))
+        .andExpect(status().isOk());
+    verify(authService).updateProfile(1L,
+        new com.volunteerflow.auth.UpdateProfileRequest("New Name", "new-contact"));
+  }
+
+  @Test
+  void passwordChangeRequiresIdentityAndClearsRefreshCookie() throws Exception {
+    mvc.perform(post("/api/v1/auth/password").contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .andExpect(status().isUnauthorized());
+    mvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put("/api/v1/auth/me")
+        .contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .andExpect(status().isUnauthorized());
+    AppUser user = user("ACTIVE");
+    when(userMapper.selectById(1L)).thenReturn(user);
+    mvc.perform(post("/api/v1/auth/password")
+        .header(HttpHeaders.AUTHORIZATION, bearer(tokenService.issue(user).value()))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content("{\"currentPassword\":\"old-password-123\",\"newPassword\":\"new-password-123\"}"))
+        .andExpect(status().isNoContent())
+        .andExpect(org.springframework.test.web.servlet.result.MockMvcResultMatchers.header()
+            .string("Set-Cookie", org.hamcrest.Matchers.allOf(
+                org.hamcrest.Matchers.containsString("Max-Age=0"),
+                org.hamcrest.Matchers.containsString("HttpOnly"),
+                org.hamcrest.Matchers.containsString("Path=/api/v1/auth"))));
+    verify(authService).changePassword(1L,
+        new com.volunteerflow.auth.ChangePasswordRequest("old-password-123", "new-password-123"));
+  }
+
+  @Test
   void validJwtGetsCurrentUserThroughSecurityFilter() throws Exception {
     AppUser user = user("ACTIVE");
     when(userMapper.selectById(1L)).thenReturn(user);

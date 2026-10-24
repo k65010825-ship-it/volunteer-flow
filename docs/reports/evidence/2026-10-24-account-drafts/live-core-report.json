@@ -1,0 +1,85 @@
+{
+  "runId": "1987806a-0b3c-4c31-a721-847bd38bf317",
+  "startedAt": "2026-10-24T06:53:47.125Z",
+  "checks": [
+    {
+      "name": "backend identity matches exact acceptance database before login or business writes",
+      "passed": true
+    },
+    {
+      "name": "browser profile update persisted to real backend",
+      "passed": true
+    },
+    {
+      "name": "profile form fits 390px viewport",
+      "passed": true
+    },
+    {
+      "name": "password rotation rejects old JWT, old refresh cookie and old password; new login succeeds",
+      "passed": true
+    },
+    {
+      "name": "browser-created draft appears in server-side scoped list",
+      "passed": true
+    },
+    {
+      "name": "clearing optional draft deadline persists SQL NULL",
+      "passed": true
+    },
+    {
+      "name": "clearing optional position meeting location persists SQL NULL",
+      "passed": true
+    },
+    {
+      "name": "draft editor fits 390px viewport",
+      "passed": true
+    },
+    {
+      "name": "browser reopens server draft, edits/deletes positions, persists on reload and publishes; published mutation rejected",
+      "passed": true
+    },
+    {
+      "name": "browser submits a real dynamic registration form",
+      "passed": true
+    },
+    {
+      "name": "browser submits a real dynamic registration form",
+      "passed": true
+    },
+    {
+      "name": "capacity one yields confirmed first member and waitlisted second member",
+      "passed": true
+    },
+    {
+      "name": "cancellation produces a real pending promotion offer",
+      "passed": true
+    },
+    {
+      "name": "promotion acceptance confirms the waiting member",
+      "passed": true
+    },
+    {
+      "name": "review position does not auto-confirm submissions",
+      "passed": true
+    },
+    {
+      "name": "self and manual checkin with approval produce final attendance statistics",
+      "passed": true
+    },
+    {
+      "name": "organization audit endpoint exposes persisted operation trail",
+      "passed": true
+    },
+    {
+      "name": "published activity is visible through browser and real API",
+      "passed": true
+    },
+    {
+      "name": "browser workflows have no uncaught JavaScript errors",
+      "passed": true
+    }
+  ],
+  "status": "PASSED_CORE",
+  "notificationDelivery": "NOT_VERIFIED: Kafka relay and consumer disabled in isolated acceptance; Outbox persistence is not delivery",
+  "finishedAt": "2026-10-24T06:54:05.518Z"
+}

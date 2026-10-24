@@ -1,6 +1,7 @@
 package com.volunteerflow.infrastructure.security;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import org.junit.jupiter.api.Test;
@@ -30,5 +31,15 @@ class SecurityConfigTest {
   @Test
   void currentUserEndpointRequiresAuthentication() throws Exception {
     mvc.perform(get("/api/v1/auth/me")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void acceptanceIdentityRemainsPrivateOutsideAcceptanceProfile() throws Exception {
+    mvc.perform(get("/api/v1/acceptance/identity")).andExpect(status().isUnauthorized());
+  }
+
+  @Test
+  void acceptanceIdentityDoesNotExposeUnauthenticatedWrites() throws Exception {
+    mvc.perform(post("/api/v1/acceptance/identity")).andExpect(status().isUnauthorized());
   }
 }

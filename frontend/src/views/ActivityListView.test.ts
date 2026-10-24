@@ -39,28 +39,28 @@ describe("ActivityListView", () => {
     expect(wrapper.text()).not.toContain("创建活动");
   });
   it("loads backend pagination and advances with page/size params", async () => {
-    mock
-      .onGet("/api/v1/organizations/100/activities")
-      .reply((config) => [
-        200,
-        {
-          data: [
-            {
-              activity: {
-                id: "1",
-                title: "新生开学典礼",
-                location: "图书馆前广场",
-                activityStartAt: "2026-09-20T08:00:00",
-              },
-              positions: [],
+    mock.onGet("/api/v1/organizations/100/activities").reply((config) => [
+      200,
+      {
+        data: [
+          {
+            activity: {
+              id: "1",
+              title: "新生开学典礼",
+              location: "图书馆前广场",
+              activityStartAt: "2026-09-20T08:00:00",
             },
-          ],
-          meta: { page: config.params.page, size: 20, total: 21 },
-        },
-      ]);
+            positions: [],
+          },
+        ],
+        meta: { page: config.params.page, size: 20, total: 21 },
+      },
+    ]);
     const w = await open();
     expect(w.text()).toContain("新生开学典礼");
     expect(w.text()).toContain("创建活动");
+    expect(w.text()).toContain("草稿管理");
+    expect(w.text()).not.toContain("继续最近草稿");
     await w
       .findAll("button")
       .find((b) => b.text() === "下一页")!

@@ -3,6 +3,8 @@ package com.volunteerflow.infrastructure.security;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
+import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
@@ -18,6 +20,7 @@ public class SecurityConfig {
   @Bean
   SecurityFilterChain securityFilterChain(
       HttpSecurity http,
+      Environment environment,
       ObjectProvider<JwtDecoder> jwtDecoderProvider,
       ObjectProvider<DatabaseJwtAuthenticationConverter> converterProvider)
       throws Exception {
@@ -33,17 +36,23 @@ public class SecurityConfig {
                     (request, response, exception) ->
                         response.sendError(HttpStatus.UNAUTHORIZED.value())))
         .authorizeHttpRequests(
-            authorize ->
+            authorize -> {
+              if (environment.matchesProfiles("acceptance")) {
                 authorize
-                    .requestMatchers(
-                        "/actuator/health",
-                        "/actuator/health/**",
-                        "/api/v1/auth/register",
-                        "/api/v1/auth/login",
-                        "/api/v1/auth/refresh")
-                    .permitAll()
-                    .anyRequest()
-                    .authenticated());
+                    .requestMatchers(HttpMethod.GET, "/api/v1/acceptance/identity")
+                    .permitAll();
+              }
+              authorize
+                  .requestMatchers(
+                      "/actuator/health",
+                      "/actuator/health/**",
+                      "/api/v1/auth/register",
+                      "/api/v1/auth/login",
+                      "/api/v1/auth/refresh")
+                  .permitAll()
+                  .anyRequest()
+                  .authenticated();
+            });
     JwtDecoder jwtDecoder = jwtDecoderProvider.getIfAvailable();
     DatabaseJwtAuthenticationConverter converter = converterProvider.getIfAvailable();
     if (jwtDecoder != null && converter != null) {

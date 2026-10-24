@@ -7,8 +7,10 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -61,6 +63,54 @@ class ActivityControllerTest {
   }
 
   @Test
+  void draftListAndDetailHaveSeparateAuthenticatedContracts() throws Exception {
+    Activity draft = new Activity();
+    draft.setId(10L);
+    draft.setStatus("DRAFT");
+    when(activities.listDrafts(21L, 100L, 1, 20))
+        .thenReturn(
+            com.volunteerflow.infrastructure.web.PageResponse.of(
+                List.of(new ActivityService.ActivitySummary(draft, List.of())), 1, 1, 20));
+    when(activities.draftDetail(21L, 10L))
+        .thenReturn(new ActivityService.ActivityDetail(draft, List.of()));
+    mvc.perform(get("/api/v1/organizations/100/activity-drafts"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data[0].activity.status").value("DRAFT"))
+        .andExpect(jsonPath("$.meta.size").value(20));
+    mvc.perform(get("/api/v1/activities/10/draft"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.activity.id").value(10));
+  }
+
+  @Test
+  void draftPositionRoutesValidateReplacementAndReturnNoContentOnDelete() throws Exception {
+    ActivityPosition position = new ActivityPosition();
+    position.setId(20L);
+    when(activities.updateDraftPosition(eq(21L), eq(20L), any())).thenReturn(position);
+    mvc.perform(
+            put("/api/v1/positions/20/draft")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"name":"服务岗","description":"服务同学","capacity":2,
+                     "registrationMode":"REVIEW","promotionTimeoutMinutes":60,
+                     "serviceStartAt":null,"serviceEndAt":null,"meetingLocation":null}
+                    """))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.data.id").value(20));
+    mvc.perform(
+            put("/api/v1/positions/20/draft")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {"name":"服务岗","description":"服务同学","capacity":0,"registrationMode":"INVALID"}
+                    """))
+        .andExpect(status().isBadRequest());
+    mvc.perform(delete("/api/v1/positions/20/draft")).andExpect(status().isNoContent());
+    verify(activities).deleteDraftPosition(21L, 20L);
+  }
+
+  @Test
   void publishedActivityChangeUsesPrincipalAndReturnsTheAuditAndRecipientCount() throws Exception {
     Activity changed = new Activity();
     changed.setId(10L);
@@ -106,8 +156,10 @@ class ActivityControllerTest {
   @Test
   void prohibitedRegistrationStartFieldIsRejectedBeforeTheService() throws Exception {
     String body =
-        validRequestJson().replace(
-            "\"registrationEndAt\"", "\"registrationStartAt\":\"2026-09-01T09:00:00\",\"registrationEndAt\"");
+        validRequestJson()
+            .replace(
+                "\"registrationEndAt\"",
+                "\"registrationStartAt\":\"2026-09-01T09:00:00\",\"registrationEndAt\"");
 
     mvc.perform(
             post("/api/v1/activities/10/changes")
@@ -221,46 +273,46 @@ class ActivityControllerTest {
 
   private String validRequestJson() {
     return """
-        {
-          "title":"新标题",
-          "description":"新介绍",
-          "location":"新地点",
-          "registrationEndAt":"2026-09-26T18:00:00",
-          "freeCancelDeadlineAt":"2026-09-29T10:00:00",
-          "activityStartAt":"2026-10-02T09:00:00",
-          "activityEndAt":"2026-10-02T13:00:00",
-          "reason":"场地调整"
-        }
-        """;
+           {
+             "title":"新标题",
+             "description":"新介绍",
+             "location":"新地点",
+             "registrationEndAt":"2026-09-26T18:00:00",
+             "freeCancelDeadlineAt":"2026-09-29T10:00:00",
+             "activityStartAt":"2026-10-02T09:00:00",
+             "activityEndAt":"2026-10-02T13:00:00",
+             "reason":"场地调整"
+           }
+           """;
   }
 
   private String requestJsonWithoutFreeCancellationDeadline() {
     return """
-        {
-          "title":"新标题",
-          "description":"新介绍",
-          "location":"新地点",
-          "registrationEndAt":"2026-09-26T18:00:00",
-          "activityStartAt":"2026-10-02T09:00:00",
-          "activityEndAt":"2026-10-02T13:00:00",
-          "reason":"场地调整"
-        }
-        """;
+           {
+             "title":"新标题",
+             "description":"新介绍",
+             "location":"新地点",
+             "registrationEndAt":"2026-09-26T18:00:00",
+             "activityStartAt":"2026-10-02T09:00:00",
+             "activityEndAt":"2026-10-02T13:00:00",
+             "reason":"场地调整"
+           }
+           """;
   }
 
   private String requestJsonWithNullFreeCancellationDeadline() {
     return """
-        {
-          "title":"新标题",
-          "description":"新介绍",
-          "location":"新地点",
-          "registrationEndAt":"2026-09-26T18:00:00",
-          "freeCancelDeadlineAt":null,
-          "activityStartAt":"2026-10-02T09:00:00",
-          "activityEndAt":"2026-10-02T13:00:00",
-          "reason":"场地调整"
-        }
-        """;
+           {
+             "title":"新标题",
+             "description":"新介绍",
+             "location":"新地点",
+             "registrationEndAt":"2026-09-26T18:00:00",
+             "freeCancelDeadlineAt":null,
+             "activityStartAt":"2026-10-02T09:00:00",
+             "activityEndAt":"2026-10-02T13:00:00",
+             "reason":"场地调整"
+           }
+           """;
   }
 
   private PositionChangeRequest expectedPositionChange() {
@@ -278,17 +330,17 @@ class ActivityControllerTest {
 
   private String validPositionChangeJson() {
     return """
-        {
-          "name":"礼仪岗",
-          "description":"负责接待",
-          "capacity":21,
-          "registrationMode":"FIRST_COME",
-          "promotionTimeoutMinutes":120,
-          "serviceStartAt":"2026-10-01T09:30:00",
-          "serviceEndAt":"2026-10-01T12:30:00",
-          "meetingLocation":"东门",
-          "reason":"增加一个名额"
-        }
-        """;
+           {
+             "name":"礼仪岗",
+             "description":"负责接待",
+             "capacity":21,
+             "registrationMode":"FIRST_COME",
+             "promotionTimeoutMinutes":120,
+             "serviceStartAt":"2026-10-01T09:30:00",
+             "serviceEndAt":"2026-10-01T12:30:00",
+             "meetingLocation":"东门",
+             "reason":"增加一个名额"
+           }
+           """;
   }
 }

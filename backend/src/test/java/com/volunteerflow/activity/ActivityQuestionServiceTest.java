@@ -45,6 +45,27 @@ class ActivityQuestionServiceTest {
   }
 
   @Test
+  void deletedPositionCannotExposeOrChangeRetainedQuestions() {
+    ActivityPosition deleted = new ActivityPosition();
+    deleted.setId(30L);
+    deleted.setActivityId(10L);
+    deleted.setOrganizationId(100L);
+    deleted.setStatus("DELETED");
+    when(positionMapper.selectById(30L)).thenReturn(deleted);
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(deleted);
+    when(activityMapper.selectById(10L)).thenReturn(draftActivity());
+    when(activityMapper.selectByIdForUpdate(10L)).thenReturn(draftActivity());
+    assertThatThrownBy(() -> service.positionQuestions(7L, 30L))
+        .isInstanceOf(BusinessException.class);
+    assertThatThrownBy(
+            () ->
+                service.createPositionQuestion(
+                    7L, 30L, new QuestionRequest("TEXT", "问题", false, null, 1)))
+        .isInstanceOf(BusinessException.class);
+    verifyNoInteractions(positionQuestionMapper);
+  }
+
+  @Test
   void rejectsChoiceQuestionWithDuplicateOptions() {
     when(activityMapper.selectByIdForUpdate(10L)).thenReturn(draftActivity());
     QuestionRequest request =

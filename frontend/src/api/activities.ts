@@ -113,6 +113,33 @@ export async function getActivity(id: EntityId): Promise<ActivityDetail> {
   return (await apiClient.get(`/api/v1/activities/${id}`)).data.data;
 }
 
+export async function getActivityDraft(id: EntityId): Promise<ActivityDetail> {
+  return (await apiClient.get(`/api/v1/activities/${id}/draft`)).data.data;
+}
+
+export async function listActivityDraftsPage(
+  orgId: EntityId,
+  page = 1,
+  size = 20,
+): Promise<ActivityPage> {
+  return (
+    await apiClient.get(`/api/v1/organizations/${orgId}/activity-drafts`, {
+      params: { page, size },
+    })
+  ).data;
+}
+
+export async function updateDraftPosition(
+  id: EntityId,
+  body: PositionDraftRequest,
+): Promise<Position> {
+  return (await apiClient.put(`/api/v1/positions/${id}/draft`, body)).data.data;
+}
+
+export async function deleteDraftPosition(id: EntityId): Promise<void> {
+  await apiClient.delete(`/api/v1/positions/${id}/draft`);
+}
+
 type ManagementResponse = {
   activity: Activity;
   positions: Array<{

@@ -14,8 +14,17 @@ const loading = ref(false);
 const auth = useAuthStore();
 const router = useRouter();
 async function submit() {
-  loading.value = true;
+  if (loading.value) return;
   error.value = "";
+  if (
+    form.password.length < 12 ||
+    form.password.length > 72 ||
+    new TextEncoder().encode(form.password).length > 72
+  ) {
+    error.value = "密码须为 12–72 个字符，且 UTF-8 编码不超过 72 字节。";
+    return;
+  }
+  loading.value = true;
   try {
     await auth.register(form);
     await router.replace("/activities");
@@ -30,7 +39,10 @@ async function submit() {
   <section class="auth-page">
     <div class="auth-panel">
       <h1>创建账号</h1>
-      <p>使用校内资料加入志愿组织。</p>
+      <p>
+        使用校内资料加入志愿组织。密码为 12–72 个字符，UTF-8 编码不超过 72
+        字节。
+      </p>
       <form @submit.prevent="submit">
         <label
           >用户名<input

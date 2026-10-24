@@ -1,0 +1,10 @@
+# Explicit opt-in only. Keep production services and transactional Outbox, but never scan other runs.
+volunteerflow:
+  maintenance:
+    enabled: false
+  events:
+    consumer-auto-startup: false
+# The isolated runner overrides this only for a newly-created UUID acceptance database.
+spring:
+  flyway:
+    enabled: false

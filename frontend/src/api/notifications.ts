@@ -31,11 +31,16 @@ export async function listNotifications(params: {
 }
 
 export async function getUnreadCount(): Promise<number> {
-  return (
-    await apiClient.get<{ data: { unreadCount: number } }>(
+  const value = (
+    await apiClient.get<{ data: { unreadCount: number | string } }>(
       "/api/v1/users/me/notifications/unread-count",
     )
   ).data.data.unreadCount;
+  // The backend serializes Long values as strings to preserve precision for identifiers.
+  const count = Number(value);
+  if (!Number.isSafeInteger(count) || count < 0)
+    throw new Error("Invalid unread count");
+  return count;
 }
 
 export async function markNotificationRead(id: EntityId): Promise<void> {

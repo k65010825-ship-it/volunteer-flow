@@ -5,7 +5,9 @@ import {
   createActivity,
   updateActivity,
   publishActivity,
-  getActivity,
+  getActivityDraft,
+  updateDraftPosition,
+  deleteDraftPosition,
   listActivityQuestions,
   listPositionQuestions,
   createPosition,
@@ -37,6 +39,7 @@ const busy = ref(false);
 const error = ref("");
 const notice = ref("");
 const positions = ref<Position[]>([]);
+const editingPositionId = ref<EntityId>();
 const questions = reactive<Record<string, PositionManagementQuestion[]>>({
   activity: [],
 });
@@ -112,9 +115,21 @@ const readyToPublish = computed(
   () =>
     !!positions.value.length &&
     !activityDirty.value &&
+    !editingPositionId.value &&
     !question.title.trim() &&
     !position.name.trim() &&
-    !position.description.trim(),
+    !position.description.trim() &&
+    position.capacity === 1 &&
+    position.registrationMode === "FIRST_COME" &&
+    position.promotionTimeoutMinutes === 120 &&
+    !position.serviceStartAt &&
+    !position.serviceEndAt &&
+    !position.meetingLocation &&
+    !question.id &&
+    question.type === "TEXT" &&
+    !question.required &&
+    !question.optionsText.trim() &&
+    question.sortOrder === 1,
 );
 function displayError(value: unknown) {
   return isAxiosError(value)
@@ -143,32 +158,17 @@ async function load() {
   permissions.value = [];
   activity.value = null;
   positions.value = [];
+  resetPosition();
   savedId.value = props.id;
   organizationId.value = props.organizationId || "";
   editQuestion("activity");
-  if (props.id && !organizationId.value) {
-    try {
-      for (let index = 0; index < localStorage.length; index++) {
-        const key = localStorage.key(index);
-        if (
-          key?.startsWith("activity-draft:") &&
-          localStorage.getItem(key) === props.id
-        ) {
-          organizationId.value = key.slice("activity-draft:".length);
-          break;
-        }
-      }
-    } catch {
-      /* Backend remains authoritative; ID lookup is only a navigation hint. */
-    }
-  }
   for (const key of Object.keys(form) as (keyof ActivityDraftRequest)[])
     form[key] = "";
   for (const key of Object.keys(questions)) delete questions[key];
   questions.activity = [];
   try {
     if (props.id) {
-      const detail = await getActivity(props.id);
+      const detail = await getActivityDraft(props.id);
       if (request !== generation) return;
       setActivity(detail.activity);
       positions.value = detail.positions;
@@ -192,7 +192,7 @@ async function load() {
       permissions.value = [];
       error.value =
         isAxiosError(value) && value.response?.status === 403
-          ? "没有读取草稿的权限。重新打开未发布活动需要 activity:read；请联系组织负责人同时授予创建与读取权限。草稿 ID 仍保留，此提示仅说明读取受限。"
+          ? "没有草稿管理权限，需要本组织的 activity:create 权限。草稿 ID 仍保留，请联系组织负责人。"
           : displayError(value);
     }
   } finally {
@@ -250,11 +250,6 @@ async function save() {
       : await createActivity(organizationId.value, body);
     if (request !== generation) return;
     setActivity(result);
-    try {
-      localStorage.setItem(`activity-draft:${organizationId.value}`, result.id);
-    } catch {
-      /* ID persistence is optional. */
-    }
     notice.value = "草稿已保存；可使用下方链接再次进入。";
   });
 }
@@ -274,19 +269,73 @@ async function addPosition() {
   const request = generation;
   const id = savedId.value;
   await run(async () => {
-    const result = await createPosition(id, {
+    const body = {
       ...position,
       serviceStartAt: position.serviceStartAt || null,
       serviceEndAt: position.serviceEndAt || null,
       meetingLocation: position.meetingLocation || null,
-    });
+    };
+    const editingId = editingPositionId.value;
+    const original = positions.value.find((p) => p.id === editingId);
+    for (const key of ["serviceStartAt", "serviceEndAt"] as const) {
+      if (original?.[key] && position[key] === original[key]?.slice(0, 16))
+        body[key] = original[key];
+    }
+    const result = editingId
+      ? await updateDraftPosition(editingId, body)
+      : await createPosition(id, body);
     if (request !== generation) return;
-    positions.value.push(result);
-    questions[result.id] = [];
-    position.name = "";
-    position.description = "";
-    notice.value =
-      "岗位已保存。现有接口不支持直接更新或删除岗位，请核对后再保存。";
+    const index = positions.value.findIndex((p) => p.id === result.id);
+    if (index < 0) positions.value.push(result);
+    else positions.value[index] = result;
+    questions[result.id] ||= [];
+    resetPosition();
+    notice.value = "岗位已保存。";
+  });
+}
+function resetPosition() {
+  editingPositionId.value = undefined;
+  Object.assign(position, {
+    name: "",
+    description: "",
+    capacity: 1,
+    registrationMode: "FIRST_COME",
+    promotionTimeoutMinutes: 120,
+    serviceStartAt: "",
+    serviceEndAt: "",
+    meetingLocation: "",
+  });
+}
+function editPosition(value: Position) {
+  if (busy.value) return;
+  editingPositionId.value = value.id;
+  Object.assign(position, {
+    name: value.name,
+    description: value.description,
+    capacity: value.capacity,
+    registrationMode: value.registrationMode,
+    promotionTimeoutMinutes: value.promotionTimeoutMinutes,
+    serviceStartAt: value.serviceStartAt?.slice(0, 16) || "",
+    serviceEndAt: value.serviceEndAt?.slice(0, 16) || "",
+    meetingLocation: value.meetingLocation || "",
+  });
+}
+async function removePosition(id: EntityId) {
+  if (
+    !canEdit.value ||
+    busy.value ||
+    !window.confirm("确定删除此岗位及其报名问题配置？")
+  )
+    return;
+  const request = generation;
+  await run(async () => {
+    await deleteDraftPosition(id);
+    if (request !== generation) return;
+    positions.value = positions.value.filter((p) => p.id !== id);
+    delete questions[id];
+    if (question.scope === id) editQuestion("activity");
+    if (editingPositionId.value === id) resetPosition();
+    notice.value = "岗位已删除。";
   });
 }
 function editQuestion(scope: string, value?: PositionManagementQuestion) {
@@ -394,11 +443,6 @@ async function publish() {
     const result = await publishActivity(id);
     if (request !== generation) return;
     setActivity(result);
-    try {
-      localStorage.removeItem(`activity-draft:${organizationId.value}`);
-    } catch {
-      /* optional */
-    }
     notice.value = "活动已发布。";
   });
 }
@@ -422,6 +466,11 @@ async function publish() {
         ><template v-if="activity"> · 状态 {{ activity.status }}</template>
       </p>
       <nav class="workspace-links" aria-label="活动相关页面">
+        <RouterLink
+          v-if="organizationId"
+          :to="`/organizations/${organizationId}/drafts`"
+          >全部草稿</RouterLink
+        >
         <RouterLink
           v-if="organizationId"
           :to="`/organizations/${organizationId}/activities`"
@@ -469,7 +518,7 @@ async function publish() {
           <h2>岗位与报名问题</h2>
           <p>
             活动至少需要一个岗位；公共问题与每个岗位问题合计最多 10
-            个。已保存岗位暂不支持直接修改或删除。
+            个。发布前可编辑或删除已保存岗位。
           </p>
           <button class="secondary" @click="editQuestion('activity')">
             编辑公共问题
@@ -477,17 +526,39 @@ async function publish() {
           <article v-for="p in positions" :key="p.id">
             <h3>{{ p.name }} · {{ p.capacity }} 人</h3>
             <p>{{ p.description }}</p>
-            <button class="secondary" @click="editQuestion(p.id)">
+            <button
+              class="secondary"
+              :disabled="busy"
+              :data-test="`edit-position-${p.id}`"
+              @click="editPosition(p)"
+            >
+              编辑岗位
+            </button>
+            <button
+              class="text-action"
+              :disabled="busy"
+              :data-test="`delete-position-${p.id}`"
+              @click="removePosition(p.id)"
+            >
+              删除岗位
+            </button>
+            <button
+              class="secondary"
+              :disabled="busy"
+              :data-test="`position-questions-${p.id}`"
+              @click="editQuestion(p.id)"
+            >
               编辑此岗位问题
             </button>
           </article>
         </section>
         <form class="editor-card" @submit.prevent="addPosition">
           <fieldset :disabled="busy">
-            <legend>新增岗位</legend>
+            <legend>{{ editingPositionId ? "编辑岗位" : "新增岗位" }}</legend>
             <label
               >岗位名称<input
                 v-model="position.name"
+                data-test="position-name"
                 required
                 maxlength="128" /></label
             ><label
@@ -531,7 +602,15 @@ async function publish() {
                 maxlength="255"
             /></label>
             <button class="secondary" data-test="save-position">
-              保存新岗位
+              {{ editingPositionId ? "保存岗位修改" : "保存新岗位" }}
+            </button>
+            <button
+              v-if="editingPositionId"
+              class="text-action"
+              type="button"
+              @click="resetPosition"
+            >
+              取消编辑岗位
             </button>
           </fieldset>
         </form>

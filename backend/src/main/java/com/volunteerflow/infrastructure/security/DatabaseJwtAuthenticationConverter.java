@@ -32,6 +32,15 @@ public class DatabaseJwtAuthenticationConverter
     if (user == null || !"ACTIVE".equals(user.getStatus())) {
       throw invalidToken("User is unavailable");
     }
+    int currentVersion = user.getVersion() == null ? 0 : user.getVersion();
+    Object credentialVersion = jwt.getClaims().get("credential_version");
+    // Legacy tokens predate this claim and are valid only before the first password change.
+    if ((credentialVersion == null && currentVersion != 0)
+        || (credentialVersion != null
+            && (!(credentialVersion instanceof Number)
+                || !credentialVersion.toString().equals(Integer.toString(currentVersion))))) {
+      throw invalidToken("Credentials have changed; sign in again");
+    }
     var authorities = List.of(new SimpleGrantedAuthority("ROLE_" + user.getPlatformRole()));
     return new UsernamePasswordAuthenticationToken(CurrentUser.from(user), jwt, authorities);
   }

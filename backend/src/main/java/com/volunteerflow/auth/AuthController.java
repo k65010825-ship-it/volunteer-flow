@@ -16,6 +16,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.CookieValue;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -74,6 +75,23 @@ public class AuthController {
   @GetMapping("/me")
   public ApiResponse<CurrentUser> me(@AuthenticationPrincipal CurrentUser currentUser) {
     return ApiResponse.of(authService.me(currentUser.id()));
+  }
+
+  @PutMapping("/me")
+  public ApiResponse<CurrentUser> updateProfile(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @Valid @RequestBody UpdateProfileRequest request) {
+    return ApiResponse.of(authService.updateProfile(currentUser.id(), request));
+  }
+
+  @PostMapping("/password")
+  public ResponseEntity<Void> changePassword(
+      @AuthenticationPrincipal CurrentUser currentUser,
+      @Valid @RequestBody ChangePasswordRequest request) {
+    authService.changePassword(currentUser.id(), request);
+    return ResponseEntity.noContent()
+        .header(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString())
+        .build();
   }
 
   private ResponseEntity<ApiResponse<AccessTokenResponse>> response(

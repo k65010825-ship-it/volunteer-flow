@@ -1,0 +1,15 @@
+{
+  "database": "vf_acceptance_1987806a0b3c4c31a721847bd38bf317",
+  "successfulMigrations": 10,
+  "failedMigrations": 0,
+  "users": 13,
+  "changedCredentialUsers": 3,
+  "finishedActivities": 1,
+  "deletedPositions": 1,
+  "acceptedOffers": 1,
+  "checkinRecords": 2,
+  "auditRecords": 28,
+  "outboxEvents": 13,
+  "publishedEvents": 0,
+  "notifications": 0
+}

@@ -5,8 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 import com.volunteerflow.audit.AuditService;
-import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.infrastructure.event.*;
+import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.CapturingDomainEventPublisher;
 import com.volunteerflow.registration.RegistrationCycleMapper;
@@ -56,6 +56,196 @@ class ActivityServiceTest {
   void persistSingleRowWrites() {
     when(activityMapper.updateById(any(Activity.class))).thenReturn(1);
     when(positionMapper.insert(any(ActivityPosition.class))).thenReturn(1);
+  }
+
+  @Test
+  void draftActivityUpdateClearsCancellationDeadlineWithExplicitReplacement() {
+    Activity draft = validDraft();
+    draft.setVersion(2);
+    draft.setFreeCancelDeadlineAt(draft.getActivityStartAt().minusHours(1));
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(draft);
+    when(activityMapper.updateDraftFields(any(Activity.class))).thenReturn(1);
+    var request =
+        new ActivityService.ActivityRequest(
+            "标题",
+            "介绍",
+            "地点",
+            draft.getRegistrationStartAt(),
+            draft.getRegistrationEndAt(),
+            null,
+            draft.getActivityStartAt(),
+            draft.getActivityEndAt());
+
+    var result = service.update(7L, 1L, request);
+
+    assertThat(result.getFreeCancelDeadlineAt()).isNull();
+    assertThat(result.getVersion()).isEqualTo(3);
+    verify(activityMapper).updateDraftFields(result);
+    verify(activityMapper, never()).updateById(any(Activity.class));
+    verify(auditService).record(100L, 7L, "activity.updated", "activity", 1L, null);
+  }
+
+  @Test
+  void draftActivityZeroRowReplacementFailsBeforeAudit() {
+    Activity draft = validDraft();
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(draft);
+    var request =
+        new ActivityService.ActivityRequest(
+            "标题",
+            "介绍",
+            "地点",
+            draft.getRegistrationStartAt(),
+            draft.getRegistrationEndAt(),
+            null,
+            draft.getActivityStartAt(),
+            draft.getActivityEndAt());
+
+    assertThatThrownBy(() -> service.update(7L, 1L, request))
+        .isInstanceOf(OptimisticLockingFailureException.class);
+    verifyNoInteractions(auditService);
+  }
+
+  @Test
+  void draftDetailUsesCreatePermissionWithoutPublicReadOrCache() {
+    Activity draft = validDraft();
+    when(activityMapper.selectById(1L)).thenReturn(draft);
+    when(positionMapper.selectActiveByActivity(100L, 1L)).thenReturn(List.of(activePosition()));
+    assertThat(service.draftDetail(7L, 1L).positions()).hasSize(1);
+    verify(authorization).requirePermission(7L, 100L, "activity:create");
+    verify(authorization, never()).requirePermission(7L, 100L, "activity:read");
+    verifyNoInteractions(detailCache);
+  }
+
+  @Test
+  void draftListClampsPaginationAndLoadsOnlyScopedActivePositions() {
+    Activity draft = validDraft();
+    when(activityMapper.selectDraftPage(any(), eq(100L)))
+        .thenAnswer(
+            call -> {
+              com.baomidou.mybatisplus.core.metadata.IPage<Activity> page = call.getArgument(0);
+              assertThat(page.getCurrent()).isEqualTo(1);
+              assertThat(page.getSize()).isEqualTo(100);
+              page.setRecords(List.of(draft));
+              page.setTotal(1);
+              return page;
+            });
+    when(positionMapper.selectActiveByActivities(100L, List.of(1L)))
+        .thenReturn(List.of(activePosition()));
+    var result = service.listDrafts(7L, 100L, -1, 500);
+    assertThat(result.data()).hasSize(1);
+    assertThat(result.data().get(0).positions()).hasSize(1);
+    verify(authorization).requirePermission(7L, 100L, "activity:create");
+  }
+
+  @Test
+  void draftPositionRejectsCrossOrganizationChildAfterParentLock() {
+    ActivityPosition existing = activePosition();
+    ActivityPosition changed = activePosition();
+    changed.setOrganizationId(200L);
+    when(positionMapper.selectById(30L)).thenReturn(existing);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(validDraft());
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(changed);
+    assertThatThrownBy(() -> service.updateDraftPosition(7L, 30L, validPositionRequest()))
+        .isInstanceOf(BusinessException.class)
+        .extracting(ex -> ((BusinessException) ex).code())
+        .isEqualTo("POSITION_NOT_FOUND");
+    verify(positionMapper, never()).updateDraftFields(any());
+  }
+
+  @Test
+  void draftPositionUpdateRejectsInvalidScheduleAndZeroRowWriteBeforeAudit() {
+    ActivityPosition existing = activePosition();
+    when(positionMapper.selectById(30L)).thenReturn(existing);
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(existing);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(validDraft());
+    var invalid =
+        new ActivityService.PositionRequest(
+            "岗位",
+            "说明",
+            2,
+            "FIRST_COME",
+            120,
+            LocalDateTime.of(2026, 9, 16, 0, 0),
+            LocalDateTime.of(2026, 9, 17, 3, 0),
+            null);
+    assertThatThrownBy(() -> service.updateDraftPosition(7L, 30L, invalid))
+        .isInstanceOf(BusinessException.class)
+        .extracting(ex -> ((BusinessException) ex).code())
+        .isEqualTo("INVALID_POSITION_TIME");
+    verify(positionMapper, never()).updateDraftFields(any());
+    assertThatThrownBy(() -> service.updateDraftPosition(7L, 30L, validPositionRequest()))
+        .isInstanceOf(OptimisticLockingFailureException.class);
+    verifyNoInteractions(auditService);
+  }
+
+  @Test
+  void draftPositionDeleteRejectsForbiddenMemberBeforeReadingLockedChild() {
+    when(positionMapper.selectById(30L)).thenReturn(activePosition());
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(validDraft());
+    doThrow(
+            new BusinessException(
+                org.springframework.http.HttpStatus.FORBIDDEN, "PERMISSION_DENIED", "Forbidden"))
+        .when(authorization)
+        .requirePermission(7L, 100L, "activity:create");
+    assertThatThrownBy(() -> service.deleteDraftPosition(7L, 30L))
+        .isInstanceOf(BusinessException.class);
+    verify(positionMapper, never()).selectByIdForUpdate(anyLong());
+    verify(positionMapper, never()).markDraftDeleted(anyLong(), anyLong(), anyLong());
+  }
+
+  @Test
+  void draftDetailCannotReadPublishedActivity() {
+    Activity published = validDraft();
+    published.setStatus("PUBLISHED");
+    when(activityMapper.selectById(1L)).thenReturn(published);
+    assertThatThrownBy(() -> service.draftDetail(7L, 1L))
+        .isInstanceOf(BusinessException.class)
+        .extracting(ex -> ((BusinessException) ex).code())
+        .isEqualTo("ACTIVITY_NOT_DRAFT");
+    verifyNoInteractions(positionMapper, detailCache);
+  }
+
+  @Test
+  void draftPositionUpdateLocksParentThenChildAndClearsNullableFields() {
+    Activity draft = validDraft();
+    ActivityPosition existing = activePosition();
+    existing.setVersion(2);
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(draft);
+    when(positionMapper.selectById(30L)).thenReturn(existing);
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(existing);
+    when(positionMapper.updateDraftFields(any())).thenReturn(1);
+    var result =
+        service.updateDraftPosition(
+            7L,
+            30L,
+            new ActivityService.PositionRequest("新岗", "说明", 3, "REVIEW", 60, null, null, null));
+    assertThat(result.getRegistrationMode()).isEqualTo("REVIEW");
+    assertThat(result.getVersion()).isEqualTo(3);
+    assertThat(result.getServiceStartAt()).isNull();
+    assertThat(result.getMeetingLocation()).isNull();
+    var order = inOrder(activityMapper, positionMapper);
+    order.verify(positionMapper).selectById(30L);
+    order.verify(activityMapper).selectByIdForUpdate(1L);
+    order.verify(positionMapper).selectByIdForUpdate(30L);
+    order.verify(positionMapper).updateDraftFields(existing);
+  }
+
+  @Test
+  void draftPositionDeletePreservesCoreRowAndRejectsPublicationRace() {
+    Activity draft = validDraft();
+    ActivityPosition existing = activePosition();
+    when(activityMapper.selectByIdForUpdate(1L)).thenReturn(draft);
+    when(positionMapper.selectById(30L)).thenReturn(existing);
+    when(positionMapper.selectByIdForUpdate(30L)).thenReturn(existing);
+    when(positionMapper.markDraftDeleted(30L, 100L, 1L)).thenReturn(1);
+    service.deleteDraftPosition(7L, 30L);
+    verify(positionMapper).markDraftDeleted(30L, 100L, 1L);
+    verify(positionMapper, never()).deleteById(30L);
+    draft.setStatus("PUBLISHED");
+    assertThatThrownBy(() -> service.deleteDraftPosition(7L, 30L))
+        .isInstanceOf(BusinessException.class)
+        .extracting(ex -> ((BusinessException) ex).code())
+        .isEqualTo("ACTIVITY_NOT_DRAFT");
   }
 
   @Test
@@ -137,8 +327,7 @@ class ActivityServiceTest {
             "Organization was not found");
     doThrow(hidden).when(authorization).requireMembership(99L, 100L);
 
-    assertThatThrownBy(() -> service.addPosition(99L, 1L, validPositionRequest()))
-        .isSameAs(hidden);
+    assertThatThrownBy(() -> service.addPosition(99L, 1L, validPositionRequest())).isSameAs(hidden);
 
     verify(authorization, never()).requirePermission(anyLong(), anyLong(), anyString());
     verify(positionMapper, never()).insert(any(ActivityPosition.class));
@@ -164,7 +353,8 @@ class ActivityServiceTest {
 
     ActivityService.ActivityManagementDetail detail = service.managementDetail(7L, 1L);
 
-    assertThat(detail.positions()).extracting(ActivityService.ManagedPosition::position)
+    assertThat(detail.positions())
+        .extracting(ActivityService.ManagedPosition::position)
         .containsExactly(active, draft);
     assertThat(detail.positions().get(1).questions()).containsExactly(question);
     assertThat(detail.commonQuestionCount()).isEqualTo(3);
@@ -274,13 +464,21 @@ class ActivityServiceTest {
     when(positionQuestionMapper.selectPositionIdsByActivityForUpdate(1L))
         .thenReturn(Collections.nCopies(6, 30L));
 
-    events.beforePublish(() -> {
-      assertThat(activity.getStatus()).isEqualTo("PUBLISHED");
-      verify(auditService).record(100L, 7L, "activity.published", "activity", 1L, null);
-    });
+    events.beforePublish(
+        () -> {
+          assertThat(activity.getStatus()).isEqualTo("PUBLISHED");
+          verify(auditService).record(100L, 7L, "activity.published", "activity", 1L, null);
+        });
     Activity result = service.publish(7L, 1L);
-    assertThat(events.commands()).containsExactly(new DomainEventCommand(
-        100L, 1L, "ACTIVITY", "1", "activity.published.v1", new ActivityStatusPayload(7L, "PUBLISHED")));
+    assertThat(events.commands())
+        .containsExactly(
+            new DomainEventCommand(
+                100L,
+                1L,
+                "ACTIVITY",
+                "1",
+                "activity.published.v1",
+                new ActivityStatusPayload(7L, "PUBLISHED")));
 
     assertThat(result.getStatus()).isEqualTo("PUBLISHED");
     assertThat(result.getPublishedAt())
@@ -353,20 +551,22 @@ class ActivityServiceTest {
     assertThat(result.getStatus()).isEqualTo("CANCELED");
     assertThat(events.commands())
         .containsExactly(
-            new DomainEventCommand(100L, 1L, "ACTIVITY", "1", "activity.cancelled.v1",
-                new NotificationIntentPayload(21L,
-                "ACTIVITY_CANCELED",
-                "活动已取消",
-                "迎新志愿服务已取消：天气原因",
+            new DomainEventCommand(
+                100L,
+                1L,
                 "ACTIVITY",
-                1L)),
-            new DomainEventCommand(100L, 1L, "ACTIVITY", "1", "activity.cancelled.v1",
-                new NotificationIntentPayload(22L,
-                "ACTIVITY_CANCELED",
-                "活动已取消",
-                "迎新志愿服务已取消：天气原因",
+                "1",
+                "activity.cancelled.v1",
+                new NotificationIntentPayload(
+                    21L, "ACTIVITY_CANCELED", "活动已取消", "迎新志愿服务已取消：天气原因", "ACTIVITY", 1L)),
+            new DomainEventCommand(
+                100L,
+                1L,
                 "ACTIVITY",
-                1L)));
+                "1",
+                "activity.cancelled.v1",
+                new NotificationIntentPayload(
+                    22L, "ACTIVITY_CANCELED", "活动已取消", "迎新志愿服务已取消：天气原因", "ACTIVITY", 1L)));
     var order = inOrder(cycleMapper, activityMapper, authorization);
     order.verify(activityMapper).selectByIdForUpdate(1L);
     order.verify(authorization).requirePermission(7L, 100L, "activity:cancel");
@@ -403,29 +603,41 @@ class ActivityServiceTest {
     else proxied.cancel(7L, 1L, "天气原因");
     assertThat(f.commits).isEqualTo(1);
     assertThat(f.rollbacks).isZero();
-    assertThat(f.committed).anyMatch(Activity.class::isInstance)
+    assertThat(f.committed)
+        .anyMatch(Activity.class::isInstance)
         .anyMatch(com.volunteerflow.audit.AuditLog.class::isInstance);
     assertThat(f.rows()).hasSize("published".equals(action) ? 1 : 2);
     assertThat(f.rows()).extracting(OutboxEvent::getEventId).doesNotHaveDuplicates();
-    assertThat(f.rows()).allSatisfy(row -> {
-      assertThat(row.getTopic()).isEqualTo("volunteerflow.activity-events.v1");
-      assertThat(row.getMessageKey()).isEqualTo("100:1");
-      assertThat(row.getStatus()).isEqualTo("PENDING");
-      var event = f.codec.decode(row.getPayloadJson());
-      assertThat(event.eventType()).isEqualTo("activity." + action + ".v1");
-      assertThat(event.aggregateType()).isEqualTo("ACTIVITY");
-      assertThat(event.aggregateId()).isEqualTo("1");
-      assertThat(event.organizationId()).isEqualTo(100L);
-      assertThat(event.activityId()).isEqualTo(1L);
-      assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-09-15T00:00:00Z"));
-    });
+    assertThat(f.rows())
+        .allSatisfy(
+            row -> {
+              assertThat(row.getTopic()).isEqualTo("volunteerflow.activity-events.v1");
+              assertThat(row.getMessageKey()).isEqualTo("100:1");
+              assertThat(row.getStatus()).isEqualTo("PENDING");
+              var event = f.codec.decode(row.getPayloadJson());
+              assertThat(event.eventType()).isEqualTo("activity." + action + ".v1");
+              assertThat(event.aggregateType()).isEqualTo("ACTIVITY");
+              assertThat(event.aggregateId()).isEqualTo("1");
+              assertThat(event.organizationId()).isEqualTo(100L);
+              assertThat(event.activityId()).isEqualTo(1L);
+              assertThat(event.occurredAt()).isEqualTo(Instant.parse("2026-09-15T00:00:00Z"));
+            });
     if ("cancelled".equals(action)) {
-      assertThat(f.rows()).extracting(row -> ((NotificationIntentPayload) f.codec.decode(row.getPayloadJson()).payload()).userId())
+      assertThat(f.rows())
+          .extracting(
+              row ->
+                  ((NotificationIntentPayload) f.codec.decode(row.getPayloadJson()).payload())
+                      .userId())
           .containsExactly(21L, 22L);
       activity.setTitle("later mutable title");
-      assertThat(f.rows()).allSatisfy(row -> assertThat(
-          ((NotificationIntentPayload) f.codec.decode(row.getPayloadJson()).payload()).content())
-          .isEqualTo("迎新志愿服务已取消：天气原因"));
+      assertThat(f.rows())
+          .allSatisfy(
+              row ->
+                  assertThat(
+                          ((NotificationIntentPayload)
+                                  f.codec.decode(row.getPayloadJson()).payload())
+                              .content())
+                      .isEqualTo("迎新志愿服务已取消：天气原因"));
     }
     verifyNoInteractions(f.unavailableKafka);
   }
@@ -436,10 +648,12 @@ class ActivityServiceTest {
     BusinessOutboxFixture f = new BusinessOutboxFixture(clock);
     arrangeTransactionalActivity(f, action);
     f.failAtInsert = "published".equals(action) ? 1 : 2;
-    assertThatThrownBy(() -> {
-      if ("published".equals(action)) transactionalService(f).publish(7L, 1L);
-      else transactionalService(f).cancel(7L, 1L, "天气原因");
-    }).isSameAs(f.failure);
+    assertThatThrownBy(
+            () -> {
+              if ("published".equals(action)) transactionalService(f).publish(7L, 1L);
+              else transactionalService(f).cancel(7L, 1L, "天气原因");
+            })
+        .isSameAs(f.failure);
     assertThat(f.insertAttempts).isEqualTo(f.failAtInsert);
     assertThat(f.rollbacks).isEqualTo(1);
     assertThat(f.commits).isZero();
@@ -453,20 +667,34 @@ class ActivityServiceTest {
     activity.setTitle("迎新志愿服务");
     when(activityMapper.selectByIdForUpdate(1L)).thenReturn(activity);
     if ("published".equals(action)) {
-      when(positionMapper.selectActiveByActivityForUpdate(100L, 1L)).thenReturn(List.of(activePosition()));
-      when(activityMapper.updateById(any(Activity.class))).thenAnswer(call -> f.stage(call.getArgument(0)));
+      when(positionMapper.selectActiveByActivityForUpdate(100L, 1L))
+          .thenReturn(List.of(activePosition()));
+      when(activityMapper.updateById(any(Activity.class)))
+          .thenAnswer(call -> f.stage(call.getArgument(0)));
     } else {
       activity.setStatus("PUBLISHED");
-      when(cycleMapper.selectAffectedUserIdsForActivityCancellation(100L, 1L)).thenReturn(List.of(21L, 22L, 21L));
-      when(activityMapper.cancelCurrent(eq(1L), eq(100L), any())).thenAnswer(call -> f.stage(activity));
+      when(cycleMapper.selectAffectedUserIdsForActivityCancellation(100L, 1L))
+          .thenReturn(List.of(21L, 22L, 21L));
+      when(activityMapper.cancelCurrent(eq(1L), eq(100L), any()))
+          .thenAnswer(call -> f.stage(activity));
     }
     return activity;
   }
 
   private ActivityService transactionalService(BusinessOutboxFixture f) {
-    return f.proxy(new ActivityService(activityMapper, positionMapper, activityQuestionMapper,
-        positionQuestionMapper, authorization, f.audit, cycleMapper, f.publisher,
-        detailCache, cacheInvalidator, clock));
+    return f.proxy(
+        new ActivityService(
+            activityMapper,
+            positionMapper,
+            activityQuestionMapper,
+            positionQuestionMapper,
+            authorization,
+            f.audit,
+            cycleMapper,
+            f.publisher,
+            detailCache,
+            cacheInvalidator,
+            clock));
   }
 
   private Activity validDraft() {

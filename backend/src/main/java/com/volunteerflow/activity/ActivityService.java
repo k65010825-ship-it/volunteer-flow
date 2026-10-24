@@ -2,14 +2,14 @@ package com.volunteerflow.activity;
 
 import com.baomidou.mybatisplus.core.toolkit.IdWorker;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.volunteerflow.infrastructure.web.PageResponse;
 import com.volunteerflow.audit.AuditService;
-import com.volunteerflow.infrastructure.web.BusinessException;
 import com.volunteerflow.infrastructure.event.ActivityStatusPayload;
 import com.volunteerflow.infrastructure.event.DomainEventCommand;
 import com.volunteerflow.infrastructure.event.DomainEventPublisher;
 import com.volunteerflow.infrastructure.event.DomainEventTypes;
 import com.volunteerflow.infrastructure.event.NotificationEventTemplate;
+import com.volunteerflow.infrastructure.web.BusinessException;
+import com.volunteerflow.infrastructure.web.PageResponse;
 import com.volunteerflow.rbac.OrganizationAuthorizationService;
 import com.volunteerflow.registration.RegistrationCycleMapper;
 import java.time.Clock;
@@ -90,15 +90,126 @@ public class ActivityService {
 
   @Transactional
   public Activity update(Long userId, Long id, ActivityRequest request) {
-    Activity activity = required(id);
+    Activity activity = activities.selectByIdForUpdate(id);
+    if (activity == null) throw activityNotFound();
     authorization.requirePermission(userId, activity.getOrganizationId(), "activity:create");
     if (!"DRAFT".equals(activity.getStatus()))
       throw conflict("ACTIVITY_NOT_DRAFT", "Only draft activities can be directly edited");
     validateTimes(request);
     apply(activity, request);
-    activities.updateById(activity);
+    if (activities.updateDraftFields(activity) != 1) {
+      throw new OptimisticLockingFailureException("Draft activity changed concurrently");
+    }
+    if (activity.getVersion() != null) {
+      activity.setVersion(activity.getVersion() + 1);
+    }
     audit.record(activity.getOrganizationId(), userId, "activity.updated", "activity", id, null);
     return activity;
+  }
+
+  @Transactional
+  public ActivityPosition updateDraftPosition(
+      Long userId, Long positionId, PositionRequest request) {
+    DraftPosition editable = lockDraftPosition(userId, positionId);
+    ActivityPosition position = editable.position();
+    validatePosition(editable.activity(), request);
+    position.setName(request.name().trim());
+    position.setDescription(request.description().trim());
+    position.setCapacity(request.capacity());
+    position.setRegistrationMode(request.registrationMode());
+    position.setPromotionTimeoutMinutes(
+        request.promotionTimeoutMinutes() == null ? 120 : request.promotionTimeoutMinutes());
+    position.setServiceStartAt(request.serviceStartAt());
+    position.setServiceEndAt(request.serviceEndAt());
+    position.setMeetingLocation(trim(request.meetingLocation()));
+    if (positions.updateDraftFields(position) != 1) {
+      throw new OptimisticLockingFailureException("Draft position changed concurrently");
+    }
+    if (position.getVersion() != null) {
+      position.setVersion(position.getVersion() + 1);
+    }
+    audit.record(
+        position.getOrganizationId(),
+        userId,
+        "activity.position.updated",
+        "activity_position",
+        positionId,
+        null);
+    return position;
+  }
+
+  @Transactional
+  public void deleteDraftPosition(Long userId, Long positionId) {
+    DraftPosition editable = lockDraftPosition(userId, positionId);
+    ActivityPosition position = editable.position();
+    if (positions.markDraftDeleted(
+            positionId, position.getOrganizationId(), position.getActivityId())
+        != 1) {
+      throw new OptimisticLockingFailureException("Draft position changed concurrently");
+    }
+    audit.record(
+        position.getOrganizationId(),
+        userId,
+        "activity.position.deleted",
+        "activity_position",
+        positionId,
+        null);
+  }
+
+  private DraftPosition lockDraftPosition(Long userId, Long positionId) {
+    ActivityPosition discovery = positions.selectById(positionId);
+    if (discovery == null) {
+      throw positionNotFound();
+    }
+    // The discovery read does not authorize writes; publication shares this parent lock.
+    Activity activity = activities.selectByIdForUpdate(discovery.getActivityId());
+    if (activity == null) {
+      throw activityNotFound();
+    }
+    authorization.requirePermission(userId, activity.getOrganizationId(), "activity:create");
+    if (!"DRAFT".equals(activity.getStatus())) {
+      throw conflict("ACTIVITY_NOT_DRAFT", "Only draft activity positions can be edited");
+    }
+    ActivityPosition position = positions.selectByIdForUpdate(positionId);
+    if (position == null
+        || !activity.getId().equals(position.getActivityId())
+        || !activity.getOrganizationId().equals(position.getOrganizationId())
+        || !"ACTIVE".equals(position.getStatus())) {
+      throw positionNotFound();
+    }
+    return new DraftPosition(activity, position);
+  }
+
+  private record DraftPosition(Activity activity, ActivityPosition position) {}
+
+  private BusinessException activityNotFound() {
+    return new BusinessException(
+        HttpStatus.NOT_FOUND, "ACTIVITY_NOT_FOUND", "Activity was not found");
+  }
+
+  private BusinessException positionNotFound() {
+    return new BusinessException(
+        HttpStatus.NOT_FOUND, "POSITION_NOT_FOUND", "Activity position was not found");
+  }
+
+  private void validatePosition(Activity activity, PositionRequest request) {
+    if (request.capacity() < 1
+        || !List.of("FIRST_COME", "REVIEW").contains(request.registrationMode())
+        || (request.promotionTimeoutMinutes() != null
+            && (request.promotionTimeoutMinutes() < 30
+                || request.promotionTimeoutMinutes() > 720))) {
+      throw semantic("INVALID_POSITION", "Position capacity, mode or promotion timeout is invalid");
+    }
+    boolean missing = (request.serviceStartAt() == null) != (request.serviceEndAt() == null);
+    if (missing
+        || (request.serviceStartAt() != null
+            && (!request.serviceStartAt().isBefore(request.serviceEndAt())
+                || request.serviceStartAt().isBefore(activity.getActivityStartAt())
+                || request.serviceEndAt().isAfter(activity.getActivityEndAt())))) {
+      throw semantic(
+          "INVALID_POSITION_TIME",
+          "Position service times must be a valid pair within the activity schedule");
+    }
   }
 
   @Transactional
@@ -111,7 +222,8 @@ public class ActivityService {
     authorization.requireMembership(userId, activity.getOrganizationId());
     boolean published = "PUBLISHED".equals(activity.getStatus());
     if (!published && !"DRAFT".equals(activity.getStatus())) {
-      throw conflict("ACTIVITY_CHANGE_NOT_ALLOWED", "Positions cannot be added to a final activity");
+      throw conflict(
+          "ACTIVITY_CHANGE_NOT_ALLOWED", "Positions cannot be added to a final activity");
     }
     authorization.requirePermission(
         userId, activity.getOrganizationId(), published ? "activity:change" : "activity:create");
@@ -189,8 +301,14 @@ public class ActivityService {
     activity.setPublishedAt(now());
     activities.updateById(activity);
     audit.record(activity.getOrganizationId(), userId, "activity.published", "activity", id, null);
-    events.publish(new DomainEventCommand(activity.getOrganizationId(), id, "ACTIVITY",
-        id.toString(), DomainEventTypes.ACTIVITY_PUBLISHED, new ActivityStatusPayload(userId, "PUBLISHED")));
+    events.publish(
+        new DomainEventCommand(
+            activity.getOrganizationId(),
+            id,
+            "ACTIVITY",
+            id.toString(),
+            DomainEventTypes.ACTIVITY_PUBLISHED,
+            new ActivityStatusPayload(userId, "PUBLISHED")));
     cacheInvalidator.evictAfterCommit(id);
     return activity;
   }
@@ -225,7 +343,11 @@ public class ActivityService {
     events.publishMany(
         affectedUserIds,
         new NotificationEventTemplate(
-            activity.getOrganizationId(), id, "ACTIVITY", id.toString(), DomainEventTypes.ACTIVITY_CANCELLED,
+            activity.getOrganizationId(),
+            id,
+            "ACTIVITY",
+            id.toString(),
+            DomainEventTypes.ACTIVITY_CANCELLED,
             "ACTIVITY_CANCELED",
             "活动已取消",
             cancellationContent,
@@ -240,6 +362,45 @@ public class ActivityService {
   }
 
   @Transactional(readOnly = true)
+  public PageResponse<ActivitySummary> listDrafts(Long userId, Long orgId, int page, int size) {
+    authorization.requirePermission(userId, orgId, "activity:create");
+    long safePage = Math.max(1, page), safeSize = Math.min(100, Math.max(1, size));
+    var result = activities.selectDraftPage(new Page<>(safePage, safeSize), orgId);
+    var rows = result.getRecords();
+    if (rows.stream()
+        .anyMatch(a -> !orgId.equals(a.getOrganizationId()) || !"DRAFT".equals(a.getStatus())))
+      throw new IllegalStateException("Draft page returned out-of-scope data");
+    var ids = rows.stream().map(Activity::getId).toList();
+    List<ActivityPosition> children =
+        ids.isEmpty() ? List.of() : positions.selectActiveByActivities(orgId, ids);
+    if (children.stream()
+        .anyMatch(
+            p ->
+                !orgId.equals(p.getOrganizationId())
+                    || !ids.contains(p.getActivityId())
+                    || !"ACTIVE".equals(p.getStatus())))
+      throw new IllegalStateException("Draft positions returned out-of-scope data");
+    var grouped = children.stream().collect(Collectors.groupingBy(ActivityPosition::getActivityId));
+    return PageResponse.of(
+        rows.stream()
+            .map(a -> new ActivitySummary(a, grouped.getOrDefault(a.getId(), List.of())))
+            .toList(),
+        result.getTotal(),
+        safePage,
+        safeSize);
+  }
+
+  @Transactional(readOnly = true)
+  public ActivityDetail draftDetail(Long userId, Long id) {
+    Activity activity = required(id);
+    authorization.requirePermission(userId, activity.getOrganizationId(), "activity:create");
+    if (!"DRAFT".equals(activity.getStatus()))
+      throw conflict("ACTIVITY_NOT_DRAFT", "Only draft activities can be opened here");
+    return new ActivityDetail(
+        activity, positions.selectActiveByActivity(activity.getOrganizationId(), id));
+  }
+
+  @Transactional(readOnly = true)
   public PageResponse<ActivitySummary> list(Long userId, Long orgId, int page, int size) {
     authorization.requireMembership(userId, orgId);
     long safePage = Math.max(1, page);
@@ -250,19 +411,30 @@ public class ActivityService {
       return PageResponse.of(List.of(), result.getTotal(), safePage, safeSize);
     }
     List<Long> activityIds = rows.stream().map(Activity::getId).toList();
-    if (rows.stream().anyMatch(row -> !orgId.equals(row.getOrganizationId())
-        || !"PUBLISHED".equals(row.getStatus()))) {
+    if (rows.stream()
+        .anyMatch(
+            row ->
+                !orgId.equals(row.getOrganizationId()) || !"PUBLISHED".equals(row.getStatus()))) {
       throw new IllegalStateException("Activity page returned out-of-scope data");
     }
     List<ActivityPosition> scopedPositions = positions.selectActiveByActivities(orgId, activityIds);
-    if (scopedPositions.stream().anyMatch(position -> !orgId.equals(position.getOrganizationId())
-        || !activityIds.contains(position.getActivityId()) || !"ACTIVE".equals(position.getStatus()))) {
+    if (scopedPositions.stream()
+        .anyMatch(
+            position ->
+                !orgId.equals(position.getOrganizationId())
+                    || !activityIds.contains(position.getActivityId())
+                    || !"ACTIVE".equals(position.getStatus()))) {
       throw new IllegalStateException("Activity position batch returned out-of-scope data");
     }
-    Map<Long, List<ActivityPosition>> positionsByActivity = scopedPositions.stream()
-        .collect(Collectors.groupingBy(ActivityPosition::getActivityId));
-    List<ActivitySummary> items = rows.stream().map(activity -> new ActivitySummary(activity,
-        positionsByActivity.getOrDefault(activity.getId(), List.of()))).toList();
+    Map<Long, List<ActivityPosition>> positionsByActivity =
+        scopedPositions.stream().collect(Collectors.groupingBy(ActivityPosition::getActivityId));
+    List<ActivitySummary> items =
+        rows.stream()
+            .map(
+                activity ->
+                    new ActivitySummary(
+                        activity, positionsByActivity.getOrDefault(activity.getId(), List.of())))
+            .toList();
     return PageResponse.of(items, result.getTotal(), safePage, safeSize);
   }
 
@@ -275,8 +447,9 @@ public class ActivityService {
     }
     Activity activity = required(id);
     authorizeDetail(userId, activity);
-    ActivityDetail detail = new ActivityDetail(
-        activity, positions.selectActiveByActivity(activity.getOrganizationId(), id));
+    ActivityDetail detail =
+        new ActivityDetail(
+            activity, positions.selectActiveByActivity(activity.getOrganizationId(), id));
     if ("PUBLISHED".equals(activity.getStatus())) {
       detailCache.put(detail);
     }

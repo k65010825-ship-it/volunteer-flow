@@ -1,12 +1,35 @@
 import MockAdapter from "axios-mock-adapter";
 import { afterEach, describe, expect, it } from "vitest";
 import { apiClient, clearAccessToken, setAccessToken } from "./http";
+import { refreshSession } from "./auth";
 
 describe("apiClient", () => {
   const mock = new MockAdapter(apiClient);
   afterEach(() => {
     mock.reset();
     clearAccessToken();
+  });
+
+  it("shares the route restoration refresh with a concurrent 401 retry", async () => {
+    const finishes: ((value: [number, unknown]) => void)[] = [];
+    mock.onPost("/api/v1/auth/refresh").reply(
+      () =>
+        new Promise((resolve) => {
+          finishes.push(resolve);
+        }),
+    );
+    mock.onGet("/protected").replyOnce(401);
+    mock.onGet("/protected").reply(200, {});
+    const restore = refreshSession();
+    const protectedRequest = apiClient.get("/protected");
+    // Allow the asynchronous Axios interceptor to reach the shared refresh operation.
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    const refreshCount = mock.history.post.length;
+    finishes.forEach((finish) =>
+      finish([200, { data: { accessToken: "fresh" } }]),
+    );
+    await Promise.all([restore, protectedRequest]);
+    expect(refreshCount).toBe(1);
   });
 
   it("refreshes once after 401 and retries with the new bearer token", async () => {

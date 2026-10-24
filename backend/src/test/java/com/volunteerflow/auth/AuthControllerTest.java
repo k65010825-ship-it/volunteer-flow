@@ -25,6 +25,20 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class AuthControllerTest {
+  @Test
+  void profileUpdateRouteExistsAndValidatesBeforeService() throws Exception {
+    mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+        .put("/api/v1/auth/me").contentType(MediaType.APPLICATION_JSON)
+        .content("{\"realName\":\" \",\"contact\":\"contact\"}"))
+        .andExpect(status().isBadRequest());
+  }
+
+  @Test
+  void passwordChangeRouteExistsAndValidatesBeforeService() throws Exception {
+    mockMvc.perform(post("/api/v1/auth/password").contentType(MediaType.APPLICATION_JSON)
+        .content("{\"currentPassword\":\"old\",\"newPassword\":\"short\"}"))
+        .andExpect(status().isBadRequest());
+  }
   private final AuthService authService = mock(AuthService.class);
   private final RateLimitGuard rateLimits = mock(RateLimitGuard.class);
   private final AuthController controller = new AuthController(authService, rateLimits, false);
