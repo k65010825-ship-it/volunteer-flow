@@ -3,9 +3,9 @@ package com.volunteerflow.auth;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -14,9 +14,9 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.volunteerflow.infrastructure.web.ApiResponse;
 import com.volunteerflow.infrastructure.ratelimit.RateLimitExceededException;
 import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
+import com.volunteerflow.infrastructure.web.ApiResponse;
 import com.volunteerflow.infrastructure.web.GlobalExceptionHandler;
 import java.time.Instant;
 import org.junit.jupiter.api.Test;
@@ -25,20 +25,88 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class AuthControllerTest {
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"short", "            "})
+  void invalidNewPasswordIsRejectedAtHttpBoundary(String password) throws Exception {
+    mockMvc
+        .perform(
+            post("/api/v1/auth/password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"currentPassword\":\"old-password-123\",\"newPassword\":\""
+                        + password
+                        + "\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
+    verifyNoInteractions(authService);
+  }
+
+  @Test
+  void registrationAcceptsExactly72Utf8Bytes() throws Exception {
+    when(authService.register(any(), any()))
+        .thenReturn(new AuthTokens("access", "refresh", Instant.parse("2026-10-28T01:00:00Z")));
+    mockMvc
+        .perform(
+            post("/api/v1/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"username\":\"student1\",\"password\":\""
+                        + "密".repeat(24)
+                        + "\",\"realName\":\"张三\",\"studentNumber\":\"20260001\",\"contact\":\"contact\"}"))
+        .andExpect(status().isCreated());
+  }
+
+  @Test
+  void registrationRejectsOversizedUtf8PasswordBeforeService() throws Exception {
+    when(authService.register(any(), any()))
+        .thenReturn(new AuthTokens("access", "refresh", Instant.parse("2026-10-28T01:00:00Z")));
+    mockMvc
+        .perform(
+            post("/api/v1/auth/register")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{\"username\":\"student1\",\"password\":\""
+                        + "密".repeat(25)
+                        + "\",\"realName\":\"张三\",\"studentNumber\":\"20260001\",\"contact\":\"contact\"}"))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.code").value("INVALID_NEW_PASSWORD"));
+    verifyNoInteractions(authService);
+  }
+
+  @Test
+  void passwordChangeRejectsOversizedUtf8PasswordBeforeService() {
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                controller.changePassword(
+                    new CurrentUser(1L, "student", "张三", "20260001", "contact", "USER"),
+                    new ChangePasswordRequest("old-password-123", "密".repeat(25))))
+        .isInstanceOfSatisfying(
+            com.volunteerflow.infrastructure.web.BusinessException.class,
+            failure -> assertThat(failure.code()).isEqualTo("INVALID_NEW_PASSWORD"));
+    verifyNoInteractions(authService);
+  }
+
   @Test
   void profileUpdateRouteExistsAndValidatesBeforeService() throws Exception {
-    mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-        .put("/api/v1/auth/me").contentType(MediaType.APPLICATION_JSON)
-        .content("{\"realName\":\" \",\"contact\":\"contact\"}"))
+    mockMvc
+        .perform(
+            org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put(
+                    "/api/v1/auth/me")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"realName\":\" \",\"contact\":\"contact\"}"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void passwordChangeRouteExistsAndValidatesBeforeService() throws Exception {
-    mockMvc.perform(post("/api/v1/auth/password").contentType(MediaType.APPLICATION_JSON)
-        .content("{\"currentPassword\":\"old\",\"newPassword\":\"short\"}"))
+    mockMvc
+        .perform(
+            post("/api/v1/auth/password")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"currentPassword\":\"old\",\"newPassword\":\"short\"}"))
         .andExpect(status().isBadRequest());
   }
+
   private final AuthService authService = mock(AuthService.class);
   private final RateLimitGuard rateLimits = mock(RateLimitGuard.class);
   private final AuthController controller = new AuthController(authService, rateLimits, false);
@@ -78,16 +146,17 @@ class AuthControllerTest {
         .thenReturn(
             new AuthTokens("access-token", "refresh-token", Instant.parse("2026-09-14T08:30:00Z")));
 
-    mockMvc.perform(
-        post("/api/v1/auth/login")
-            .with(
-                servletRequest -> {
-                  servletRequest.setRemoteAddr("198.51.100.17");
-                  return servletRequest;
-                })
-            .header("X-Forwarded-For", "10.0.0.1, 10.0.0.2")
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"username\":\"alice\",\"password\":\"Strong-password-123\"}"))
+    mockMvc
+        .perform(
+            post("/api/v1/auth/login")
+                .with(
+                    servletRequest -> {
+                      servletRequest.setRemoteAddr("198.51.100.17");
+                      return servletRequest;
+                    })
+                .header("X-Forwarded-For", "10.0.0.1, 10.0.0.2")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"alice\",\"password\":\"Strong-password-123\"}"))
         .andExpect(status().isOk());
 
     verify(rateLimits).checkLogin("198.51.100.17", "alice");
@@ -95,19 +164,18 @@ class AuthControllerTest {
 
   @Test
   void rejectedLoginDoesNotCallAuthenticationService() throws Exception {
-    doThrow(new RateLimitExceededException(5))
-        .when(rateLimits)
-        .checkLogin("203.0.113.9", "alice");
+    doThrow(new RateLimitExceededException(5)).when(rateLimits).checkLogin("203.0.113.9", "alice");
 
-    mockMvc.perform(
-        post("/api/v1/auth/login")
-            .with(
-                servletRequest -> {
-                  servletRequest.setRemoteAddr("203.0.113.9");
-                  return servletRequest;
-                })
-            .contentType(MediaType.APPLICATION_JSON)
-            .content("{\"username\":\"alice\",\"password\":\"Strong-password-123\"}"))
+    mockMvc
+        .perform(
+            post("/api/v1/auth/login")
+                .with(
+                    servletRequest -> {
+                      servletRequest.setRemoteAddr("203.0.113.9");
+                      return servletRequest;
+                    })
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"username\":\"alice\",\"password\":\"Strong-password-123\"}"))
         .andExpect(status().isTooManyRequests());
 
     verifyNoInteractions(authService);

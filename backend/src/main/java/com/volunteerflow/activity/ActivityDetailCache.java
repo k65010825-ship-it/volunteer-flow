@@ -11,6 +11,7 @@ import java.util.Set;
 import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
@@ -41,38 +42,40 @@ public class ActivityDetailCache {
 
   public Optional<ActivityService.ActivityDetail> get(Long activityId) {
     String key = key(activityId);
+    String json;
     try {
-      String json = redis.opsForValue().get(key);
-      if (json == null) {
-        return Optional.empty();
-      }
-      CacheDocument document = objectMapper.readValue(json, CacheDocument.class);
-      validate(document, activityId);
-      return Optional.of(document.toDetail());
-    } catch (JsonProcessingException | IllegalArgumentException exception) {
-      log.warn("Invalid activity detail cache entry activityId={}; treating it as a miss", activityId);
-      evict(activityId);
-      return Optional.empty();
-    } catch (RuntimeException exception) {
+      json = redis.opsForValue().get(key);
+    } catch (DataAccessException exception) {
       log.warn(
           "Activity detail cache read failed activityId={} cause={}; falling back to MySQL",
           activityId,
           exception.getClass().getSimpleName());
       return Optional.empty();
     }
+    if (json == null) {
+      return Optional.empty();
+    }
+    try {
+      CacheDocument document = objectMapper.readValue(json, CacheDocument.class);
+      validate(document, activityId);
+      return Optional.of(document.toDetail());
+    } catch (JsonProcessingException | IllegalArgumentException exception) {
+      log.warn(
+          "Invalid activity detail cache entry activityId={}; treating it as a miss", activityId);
+      evict(activityId);
+      return Optional.empty();
+    }
   }
 
   public void put(ActivityService.ActivityDetail detail) {
-    if (detail == null
-        || detail.activity() == null
-        || !"PUBLISHED".equals(detail.activity().getStatus())) {
+    if (!"PUBLISHED".equals(detail.activity().getStatus())) {
       return;
     }
     Long activityId = detail.activity().getId();
     try {
       String json = objectMapper.writeValueAsString(CacheDocument.from(detail));
       redis.opsForValue().set(key(activityId), json, randomizedTtl());
-    } catch (JsonProcessingException | RuntimeException exception) {
+    } catch (JsonProcessingException | DataAccessException exception) {
       log.warn(
           "Activity detail cache write failed activityId={} cause={}; returning database result",
           activityId,
@@ -83,7 +86,7 @@ public class ActivityDetailCache {
   public void evict(Long activityId) {
     try {
       redis.delete(key(activityId));
-    } catch (RuntimeException exception) {
+    } catch (DataAccessException exception) {
       log.warn(
           "Activity detail cache eviction failed activityId={} cause={}; TTL will bound staleness",
           activityId,
@@ -92,18 +95,13 @@ public class ActivityDetailCache {
   }
 
   private String key(Long activityId) {
-    if (activityId == null) {
-      throw new IllegalArgumentException("activityId must not be null");
-    }
     return keys.key("activity-detail", activityId + ":v1");
   }
 
   private Duration randomizedTtl() {
     long maxJitterMillis = properties.maxJitter().toMillis();
     long jitterMillis =
-        maxJitterMillis == 0
-            ? 0
-            : ThreadLocalRandom.current().nextLong(maxJitterMillis + 1);
+        maxJitterMillis == 0 ? 0 : ThreadLocalRandom.current().nextLong(maxJitterMillis + 1);
     return properties.ttl().plusMillis(jitterMillis);
   }
 

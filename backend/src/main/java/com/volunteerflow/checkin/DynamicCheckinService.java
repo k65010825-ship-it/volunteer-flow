@@ -34,9 +34,6 @@ public class DynamicCheckinService {
 
   public CheckinResult selfCheckin(Long userId, Long sessionId, DynamicCheckinRequest request) {
     DynamicCheckinTarget target = queries.dynamicSelfRequest(userId, sessionId);
-    if (request == null) {
-      throw invalidCode();
-    }
     Instant now = clock.instant();
     try {
       VerifiedCredential proof = tokens.verify(sessionId, request.windowEpochSecond(),

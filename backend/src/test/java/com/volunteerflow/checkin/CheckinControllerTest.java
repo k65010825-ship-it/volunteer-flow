@@ -43,6 +43,14 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @WebMvcTest(CheckinController.class)
 @Import({SecurityConfig.class, JacksonConfig.class})
 class CheckinControllerTest {
+  @ParameterizedTest
+  @ValueSource(strings = {"check-ins", "manual-check-ins", "dynamic-check-ins"})
+  void missingBodyIsRejectedAtHttpBoundary(String endpoint) throws Exception {
+    perform(post("/api/v1/check-in-sessions/101/" + endpoint), null)
+        .andExpect(status().isBadRequest());
+    verifyNoInteractions(queries, checkins, dynamicCheckins, rateLimits);
+  }
+
   @Autowired MockMvc mvc;
   @Autowired ObjectMapper json;
   @MockitoBean CheckinSessionService sessions;

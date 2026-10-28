@@ -23,22 +23,25 @@ import org.springframework.data.redis.core.script.RedisScript;
 
 @SuppressWarnings({"rawtypes", "unchecked"})
 class RedisFixedWindowRateLimiterTest {
+  @Test
+  void programmingFailureDoesNotTriggerStoreUnavailableFallback() {
+    IllegalStateException failure = new IllegalStateException("invalid script wiring");
+    when(redis.execute(any(RedisScript.class), anyList(), any())).thenThrow(failure);
+    assertThatThrownBy(() -> limiter.evaluate("registration", "opaque", policy(3, 10)))
+        .isSameAs(failure);
+  }
 
   private final StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
   private final MutableClock clock = new MutableClock(Instant.ofEpochMilli(12_345));
   private final RedisFixedWindowRateLimiter limiter =
       new RedisFixedWindowRateLimiter(
-          redis,
-          new RedisKeyFactory(new RedisKeyProperties("test")),
-          clock);
+          redis, new RedisKeyFactory(new RedisKeyProperties("test")), clock);
 
   @Test
   void usesEnvironmentAwareWindowKeyAndAllowsExactlyTheLimit() {
-    when(redis.execute(any(RedisScript.class), anyList(), any()))
-        .thenReturn(List.of(3L, 8_655L));
+    when(redis.execute(any(RedisScript.class), anyList(), any())).thenReturn(List.of(3L, 8_655L));
 
-    RateLimitDecision decision =
-        limiter.evaluate("registration", "opaque-subject", policy(3, 10));
+    RateLimitDecision decision = limiter.evaluate("registration", "opaque-subject", policy(3, 10));
 
     assertThat(decision.allowed()).isTrue();
     assertThat(decision.retryAfterSeconds()).isEqualTo(9);
@@ -50,8 +53,7 @@ class RedisFixedWindowRateLimiterTest {
 
   @Test
   void switchesKeyAtExactWindowBoundary() {
-    when(redis.execute(any(RedisScript.class), anyList(), any()))
-        .thenReturn(List.of(1L, 1_001L));
+    when(redis.execute(any(RedisScript.class), anyList(), any())).thenReturn(List.of(1L, 1_001L));
     limiter.evaluate("login-ip", "opaque", policy(20, 10));
     clock.set(Instant.ofEpochMilli(20_000));
     limiter.evaluate("login-ip", "opaque", policy(20, 10));
@@ -67,11 +69,9 @@ class RedisFixedWindowRateLimiterTest {
 
   @Test
   void retryAfterIsNeverBelowOneSecond() {
-    when(redis.execute(any(RedisScript.class), anyList(), any()))
-        .thenReturn(List.of(4L, 1L));
+    when(redis.execute(any(RedisScript.class), anyList(), any())).thenReturn(List.of(4L, 1L));
 
-    RateLimitDecision decision =
-        limiter.evaluate("registration", "opaque", policy(3, 10));
+    RateLimitDecision decision = limiter.evaluate("registration", "opaque", policy(3, 10));
 
     assertThat(decision.allowed()).isFalse();
     assertThat(decision.retryAfterSeconds()).isEqualTo(1);
@@ -101,8 +101,7 @@ class RedisFixedWindowRateLimiterTest {
     when(redis.execute(any(RedisScript.class), anyList(), any()))
         .thenThrow(new RedisConnectionFailureException("down"));
 
-    assertThatThrownBy(
-            () -> limiter.evaluate("secret-action", "secret-subject", policy(3, 10)))
+    assertThatThrownBy(() -> limiter.evaluate("secret-action", "secret-subject", policy(3, 10)))
         .isInstanceOf(RateLimitStoreUnavailableException.class)
         .hasMessageNotContaining("secret-action")
         .hasMessageNotContaining("secret-subject")

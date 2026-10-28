@@ -2,8 +2,10 @@ package com.volunteerflow.auth;
 
 import com.volunteerflow.infrastructure.ratelimit.RateLimitGuard;
 import com.volunteerflow.infrastructure.web.ApiResponse;
+import com.volunteerflow.infrastructure.web.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
 import org.springframework.beans.factory.annotation.Value;
@@ -43,6 +45,7 @@ public class AuthController {
   public ResponseEntity<ApiResponse<AccessTokenResponse>> register(
       @Valid @RequestBody RegisterRequest request,
       @RequestHeader(value = "User-Agent", required = false) String deviceName) {
+    requireNewPasswordByteLimit(request.password());
     return response(authService.register(request, deviceName), HttpStatus.CREATED);
   }
 
@@ -88,10 +91,21 @@ public class AuthController {
   public ResponseEntity<Void> changePassword(
       @AuthenticationPrincipal CurrentUser currentUser,
       @Valid @RequestBody ChangePasswordRequest request) {
+    requireNewPasswordByteLimit(request.newPassword());
     authService.changePassword(currentUser.id(), request);
     return ResponseEntity.noContent()
         .header(HttpHeaders.SET_COOKIE, clearRefreshCookie().toString())
         .build();
+  }
+
+  /** Character constraints are handled by @Valid; BCrypt additionally limits UTF-8 bytes. */
+  private static void requireNewPasswordByteLimit(String password) {
+    if (password.getBytes(StandardCharsets.UTF_8).length > 72) {
+      throw new BusinessException(
+          HttpStatus.BAD_REQUEST,
+          "INVALID_NEW_PASSWORD",
+          "New password must contain 12 to 72 characters and at most 72 UTF-8 bytes");
+    }
   }
 
   private ResponseEntity<ApiResponse<AccessTokenResponse>> response(

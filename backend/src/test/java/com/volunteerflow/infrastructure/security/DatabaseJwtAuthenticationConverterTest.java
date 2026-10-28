@@ -16,6 +16,20 @@ import org.springframework.security.oauth2.jwt.Jwt;
 
 class DatabaseJwtAuthenticationConverterTest {
   @Test
+  void invalidSubjectIsRejectedAsAnAuthenticationFailure() {
+    assertThatThrownBy(() -> converter.convert(jwt("not-an-id")))
+        .isInstanceOf(OAuth2AuthenticationException.class);
+  }
+
+  @Test
+  void programmingFailureIsNotDisguisedAsInvalidCredentials() {
+    Jwt broken = mock(Jwt.class);
+    IllegalStateException failure = new IllegalStateException("invalid JWT wiring");
+    when(broken.getSubject()).thenThrow(failure);
+    assertThatThrownBy(() -> converter.convert(broken)).isSameAs(failure);
+  }
+
+  @Test
   void passwordChangeRejectsLegacyJwtImmediately() {
     AppUser changed = user("ACTIVE");
     changed.setVersion(1);
@@ -23,21 +37,32 @@ class DatabaseJwtAuthenticationConverterTest {
     assertThatThrownBy(() -> converter.convert(jwt("1")))
         .isInstanceOf(OAuth2AuthenticationException.class);
   }
+
   private final AppUserMapper userMapper = mock(AppUserMapper.class);
   private final DatabaseJwtAuthenticationConverter converter =
       new DatabaseJwtAuthenticationConverter(userMapper);
 
   @Test
   void acceptsNewCredentialGenerationAndRejectsStaleOrMalformedClaims() {
-    AppUser changed = user("ACTIVE"); changed.setVersion(1);
+    AppUser changed = user("ACTIVE");
+    changed.setVersion(1);
     when(userMapper.selectById(1L)).thenReturn(changed);
-    var fresh = Jwt.withTokenValue("token").header("alg", "HS256")
-        .subject("1").claim("credential_version", 1).build();
+    var fresh =
+        Jwt.withTokenValue("token")
+            .header("alg", "HS256")
+            .subject("1")
+            .claim("credential_version", 1)
+            .build();
     assertThat(converter.convert(fresh).getPrincipal()).isInstanceOf(CurrentUser.class);
     for (Object value : new Object[] {0, "1", 1.5, -1}) {
-      var rejected = Jwt.withTokenValue("token").header("alg", "HS256")
-          .subject("1").claim("credential_version", value).build();
-      assertThatThrownBy(() -> converter.convert(rejected)).isInstanceOf(OAuth2AuthenticationException.class);
+      var rejected =
+          Jwt.withTokenValue("token")
+              .header("alg", "HS256")
+              .subject("1")
+              .claim("credential_version", value)
+              .build();
+      assertThatThrownBy(() -> converter.convert(rejected))
+          .isInstanceOf(OAuth2AuthenticationException.class);
     }
   }
 

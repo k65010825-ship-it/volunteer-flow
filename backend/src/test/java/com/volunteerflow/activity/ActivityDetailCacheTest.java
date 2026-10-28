@@ -28,16 +28,12 @@ class ActivityDetailCacheTest {
   private final StringRedisTemplate redis = org.mockito.Mockito.mock(StringRedisTemplate.class);
   private final ValueOperations<String, String> values =
       org.mockito.Mockito.mock(ValueOperations.class);
-  private final ObjectMapper objectMapper =
-      new ObjectMapper().registerModule(new JavaTimeModule());
+  private final ObjectMapper objectMapper = new ObjectMapper().registerModule(new JavaTimeModule());
   private final ActivityDetailCacheProperties properties =
       new ActivityDetailCacheProperties(Duration.ofMinutes(5), Duration.ofSeconds(60));
   private final ActivityDetailCache cache =
       new ActivityDetailCache(
-          redis,
-          objectMapper,
-          new RedisKeyFactory(new RedisKeyProperties("test")),
-          properties);
+          redis, objectMapper, new RedisKeyFactory(new RedisKeyProperties("test")), properties);
 
   @BeforeEach
   void exposeStringValueOperations() {
@@ -54,8 +50,7 @@ class ActivityDetailCacheTest {
 
     verify(values)
         .set(
-            org.mockito.ArgumentMatchers.eq(
-                "volunteerflow:test:activity-detail:10:v1"),
+            org.mockito.ArgumentMatchers.eq("volunteerflow:test:activity-detail:10:v1"),
             json.capture(),
             ttl.capture());
     assertThat(json.getValue()).contains("\"schemaVersion\":1");
@@ -70,12 +65,15 @@ class ActivityDetailCacheTest {
     assertThat(restored.activity().getTitle()).isEqualTo("新生开学典礼志愿者");
     assertThat(restored.activity().getRegistrationStartAt())
         .isEqualTo(LocalDateTime.of(2026, 8, 1, 8, 0));
-    assertThat(restored.positions()).singleElement().satisfies(position -> {
-      assertThat(position.getId()).isEqualTo(30L);
-      assertThat(position.getName()).isEqualTo("礼仪");
-      assertThat(position.getRegistrationMode()).isEqualTo("FIRST_COME");
-      assertThat(position.getStatus()).isEqualTo("ACTIVE");
-    });
+    assertThat(restored.positions())
+        .singleElement()
+        .satisfies(
+            position -> {
+              assertThat(position.getId()).isEqualTo(30L);
+              assertThat(position.getName()).isEqualTo("礼仪");
+              assertThat(position.getRegistrationMode()).isEqualTo("FIRST_COME");
+              assertThat(position.getStatus()).isEqualTo("ACTIVE");
+            });
   }
 
   @Test
@@ -136,14 +134,17 @@ class ActivityDetailCacheTest {
   @Test
   void redisReadFailureDegradesToCacheMiss() {
     when(values.get("volunteerflow:test:activity-detail:10:v1"))
-        .thenThrow(new IllegalStateException("redis unavailable"));
+        .thenThrow(
+            new org.springframework.data.redis.RedisConnectionFailureException(
+                "redis unavailable"));
 
     assertThat(cache.get(10L)).isEmpty();
   }
 
   @Test
   void redisWriteFailureDoesNotEscapeToBusinessRequest() {
-    org.mockito.Mockito.doThrow(new IllegalStateException("redis unavailable"))
+    org.mockito.Mockito.doThrow(
+            new org.springframework.data.redis.RedisConnectionFailureException("redis unavailable"))
         .when(values)
         .set(anyString(), anyString(), any(Duration.class));
 
@@ -153,9 +154,35 @@ class ActivityDetailCacheTest {
   @Test
   void redisDeleteFailureDoesNotEscapeToBusinessWrite() {
     when(redis.delete("volunteerflow:test:activity-detail:10:v1"))
-        .thenThrow(new IllegalStateException("redis unavailable"));
+        .thenThrow(
+            new org.springframework.data.redis.RedisConnectionFailureException(
+                "redis unavailable"));
 
     assertThatCode(() -> cache.evict(10L)).doesNotThrowAnyException();
+  }
+
+  @Test
+  void programmingFailureDuringReadIsNotDisguisedAsCacheMiss() {
+    IllegalStateException failure = new IllegalStateException("invalid cache wiring");
+    when(values.get("volunteerflow:test:activity-detail:10:v1")).thenThrow(failure);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> cache.get(10L)).isSameAs(failure);
+  }
+
+  @Test
+  void programmingFailureDuringWriteIsNotSilenced() {
+    IllegalStateException failure = new IllegalStateException("invalid cache wiring");
+    org.mockito.Mockito.doThrow(failure)
+        .when(values)
+        .set(anyString(), anyString(), any(Duration.class));
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> cache.put(publishedDetail()))
+        .isSameAs(failure);
+  }
+
+  @Test
+  void programmingFailureDuringEvictionIsNotSilenced() {
+    IllegalStateException failure = new IllegalStateException("invalid cache wiring");
+    when(redis.delete("volunteerflow:test:activity-detail:10:v1")).thenThrow(failure);
+    org.assertj.core.api.Assertions.assertThatThrownBy(() -> cache.evict(10L)).isSameAs(failure);
   }
 
   private ActivityService.ActivityDetail publishedDetail() {

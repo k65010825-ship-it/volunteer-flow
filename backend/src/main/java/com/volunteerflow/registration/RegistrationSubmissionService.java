@@ -71,9 +71,6 @@ public class RegistrationSubmissionService {
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public RegistrationResult submit(
       Long userId, Long activityId, SubmitRegistrationRequest request) {
-    if (request == null || request.positionId() == null || request.positionId() <= 0) {
-      throw semantic("INVALID_REGISTRATION_REQUEST", "A position is required");
-    }
     SubmissionOutcome outcome;
     try {
       outcome = submitWithinTransaction(userId, activityId, request);

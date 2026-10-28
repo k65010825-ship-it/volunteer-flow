@@ -41,20 +41,6 @@ class AuthServiceTest {
   }
 
   @Test
-  void registrationRejectsOversizedUtf8BeforeDatabaseOrBcrypt() {
-    var request = new RegisterRequest("student1", "密".repeat(25), "张三", "20260001", "contact");
-    assertThatThrownBy(() -> authService.register(request, null))
-        .isInstanceOfSatisfying(
-            com.volunteerflow.infrastructure.web.BusinessException.class,
-            ex -> {
-              assertThat(ex.status()).isEqualTo(HttpStatus.BAD_REQUEST);
-              assertThat(ex.code()).isEqualTo("INVALID_NEW_PASSWORD");
-            });
-    verify(userMapper, never()).selectCount(any());
-    verify(sessionMapper, never()).insert(any(RefreshSession.class));
-  }
-
-  @Test
   void loginRejectsOversizedUtf8WithoutQueryingAccount() {
     assertThat(catchLoginFailure("student1", "密".repeat(25)).code())
         .isEqualTo("INVALID_CREDENTIALS");

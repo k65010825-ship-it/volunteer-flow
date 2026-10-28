@@ -91,28 +91,6 @@ class AccountSettingsServiceTest {
   }
 
   @Test
-  void bcryptUtf8ByteLimitIsEnforcedBeforeEncoding() {
-    assertThatThrownBy(
-            () ->
-                service.changePassword(
-                    1L, new ChangePasswordRequest("old-password-123", "密".repeat(25))))
-        .isInstanceOfSatisfying(
-            BusinessException.class, e -> assertThat(e.code()).isEqualTo("INVALID_NEW_PASSWORD"));
-    verify(users, never()).updatePassword(anyLong(), anyString(), anyInt());
-    verifyNoInteractions(sessions);
-  }
-
-  @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(strings = {"short", "            "})
-  void rejectsShortAndBlankNewPasswords(String password) {
-    assertThatThrownBy(
-            () ->
-                service.changePassword(1L, new ChangePasswordRequest("old-password-123", password)))
-        .isInstanceOf(BusinessException.class);
-    verifyNoInteractions(sessions);
-  }
-
-  @Test
   void exactly72Utf8BytesCanBeUsedAsNewPassword() {
     service.changePassword(1L, new ChangePasswordRequest("old-password-123", "密".repeat(24)));
     verify(users).updatePassword(eq(1L), anyString(), eq(0));

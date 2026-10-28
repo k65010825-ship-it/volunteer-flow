@@ -112,7 +112,7 @@ public class ActivityService {
       Long userId, Long positionId, PositionRequest request) {
     DraftPosition editable = lockDraftPosition(userId, positionId);
     ActivityPosition position = editable.position();
-    validatePosition(editable.activity(), request);
+    validatePositionTimes(editable.activity(), request);
     position.setName(request.name().trim());
     position.setDescription(request.description().trim());
     position.setCapacity(request.capacity());
@@ -192,14 +192,7 @@ public class ActivityService {
         HttpStatus.NOT_FOUND, "POSITION_NOT_FOUND", "Activity position was not found");
   }
 
-  private void validatePosition(Activity activity, PositionRequest request) {
-    if (request.capacity() < 1
-        || !List.of("FIRST_COME", "REVIEW").contains(request.registrationMode())
-        || (request.promotionTimeoutMinutes() != null
-            && (request.promotionTimeoutMinutes() < 30
-                || request.promotionTimeoutMinutes() > 720))) {
-      throw semantic("INVALID_POSITION", "Position capacity, mode or promotion timeout is invalid");
-    }
+  private void validatePositionTimes(Activity activity, PositionRequest request) {
     boolean missing = (request.serviceStartAt() == null) != (request.serviceEndAt() == null);
     if (missing
         || (request.serviceStartAt() != null
@@ -227,15 +220,7 @@ public class ActivityService {
     }
     authorization.requirePermission(
         userId, activity.getOrganizationId(), published ? "activity:change" : "activity:create");
-    boolean oneTimeMissing = (request.serviceStartAt() == null) != (request.serviceEndAt() == null);
-    if (oneTimeMissing
-        || (request.serviceStartAt() != null
-            && (!request.serviceStartAt().isBefore(request.serviceEndAt())
-                || request.serviceStartAt().isBefore(activity.getActivityStartAt())
-                || request.serviceEndAt().isAfter(activity.getActivityEndAt()))))
-      throw semantic(
-          "INVALID_POSITION_TIME",
-          "Position service times must be a valid pair within the activity schedule");
+    validatePositionTimes(activity, request);
     ActivityPosition position = new ActivityPosition();
     position.setId(IdWorker.getId());
     position.setOrganizationId(activity.getOrganizationId());

@@ -300,7 +300,7 @@ class CheckinServiceTest {
         .contains("activity_id=?", "user_id=?", "FOR UPDATE");
   }
 
-  @ParameterizedTest @NullAndEmptySource @ValueSource(strings = {" ", "\t\n"})
+  @ParameterizedTest @org.junit.jupiter.params.provider.EmptySource @ValueSource(strings = {" ", "\t\n"})
   void manualRequiresNonBlankReason(String reason) {
     arrangeManual();
     rejects(() -> service.manualCheckin(7L, 101L, new ManualCheckinRequest(201L, 301L, reason)), "INVALID_MANUAL_CHECKIN_REASON"); unchanged();
@@ -469,11 +469,6 @@ class CheckinServiceTest {
     arrangeManual(); cycle.setAttendanceStatus("NOT_REQUIRED");
     rejects(() -> service.manualCheckin(7L, 101L, manual), "ATTENDANCE_NOT_PENDING");
     assertThat(stored).isEmpty(); assertThat(logs).isEmpty();
-  }
-
-  @Test void missingRequestsAreRejectedWithoutWrites() {
-    rejects(() -> service.selfCheckin(21L, 101L, null), "INVALID_CHECKIN_REQUEST");
-    rejects(() -> service.manualCheckin(7L, 101L, null), "INVALID_MANUAL_CHECKIN_REQUEST"); unchanged();
   }
 
   @ParameterizedTest @NullAndEmptySource @ValueSource(strings = {" ", "\t"})

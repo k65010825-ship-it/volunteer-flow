@@ -58,9 +58,6 @@ public class CheckinService {
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public CheckinResult selfCheckin(Long userId, Long sessionId, CheckinRequest request) {
-    if (request == null || request.activityId() == null) {
-      throw error(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_CHECKIN_REQUEST", "Activity is required");
-    }
     // Routing read is not a lock; re-read the session after acquiring its parent activity lock.
     CheckinSession routing = sessions.selectById(sessionId);
     if (routing == null || !Objects.equals(routing.getActivityId(), request.activityId())) throw sessionNotFound();
@@ -151,11 +148,8 @@ public class CheckinService {
 
   @Transactional(isolation = Isolation.READ_COMMITTED)
   public CheckinResult manualCheckin(Long actorId, Long sessionId, ManualCheckinRequest request) {
-    if (request == null || request.registrationId() == null || request.registrationCycleId() == null) {
-      throw error(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_MANUAL_CHECKIN_REQUEST", "Registration and cycle are required");
-    }
-    String reason = request.reason() == null ? null : request.reason().trim();
-    if (reason == null || reason.isBlank() || reason.length() > 500) {
+    String reason = request.reason().trim();
+    if (reason.isBlank() || reason.length() > 500) {
       throw error(HttpStatus.UNPROCESSABLE_ENTITY, "INVALID_MANUAL_CHECKIN_REASON", "A reason of 1 to 500 characters is required");
     }
     // Both routing reads are non-locking; no cycle lock precedes the activity/session/membership locks.

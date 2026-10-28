@@ -5,6 +5,7 @@ import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
 
@@ -15,8 +16,11 @@ public class DynamicCheckinTokenStore {
   private final DynamicCheckinProperties properties;
   private final DynamicCheckinTokenGenerator tokens;
 
-  public DynamicCheckinTokenStore(StringRedisTemplate redis, RedisKeyFactory keys,
-      DynamicCheckinProperties properties, DynamicCheckinTokenGenerator tokens) {
+  public DynamicCheckinTokenStore(
+      StringRedisTemplate redis,
+      RedisKeyFactory keys,
+      DynamicCheckinProperties properties,
+      DynamicCheckinTokenGenerator tokens) {
     this.redis = redis;
     this.keys = keys;
     this.properties = properties;
@@ -32,30 +36,32 @@ public class DynamicCheckinTokenStore {
     try {
       redis.opsForValue().setIfAbsent(key, candidate, remaining);
       String winner = redis.opsForValue().get(key);
-      if (winner == null) throw new StoreUnavailableException("Dynamic credential was not retained");
+      if (winner == null)
+        throw new StoreUnavailableException("Dynamic credential was not retained");
       return new IssuedCredential(window, expiresAt, winner);
-    } catch (StoreUnavailableException exception) {
-      throw exception;
-    } catch (RuntimeException exception) {
+    } catch (DataAccessException exception) {
       throw new StoreUnavailableException("Dynamic credential store is unavailable", exception);
     }
   }
 
-  public VerifiedCredential verify(long sessionId, long windowEpochSecond, String token, Instant now) {
+  public VerifiedCredential verify(
+      long sessionId, long windowEpochSecond, String token, Instant now) {
     long seconds = properties.window().toSeconds();
     Instant expiresAt = Instant.ofEpochSecond(windowEpochSecond).plus(properties.ttl());
-    if (token == null || token.isBlank() || windowEpochSecond < 0
-        || windowEpochSecond % seconds != 0 || windowEpochSecond > window(now)
+    if (token == null
+        || token.isBlank()
+        || windowEpochSecond < 0
+        || windowEpochSecond % seconds != 0
+        || windowEpochSecond > window(now)
         || !now.isBefore(expiresAt)) {
       throw new InvalidCredentialException();
     }
     try {
       String expected = redis.opsForValue().get(key(sessionId, windowEpochSecond));
-      if (expected == null || !constantTimeEquals(expected, token)) throw new InvalidCredentialException();
+      if (expected == null || !constantTimeEquals(expected, token))
+        throw new InvalidCredentialException();
       return new VerifiedCredential(sessionId, windowEpochSecond, expiresAt);
-    } catch (InvalidCredentialException exception) {
-      throw exception;
-    } catch (RuntimeException exception) {
+    } catch (DataAccessException exception) {
       throw new StoreUnavailableException("Dynamic credential store is unavailable", exception);
     }
   }
@@ -63,8 +69,10 @@ public class DynamicCheckinTokenStore {
   public void evictRecent(long sessionId, Instant now) {
     long current = window(now);
     try {
-      redis.delete(java.util.List.of(key(sessionId, current), key(sessionId, current - properties.window().toSeconds())));
-    } catch (RuntimeException exception) {
+      redis.delete(
+          java.util.List.of(
+              key(sessionId, current), key(sessionId, current - properties.window().toSeconds())));
+    } catch (DataAccessException exception) {
       throw new StoreUnavailableException("Dynamic credential store is unavailable", exception);
     }
   }
@@ -80,22 +88,36 @@ public class DynamicCheckinTokenStore {
 
   private boolean constantTimeEquals(String expected, String actual) {
     try {
-      return MessageDigest.isEqual(Base64.getUrlDecoder().decode(expected), Base64.getUrlDecoder().decode(actual));
+      return MessageDigest.isEqual(
+          Base64.getUrlDecoder().decode(expected), Base64.getUrlDecoder().decode(actual));
     } catch (IllegalArgumentException exception) {
       return false;
     }
   }
 
   public record IssuedCredential(long windowEpochSecond, Instant expiresAt, String token) {
-    @Override public String toString() {
-      return "IssuedCredential[windowEpochSecond=" + windowEpochSecond + ", expiresAt=" + expiresAt + ", token=[REDACTED]]";
+    @Override
+    public String toString() {
+      return "IssuedCredential[windowEpochSecond="
+          + windowEpochSecond
+          + ", expiresAt="
+          + expiresAt
+          + ", token=[REDACTED]]";
     }
   }
+
   /** Token-free proof bound to the session that Redis verified. */
   public record VerifiedCredential(long sessionId, long windowEpochSecond, Instant expiresAt) {}
+
   public static final class InvalidCredentialException extends RuntimeException {}
+
   public static final class StoreUnavailableException extends RuntimeException {
-    public StoreUnavailableException(String message) { super(message); }
-    public StoreUnavailableException(String message, Throwable cause) { super(message, cause); }
+    public StoreUnavailableException(String message) {
+      super(message);
+    }
+
+    public StoreUnavailableException(String message, Throwable cause) {
+      super(message, cause);
+    }
   }
 }

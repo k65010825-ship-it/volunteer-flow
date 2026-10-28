@@ -39,6 +39,24 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 class ActivityControllerTest {
+  @ParameterizedTest
+  @CsvSource({"0,FIRST_COME,120", "1,UNKNOWN,120", "1,REVIEW,29", "1,REVIEW,721"})
+  void invalidPositionFieldsAreRejectedBeforeService(int capacity, String mode, int timeout)
+      throws Exception {
+    String body =
+        "{\"name\":\"服务岗\",\"description\":\"服务同学\",\"capacity\":"
+            + capacity
+            + ",\"registrationMode\":\""
+            + mode
+            + "\",\"promotionTimeoutMinutes\":"
+            + timeout
+            + "}";
+    mvc.perform(
+            put("/api/v1/positions/20/draft").contentType(MediaType.APPLICATION_JSON).content(body))
+        .andExpect(status().isBadRequest());
+    verifyNoInteractions(activities, changes);
+  }
+
   private ActivityService activities;
   private ActivityChangeService changes;
   private MockMvc mvc;

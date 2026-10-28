@@ -41,6 +41,13 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 /** Exercises the HTTP contract while service mocks isolate database transactions. */
 class RegistrationControllerTest {
+  @Test
+  void missingSubmissionBodyIsRejectedBeforeService() throws Exception {
+    mvc.perform(post("/api/v1/activities/10/registrations")
+        .contentType(MediaType.APPLICATION_JSON)).andExpect(status().isBadRequest());
+    verifyNoInteractions(submissions);
+  }
+
   private RegistrationSubmissionService submissions;
   private RegistrationQueryService queries;
   private RegistrationCancellationService cancellations;
@@ -296,6 +303,7 @@ class RegistrationControllerTest {
   @ValueSource(
       strings = {
         "{}",
+        "{\"positionId\":null,\"answers\":[]}",
         "{\"positionId\":0,\"answers\":[]}",
         "{\"positionId\":20,\"answers\":[null]}",
         "{\"positionId\":20,\"answers\":[{\"questionScope\":\"USER\",\"questionId\":1,\"answer\":true}]}"

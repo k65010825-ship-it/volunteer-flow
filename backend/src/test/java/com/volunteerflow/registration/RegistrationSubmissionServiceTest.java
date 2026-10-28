@@ -366,13 +366,6 @@ class RegistrationSubmissionServiceTest {
             });
   }
 
-  @Test
-  void rejectsMissingRequestOrPosition() {
-    rejects(null, "INVALID_REGISTRATION_REQUEST");
-    rejects(new SubmitRegistrationRequest(null, List.of()), "INVALID_REGISTRATION_REQUEST");
-    verifyNoInteractions(policies, members);
-  }
-
   private Registration existingRegistration() {
     Registration registration = new Registration();
     registration.setId(50L);

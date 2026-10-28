@@ -4,6 +4,7 @@ import com.volunteerflow.infrastructure.redis.RedisKeyFactory;
 import java.time.Clock;
 import java.util.List;
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.dao.DataAccessException;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scripting.support.ResourceScriptSource;
@@ -16,8 +17,7 @@ public final class RedisFixedWindowRateLimiter implements RateLimitStore {
   private final RedisKeyFactory keys;
   private final Clock clock;
 
-  public RedisFixedWindowRateLimiter(
-      StringRedisTemplate redis, RedisKeyFactory keys, Clock clock) {
+  public RedisFixedWindowRateLimiter(StringRedisTemplate redis, RedisKeyFactory keys, Clock clock) {
     this.redis = redis;
     this.keys = keys;
     this.clock = clock;
@@ -45,13 +45,9 @@ public final class RedisFixedWindowRateLimiter implements RateLimitStore {
         throw new RateLimitStoreUnavailableException();
       }
       long retryAfterSeconds =
-          Math.max(
-              1L,
-              remainingMillis / 1_000L + (remainingMillis % 1_000L == 0 ? 0 : 1));
+          Math.max(1L, remainingMillis / 1_000L + (remainingMillis % 1_000L == 0 ? 0 : 1));
       return new RateLimitDecision(count <= policy.limit(), retryAfterSeconds);
-    } catch (RateLimitStoreUnavailableException exception) {
-      throw exception;
-    } catch (RuntimeException exception) {
+    } catch (DataAccessException exception) {
       throw new RateLimitStoreUnavailableException(exception);
     }
   }

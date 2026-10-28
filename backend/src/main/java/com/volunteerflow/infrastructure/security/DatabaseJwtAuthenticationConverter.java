@@ -25,7 +25,7 @@ public class DatabaseJwtAuthenticationConverter
     Long userId;
     try {
       userId = Long.valueOf(jwt.getSubject());
-    } catch (RuntimeException exception) {
+    } catch (NumberFormatException exception) {
       throw invalidToken("JWT subject is invalid");
     }
     AppUser user = userMapper.selectById(userId);

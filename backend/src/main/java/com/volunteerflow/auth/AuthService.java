@@ -18,7 +18,10 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Implements credential login and database-backed refresh-session rotation. */
+/**
+ * Implements credential login and refresh-session rotation. Request DTOs arrive validated by the
+ * HTTP boundary; this layer checks credentials, persisted state and transaction invariants.
+ */
 @Service
 @Profile("!test")
 public class AuthService {
@@ -46,7 +49,6 @@ public class AuthService {
 
   @Transactional
   public AuthTokens register(RegisterRequest request, String deviceName) {
-    requireValidNewPassword(request.password());
     if (userMapper.selectCount(
             Wrappers.<AppUser>lambdaQuery().eq(AppUser::getUsername, request.username()))
         > 0) {
@@ -78,8 +80,7 @@ public class AuthService {
   @Transactional
   public AuthTokens login(LoginRequest request, String deviceName) {
     // BCrypt accepts at most 72 bytes, not 72 Java characters. Keep login failures generic.
-    if (request.password() == null
-        || request.password().getBytes(StandardCharsets.UTF_8).length > 72) {
+    if (request.password().getBytes(StandardCharsets.UTF_8).length > 72) {
       throw invalidCredentials();
     }
     // Serialize credential verification and session creation with password changes.
@@ -112,7 +113,7 @@ public class AuthService {
       throw invalidRefreshToken();
     }
     // Re-read current committed state after waiting for the user lock; never trust the snapshot.
-    RefreshSession session = findUsableSession(rawRefreshToken);
+    RefreshSession session = findUsableSession(tokenHash);
     if (!user.getId().equals(session.getUserId()) || !tokenHash.equals(session.getTokenHash())) {
       throw invalidRefreshToken();
     }
@@ -168,17 +169,8 @@ public class AuthService {
   @Transactional
   public CurrentUser updateProfile(Long userId, UpdateProfileRequest request) {
     AppUser user = requireActiveLockedUser(userId);
-    String realName = request.realName() == null ? "" : request.realName().trim();
-    String contact = request.contact() == null ? "" : request.contact().trim();
-    if (realName.isBlank()
-        || realName.length() > 64
-        || contact.isBlank()
-        || contact.length() > 128) {
-      throw new BusinessException(
-          HttpStatus.BAD_REQUEST,
-          "INVALID_PROFILE",
-          "Name and contact are required and must fit their length limits");
-    }
+    String realName = request.realName().trim();
+    String contact = request.contact().trim();
     // Never persist a caller-controlled entity or rewrite credentials/role/version.
     userMapper.updateProfile(userId, realName, contact);
     user.setRealName(realName);
@@ -190,14 +182,12 @@ public class AuthService {
   public void changePassword(Long userId, ChangePasswordRequest request) {
     AppUser user = requireActiveLockedUser(userId);
     String currentPassword = request.currentPassword();
-    if (currentPassword == null
-        || currentPassword.getBytes(StandardCharsets.UTF_8).length > 72
+    if (currentPassword.getBytes(StandardCharsets.UTF_8).length > 72
         || !passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
       throw new BusinessException(
           HttpStatus.BAD_REQUEST, "INVALID_CURRENT_PASSWORD", "Current password is incorrect");
     }
     String newPassword = request.newPassword();
-    requireValidNewPassword(newPassword);
     if (passwordEncoder.matches(newPassword, user.getPasswordHash())) {
       throw new BusinessException(
           HttpStatus.BAD_REQUEST, "PASSWORD_UNCHANGED", "Choose a different password");
@@ -222,19 +212,6 @@ public class AuthService {
     return user;
   }
 
-  private static void requireValidNewPassword(String password) {
-    if (password == null
-        || password.isBlank()
-        || password.length() < 12
-        || password.length() > 72
-        || password.getBytes(StandardCharsets.UTF_8).length > 72) {
-      throw new BusinessException(
-          HttpStatus.BAD_REQUEST,
-          "INVALID_NEW_PASSWORD",
-          "New password must contain 12 to 72 characters and at most 72 UTF-8 bytes");
-    }
-  }
-
   static String hash(String token) {
     try {
       // Refresh tokens are bearer credentials, so only their digest is persisted.
@@ -246,11 +223,8 @@ public class AuthService {
     }
   }
 
-  private RefreshSession findUsableSession(String rawRefreshToken) {
-    if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
-      throw invalidRefreshToken();
-    }
-    RefreshSession session = sessionMapper.selectByTokenHashForUpdate(hash(rawRefreshToken));
+  private RefreshSession findUsableSession(String tokenHash) {
+    RefreshSession session = sessionMapper.selectByTokenHashForUpdate(tokenHash);
     LocalDateTime now = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
     if (session == null || session.getRevokedAt() != null || !session.getExpiresAt().isAfter(now)) {
       throw invalidRefreshToken();
