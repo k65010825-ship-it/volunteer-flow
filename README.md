@@ -173,8 +173,6 @@ MyBatis-Plus 用于常规 CRUD、分页和条件查询；报名抢占、容量�
 
 ```text
 VolunteerFlow/
-├─ .superpowers/
-│  └─ sdd/           # 开发任务与评审过程记录
 ├─ backend/          # Java 17 / Spring Boot 后端，使用 IDEA 开发
 ├─ deploy/           # 部署配置、Nginx、验收与升级工具
 ├─ docs/
@@ -182,8 +180,7 @@ VolunteerFlow/
 │  ├─ operations/    # 运行、部署与验收操作手册
 │  ├─ presentation/  # 项目设计演示文稿
 │  ├─ reports/       # 验收报告与验证证据
-│  ├─ specs/         # 正式设计规格
-│  └─ superpowers/   # 分阶段设计与实施计划
+│  └─ specs/         # 正式设计规格
 ├─ frontend/         # Vue 前端，使用 VS Code 开发
 ├─ loadtest/
 │  └─ stage4d/       # k6 压测场景与公共脚本
@@ -192,6 +189,10 @@ VolunteerFlow/
 ├─ .gitignore
 └─ README.md
 ```
+
+源码、部署配置、k6 压测脚本、正式设计规格和验收报告属于可复现项目的一部分，保留在仓库。`.dockerignore`、`.gitattributes` 和 `.env.example` 等构建规则、文本规则及配置模板也需要提交。
+
+以下内容仅保留在本地，由 `.gitignore` 排除：`.superpowers/`、`docs/superpowers/` 开发过程记录，`.worktrees/` 工作副本，`PROJECT_CONTEXT.md` 本地交接文件，`output/` 私有运行输出，以及 IDE 设置、构建产物、依赖缓存、测试覆盖率、浏览器测试报告、日志和真实环境配置。已跟踪的过程记录需先停止 Git 跟踪；仅添加忽略规则不会让它们从远程消失。
 
 ## 开发路线
 

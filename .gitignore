@@ -1,6 +1,8 @@
-.superpowers/
-.worktrees/
-PROJECT_CONTEXT.md
+# Local agent state and development-process notes (keep on disk, not in Git)
+/.superpowers/
+/.worktrees/
+/docs/superpowers/
+/PROJECT_CONTEXT.md
 
 # IntelliJ IDEA
 .idea/
@@ -15,9 +17,13 @@ backend/target/
 # Node and Vite
 frontend/node_modules/
 frontend/dist/
+frontend/coverage/
+frontend/playwright-report/
+frontend/test-results/
+frontend/blob-report/
+*.tsbuildinfo
 .playwright-cli/
-output/playwright/
-output/stage4d/
+/output/
 
 # Local configuration and secrets
 .env
@@ -35,3 +41,11 @@ k6-raw-*.json
 
 # Logs
 *.log
+
+# OS and editor temporary files
+.DS_Store
+Thumbs.db
+Desktop.ini
+*.swp
+*.swo
+*~
